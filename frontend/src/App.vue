@@ -91,6 +91,14 @@ const formatDateCell = (value) => {
 const formatIncrement = (value) => (value && value > 0 ? Number(value).toFixed(1) : '0')
 const cloneItems = (items) => items.map((item) => ({ ...item }))
 const wellPrefix = (value) => String(value || '').trim().slice(0, 2).toUpperCase() || 'NA'
+const gtmOpacity = (item) => {
+  if (item.is_ppd) return 1
+  const threshold = Number(minIncrementFilter.value || 0)
+  if (threshold <= 0) return 1
+  const increment = item.increment && item.increment > 0 ? Number(item.increment) : 0
+  if (increment >= threshold) return 1
+  return 0.18 + (increment / threshold) * 0.82
+}
 const colorFromPrefix = (prefix) => {
   const hash = [...prefix].reduce((acc, char) => acc + char.charCodeAt(0), 0)
   return `hsl(${(hash * 19) % 360} 72% 56%)`
@@ -102,10 +110,8 @@ const activeItems = computed(() => activeVersion.value?.items || [])
 const areaOptions = computed(() => [...new Set(activeItems.value.map((item) => String(item.area || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru')))
 const visibleItems = computed(() =>
   activeItems.value.filter((item) => {
-    const increment = item.increment && item.increment > 0 ? Number(item.increment) : 0
     if (!showPpd.value && item.is_ppd) return false
     if (selectedAreas.value.length && !selectedAreas.value.includes(String(item.area || '').trim())) return false
-    if (!item.is_ppd && increment < Number(minIncrementFilter.value || 0)) return false
     return true
   }),
 )
@@ -610,6 +616,7 @@ onMounted(async () => {
                               :style="{
                                 background: item.color,
                                 flex: `${Math.max(item.value, 1)} 1 0`,
+                                opacity: gtmOpacity(item),
                               }"
                             >
                               <span class="chart-segment-text">{{ item.well }}</span>
@@ -620,7 +627,7 @@ onMounted(async () => {
                         <div class="chart-total-label">{{ group.total.toFixed(1) }}</div>
                       </div>
                       <div class="chart-zeroes">
-                        <div v-for="item in group.zero" :key="`${item.event_id}-zero`" class="summary-dot" :class="{ ppd: item.is_ppd }" :style="item.is_ppd ? {} : { background: item.color }" :title="`${item.well} · ${item.is_ppd ? '0 / ППД' : '0 / без прироста'} · ${item.planned_work}`"></div>
+                        <div v-for="item in group.zero" :key="`${item.event_id}-zero`" class="summary-dot" :class="{ ppd: item.is_ppd }" :style="item.is_ppd ? {} : { background: item.color, opacity: gtmOpacity(item) }" :title="`${item.well} · ${item.is_ppd ? '0 / ППД' : '0 / без прироста'} · ${item.planned_work}`"></div>
                       </div>
                     </div>
                   </div>
@@ -680,6 +687,7 @@ onMounted(async () => {
                         width: `calc(${item.duration_days} * var(--day-width))`,
                         top: `calc(${item.lane} * var(--lane-height))`,
                         background: item.color,
+                        opacity: gtmOpacity(item),
                       }"
                       :draggable="canEditVersion"
                       @dragstart="dragStart($event, item)"
