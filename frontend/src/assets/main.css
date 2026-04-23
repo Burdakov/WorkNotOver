@@ -636,6 +636,34 @@ th {
   min-height: 202px;
 }
 
+.prefix-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.top-prefix-legend {
+  margin: 0 0 8px 78px;
+}
+
+.prefix-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #f5f8fc;
+  color: #5f7289;
+  font-size: 10px;
+}
+
+.prefix-chip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
 .chart-track,
 .gantt-track {
   position: relative;
@@ -693,7 +721,7 @@ th {
   display: flex;
   align-items: flex-end;
   width: 100%;
-  flex: 1;
+  flex: 0 0 auto;
 }
 
 .chart-total-bar {
@@ -701,7 +729,7 @@ th {
   flex-direction: column-reverse;
   justify-content: flex-start;
   width: 100%;
-  min-height: 10px;
+  height: 100%;
   border-radius: 3px 3px 0 0;
   overflow: hidden;
   background: rgba(47, 128, 255, 0.06);
@@ -712,7 +740,6 @@ th {
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  min-height: 12px;
   padding: 1px;
   color: #fff;
   text-align: center;

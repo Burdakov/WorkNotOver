@@ -234,6 +234,14 @@ const topChartBars = computed(() =>
 )
 
 const topChartMax = computed(() => Math.max(...topChartBars.value.map((group) => group.total), 10))
+const incrementLegend = computed(() => {
+  const seen = new Map()
+  visibleItems.value.forEach((item) => {
+    const prefix = wellPrefix(item.well)
+    if (!seen.has(prefix)) seen.set(prefix, colorFromPrefix(prefix))
+  })
+  return [...seen.entries()].slice(0, 16).map(([prefix, color]) => ({ prefix, color }))
+})
 
 const syncColumns = (nextColumns) => {
   Object.assign(columns, {
@@ -580,15 +588,16 @@ onMounted(async () => {
 
           <div class="panel planner-panel summary-panel">
             <div class="section-head">
-              <div>
-                <h2>Приросты</h2>
-                <p class="subtitle">Синхронная столбчатая диаграмма по дате завершения ремонта.</p>
-              </div>
+              <div></div>
               <div class="legend">
                 <span class="legend-item"><i class="legend-swatch today"></i> Сегодня</span>
                 <span class="legend-item"><i class="legend-swatch zero"></i> Без прироста</span>
                 <span class="legend-item"><i class="legend-swatch ppd"></i> Перевод в ППД</span>
               </div>
+            </div>
+
+            <div class="prefix-legend top-prefix-legend">
+              <span v-for="item in incrementLegend" :key="item.prefix" class="prefix-chip"><i :style="{ background: item.color }"></i>{{ item.prefix }}</span>
             </div>
 
             <div class="gantt-wrap compact-board summary-wrap">
@@ -607,6 +616,7 @@ onMounted(async () => {
                     <div v-if="todayOffset !== null" class="today-line" :style="{ left: `calc(${todayOffset} * var(--day-width) + (var(--day-width) / 2))` }"></div>
                     <div v-for="group in topChartBars" :key="group.date" class="chart-group" :style="{ left: `calc(${group.offset} * var(--day-width))` }">
                       <div v-if="group.total > 0" class="chart-total" :title="group.labels.join('\n')">
+                        <div class="chart-total-label">{{ group.total.toFixed(1) }}</div>
                         <div class="chart-total-bar-wrap" :style="{ height: `${Math.max((group.total / topChartMax) * 100, 10)}%` }">
                           <div class="chart-total-bar">
                             <div
@@ -619,12 +629,9 @@ onMounted(async () => {
                                 opacity: gtmOpacity(item),
                               }"
                             >
-                              <span class="chart-segment-text">{{ item.well }}</span>
-                              <span class="chart-segment-text">{{ formatIncrement(item.increment) }}</span>
                             </div>
                           </div>
                         </div>
-                        <div class="chart-total-label">{{ group.total.toFixed(1) }}</div>
                       </div>
                       <div class="chart-zeroes">
                         <div v-for="item in group.zero" :key="`${item.event_id}-zero`" class="summary-dot" :class="{ ppd: item.is_ppd }" :style="item.is_ppd ? {} : { background: item.color, opacity: gtmOpacity(item) }" :title="`${item.well} · ${item.is_ppd ? '0 / ППД' : '0 / без прироста'} · ${item.planned_work}`"></div>
