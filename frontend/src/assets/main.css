@@ -367,14 +367,27 @@ select:disabled {
 
 .zoom-strip {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 4px;
   padding: 2px 0;
   color: #6d7f94;
   font-size: 12px;
+}
+
+.zoom-strip-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   flex-wrap: nowrap;
   overflow-x: auto;
+  width: 100%;
+}
+
+.zoom-strip-row-secondary {
+  justify-content: flex-start;
 }
 
 .zoom-strip input {
@@ -410,6 +423,15 @@ select:disabled {
 
 .toggle-inline input {
   margin: 0;
+}
+
+.toggle-inline-ppd {
+  gap: 3px;
+  flex: 0 0 auto;
+}
+
+.toggle-inline-ppd span {
+  margin-left: -1px;
 }
 
 .info-cards,

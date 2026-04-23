@@ -21,6 +21,7 @@ const timelineZoom = ref(12)
 const minIncrementFilter = ref(0)
 const showPpd = ref(true)
 const selectedAreas = ref([])
+const selectedWorkTypes = ref([])
 
 const columns = reactive({
   brigade: '',
@@ -108,10 +109,12 @@ const availableColumns = computed(() => uploadedFile.value?.columns_info || [])
 const activeVersion = computed(() => versions.value.find((version) => version.id === activeVersionId.value) || versions.value[0] || null)
 const activeItems = computed(() => activeVersion.value?.items || [])
 const areaOptions = computed(() => [...new Set(activeItems.value.map((item) => String(item.area || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru')))
+const plannedWorkOptions = computed(() => [...new Set(activeItems.value.map((item) => String(item.planned_work || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru')))
 const visibleItems = computed(() =>
   activeItems.value.filter((item) => {
     if (!showPpd.value && item.is_ppd) return false
     if (selectedAreas.value.length && !selectedAreas.value.includes(String(item.area || '').trim())) return false
+    if (selectedWorkTypes.value.length && !selectedWorkTypes.value.includes(String(item.planned_work || '').trim())) return false
     return true
   }),
 )
@@ -644,24 +647,34 @@ onMounted(async () => {
           </div>
 
           <div class="zoom-strip">
-            <label class="control-inline">
-              <span>ГТМ</span>
-              <input v-model="minIncrementFilter" type="range" min="0" max="100" step="1" />
-              <strong>от {{ minIncrementFilter }}</strong>
-            </label>
-            <label class="toggle-inline">
-              <input v-model="showPpd" type="checkbox" />
-              <span>ППД</span>
-            </label>
-            <label class="control-inline compact-select">
-              <span>Участки</span>
-              <select v-model="selectedAreas" multiple size="1">
-                <option v-for="area in areaOptions" :key="area" :value="area">{{ area }}</option>
-              </select>
-            </label>
-            <span>Масштаб</span>
-            <input v-model="timelineZoom" type="range" min="8" max="28" step="1" />
-            <span>{{ timelineZoom }} px/день</span>
+            <div class="zoom-strip-row">
+              <label class="control-inline">
+                <span>ГТМ</span>
+                <input v-model="minIncrementFilter" type="range" min="0" max="100" step="1" />
+                <strong>от {{ minIncrementFilter }}</strong>
+              </label>
+              <label class="toggle-inline toggle-inline-ppd">
+                <input v-model="showPpd" type="checkbox" />
+                <span>ППД</span>
+              </label>
+              <label class="control-inline compact-select">
+                <span>Участки</span>
+                <select v-model="selectedAreas" multiple size="1">
+                  <option v-for="area in areaOptions" :key="area" :value="area">{{ area }}</option>
+                </select>
+              </label>
+              <span>Масштаб</span>
+              <input v-model="timelineZoom" type="range" min="8" max="28" step="1" />
+              <span>{{ timelineZoom }} px/день</span>
+            </div>
+            <div class="zoom-strip-row zoom-strip-row-secondary">
+              <label class="control-inline compact-select">
+                <span>Планируемый объем работ</span>
+                <select v-model="selectedWorkTypes" multiple size="1">
+                  <option v-for="workType in plannedWorkOptions" :key="workType" :value="workType">{{ workType }}</option>
+                </select>
+              </label>
+            </div>
           </div>
 
           <div class="panel planner-panel">
