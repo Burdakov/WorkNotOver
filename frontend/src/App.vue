@@ -207,6 +207,16 @@ const incrementTimeline = computed(() => {
     }))
 })
 
+const topChartBars = computed(() =>
+  incrementTimeline.value.map((group) => ({
+    ...group,
+    total: group.positive.reduce((sum, item) => sum + item.value, 0),
+    labels: group.positive.map((item) => `${item.well} ${formatIncrement(item.increment)}`),
+  })),
+)
+
+const topChartMax = computed(() => Math.max(...topChartBars.value.map((group) => group.total), 10))
+
 const incrementLegend = computed(() => {
   const seen = new Map()
   activeItems.value.forEach((item) => {
@@ -575,7 +585,7 @@ onMounted(async () => {
             <div class="section-head">
               <div>
                 <h2>Приросты</h2>
-                <p class="subtitle">Отдельная синхронная столбчатая диаграмма на дату завершения ремонта. Высота столбца пропорциональна дебиту.</p>
+                <p class="subtitle">Новая синхронная диаграмма по дате завершения ремонта.</p>
               </div>
               <div class="legend">
                 <span class="legend-item"><i class="legend-swatch today"></i> Сегодня</span>
@@ -597,8 +607,6 @@ onMounted(async () => {
 
                 <div class="gantt-grid summary-row">
                   <div class="summary-side">
-                    <strong>Приросты</strong>
-                    <span>Все столбцы стоят на завершении периода.</span>
                     <div class="summary-pills">
                       <span class="pill red">{{ zeroCount }} без прироста</span>
                       <span class="pill blue">{{ ppdZeroCount }} ППД</span>
@@ -609,11 +617,18 @@ onMounted(async () => {
                   </div>
                   <div class="summary-track">
                     <div v-if="todayOffset !== null" class="today-line" :style="{ left: `calc(${todayOffset} * var(--day-width) + (var(--day-width) / 2))` }"></div>
-                    <div v-for="group in incrementTimeline" :key="group.date" class="summary-group" :style="{ left: `calc(${group.offset} * var(--day-width))` }">
+                    <div v-for="group in topChartBars" :key="group.date" class="summary-group" :style="{ left: `calc(${group.offset} * var(--day-width))` }">
                       <div class="summary-bars">
-                        <div v-for="item in group.positive" :key="item.event_id" class="summary-bar-wrap" :title="`${item.well} · ${formatIncrement(item.increment)} · ${item.planned_work}`">
-                          <div class="summary-value">{{ formatIncrement(item.increment) }}</div>
-                          <div class="summary-bar" :style="{ height: `${Math.max((item.value / chartMax) * 56, 6)}px`, background: item.color }"></div>
+                        <div
+                          v-if="group.total > 0"
+                          class="summary-bar-wrap single"
+                          :title="group.labels.join('\n')"
+                        >
+                          <div class="summary-total">{{ group.total.toFixed(1) }}</div>
+                          <div
+                            class="summary-single-bar"
+                            :style="{ height: `${Math.max((group.total / topChartMax) * 100, 8)}%` }"
+                          ></div>
                         </div>
                       </div>
                       <div class="summary-dots">
@@ -672,7 +687,7 @@ onMounted(async () => {
                     >
                       <strong>{{ item.well }}</strong>
                       <span>{{ formatIncrement(item.increment) }}</span>
-                      <span>{{ item.planned_work }}</span>
+                      <div class="gantt-tooltip">{{ item.planned_work }}</div>
                     </div>
                   </div>
                 </div>
