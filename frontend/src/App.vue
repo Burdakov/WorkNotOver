@@ -20,10 +20,11 @@ const activeVersionId = ref('base')
 const timelineZoom = ref(12)
 const minIncrementFilter = ref(0)
 const showPpd = ref(true)
-const selectedArea = ref('')
+const selectedAreas = ref([])
 
 const columns = reactive({
   brigade: '',
+  area: '',
   well: '',
   start_date: '',
   end_date: '',
@@ -90,12 +91,6 @@ const formatDateCell = (value) => {
 const formatIncrement = (value) => (value && value > 0 ? Number(value).toFixed(1) : '0')
 const cloneItems = (items) => items.map((item) => ({ ...item }))
 const wellPrefix = (value) => String(value || '').trim().slice(0, 2).toUpperCase() || 'NA'
-const deriveArea = (value) => {
-  const text = String(value || '').trim()
-  if (!text) return 'Без участка'
-  const match = text.match(/(участ[а-я]*\s*[^,;/-]*)/i)
-  return (match?.[1] || text).trim()
-}
 const colorFromPrefix = (prefix) => {
   const hash = [...prefix].reduce((acc, char) => acc + char.charCodeAt(0), 0)
   return `hsl(${(hash * 19) % 360} 72% 56%)`
@@ -104,13 +99,12 @@ const colorFromPrefix = (prefix) => {
 const availableColumns = computed(() => uploadedFile.value?.columns_info || [])
 const activeVersion = computed(() => versions.value.find((version) => version.id === activeVersionId.value) || versions.value[0] || null)
 const activeItems = computed(() => activeVersion.value?.items || [])
-const areaOptions = computed(() => [...new Set(activeItems.value.map((item) => deriveArea(item.brigade)))].sort((a, b) => a.localeCompare(b, 'ru')))
+const areaOptions = computed(() => [...new Set(activeItems.value.map((item) => String(item.area || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru')))
 const visibleItems = computed(() =>
   activeItems.value.filter((item) => {
     const increment = item.increment && item.increment > 0 ? Number(item.increment) : 0
-    const area = deriveArea(item.brigade)
     if (!showPpd.value && item.is_ppd) return false
-    if (selectedArea.value && selectedArea.value !== area) return false
+    if (selectedAreas.value.length && !selectedAreas.value.includes(String(item.area || '').trim())) return false
     if (!item.is_ppd && increment < Number(minIncrementFilter.value || 0)) return false
     return true
   }),
@@ -238,6 +232,7 @@ const topChartMax = computed(() => Math.max(...topChartBars.value.map((group) =>
 const syncColumns = (nextColumns) => {
   Object.assign(columns, {
     brigade: nextColumns?.brigade || '',
+    area: nextColumns?.area || '',
     well: nextColumns?.well || '',
     start_date: nextColumns?.start_date || '',
     end_date: nextColumns?.end_date || '',
@@ -526,6 +521,7 @@ onMounted(async () => {
 
             <div class="form-grid">
               <select v-model="columns.brigade"><option value="">Бригада</option><option v-for="column in availableColumns" :key="`brigade-${column.name}`" :value="column.name">{{ column.name }}</option></select>
+              <select v-model="columns.area"><option value="">Участок</option><option v-for="column in availableColumns" :key="`area-${column.name}`" :value="column.name">{{ column.name }}</option></select>
               <select v-model="columns.well"><option value="">Скв.</option><option v-for="column in availableColumns" :key="`well-${column.name}`" :value="column.name">{{ column.name }}</option></select>
               <select v-model="columns.start_date"><option value="">Дата начала (план)</option><option v-for="column in availableColumns" :key="`start-${column.name}`" :value="column.name">{{ column.name }}</option></select>
               <select v-model="columns.end_date"><option value="">Заверш рем (план)</option><option v-for="column in availableColumns" :key="`end-${column.name}`" :value="column.name">{{ column.name }}</option></select>
@@ -645,8 +641,7 @@ onMounted(async () => {
             </label>
             <label class="control-inline compact-select">
               <span>Участки</span>
-              <select v-model="selectedArea">
-                <option value="">Все</option>
+              <select v-model="selectedAreas" multiple size="1">
                 <option v-for="area in areaOptions" :key="area" :value="area">{{ area }}</option>
               </select>
             </label>

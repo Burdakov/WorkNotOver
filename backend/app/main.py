@@ -53,6 +53,7 @@ class UploadResponse(BaseModel):
 
 class ScheduleColumns(BaseModel):
     brigade: str | None = None
+    area: str | None = None
     well: str | None = None
     start_date: str | None = None
     end_date: str | None = None
@@ -69,6 +70,7 @@ class ScheduleParseRequest(BaseModel):
 class ScheduleItem(BaseModel):
     event_id: str
     brigade: str
+    area: str = ''
     well: str
     start_date: str
     end_date: str
@@ -99,6 +101,7 @@ class ScheduleExportRequest(BaseModel):
 
 _HINTS = {
     'brigade': ['бригада', 'brigade'],
+    'area': ['участок', 'area'],
     'well': ['скв', 'скваж', 'well'],
     'start_date': ['дата начала', 'начало', 'start'],
     'end_date': ['заверш', 'оконч', 'конец', 'end'],
@@ -311,13 +314,14 @@ def parse_schedule(payload: ScheduleParseRequest) -> ScheduleParseResponse:
 
     for index, row in df.iterrows():
         brigade = stringify(row.get(resolved.brigade))
+        area = stringify(row.get(resolved.area))
         well = stringify(row.get(resolved.well))
         start_date = coerce_date(row.get(resolved.start_date))
         end_date = coerce_date(row.get(resolved.end_date))
         increment = coerce_float(row.get(resolved.increment))
         planned_work = stringify(row.get(resolved.planned_work))
 
-        if not any([brigade, well, start_date, end_date, increment is not None, planned_work]):
+        if not any([brigade, area, well, start_date, end_date, increment is not None, planned_work]):
             continue
         if not brigade or not well or not start_date or not end_date:
             skipped_rows += 1
@@ -334,6 +338,7 @@ def parse_schedule(payload: ScheduleParseRequest) -> ScheduleParseResponse:
             ScheduleItem(
                 event_id=f'evt-{index + 2}',
                 brigade=brigade,
+                area=area,
                 well=well,
                 start_date=start_date,
                 end_date=end_date,
@@ -366,6 +371,7 @@ def export_schedule(payload: ScheduleExportRequest) -> StreamingResponse:
     rows = [
         {
             payload.columns.brigade or 'Бригада': item.brigade,
+            payload.columns.area or 'Участок': item.area,
             payload.columns.well or 'Скв.': item.well,
             payload.columns.start_date or 'Дата начала (план)': item.start_date,
             payload.columns.end_date or 'Заверш рем (план)': item.end_date,

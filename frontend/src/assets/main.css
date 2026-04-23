@@ -405,6 +405,7 @@ select:disabled {
   padding: 4px 8px;
   border-radius: 10px;
   font-size: 12px;
+  min-width: 140px;
 }
 
 .toggle-inline input {
@@ -785,7 +786,7 @@ th {
 .gantt-brigade {
   min-height: calc(var(--lane-count) * var(--lane-height));
   align-items: flex-start;
-  font-size: 4px;
+  font-size: 5.5px;
   line-height: 1.05;
   letter-spacing: 0;
   word-break: break-word;
@@ -821,12 +822,12 @@ th {
 }
 
 .gantt-bar strong {
-  font-size: 6px;
+  font-size: 7.5px;
   font-weight: 700;
 }
 
 .gantt-bar span {
-  font-size: 5px;
+  font-size: 6.5px;
 }
 
 .gantt-tooltip {
