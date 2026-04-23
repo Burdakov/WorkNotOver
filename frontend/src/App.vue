@@ -17,6 +17,7 @@ const selectedFileId = ref('')
 const selectedSheet = ref('')
 const versions = ref([])
 const activeVersionId = ref('base')
+const timelineZoom = ref(12)
 
 const columns = reactive({
   brigade: '',
@@ -68,11 +69,6 @@ const diffDays = (from, to) => {
   return Math.round((right - left) / 86400000)
 }
 
-const formatDateLabel = (value) => {
-  const parsed = parseIsoDate(value)
-  return parsed ? new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit' }).format(parsed) : ''
-}
-
 const formatDayNumber = (value) => {
   const parsed = parseIsoDate(value)
   return parsed ? new Intl.DateTimeFormat('ru-RU', { day: '2-digit' }).format(parsed) : ''
@@ -90,6 +86,11 @@ const formatDateCell = (value) => {
 
 const formatIncrement = (value) => (value && value > 0 ? Number(value).toFixed(1) : '0')
 const cloneItems = (items) => items.map((item) => ({ ...item }))
+const wellPrefix = (value) => String(value || '').trim().slice(0, 2).toUpperCase() || 'NA'
+const colorFromPrefix = (prefix) => {
+  const hash = [...prefix].reduce((acc, char) => acc + char.charCodeAt(0), 0)
+  return `hsl(${(hash * 19) % 360} 62% 62%)`
+}
 
 const availableColumns = computed(() => uploadedFile.value?.columns_info || [])
 const activeVersion = computed(() => versions.value.find((version) => version.id === activeVersionId.value) || versions.value[0] || null)
@@ -98,7 +99,7 @@ const canEditVersion = computed(() => activeVersionId.value !== 'base')
 const totalIncrement = computed(() => activeItems.value.reduce((sum, item) => sum + (item.increment && item.increment > 0 ? Number(item.increment) : 0), 0))
 const zeroCount = computed(() => activeItems.value.filter((item) => !item.increment || item.increment <= 0).length)
 const ppdZeroCount = computed(() => activeItems.value.filter((item) => (!item.increment || item.increment <= 0) && item.is_ppd).length)
-const sortedSummary = computed(() => [...activeItems.value].sort((left, right) => left.start_date.localeCompare(right.start_date) || left.brigade.localeCompare(right.brigade) || left.well.localeCompare(right.well)))
+const previewColumns = computed(() => Object.keys(uploadedFile.value?.preview?.[0] || {}))
 
 const scheduleBounds = computed(() => {
   if (!activeItems.value.length) return { min: null, max: null }
@@ -132,10 +133,15 @@ const monthSegments = computed(() => {
   return segments
 })
 
-const timelineDayWidth = computed(() => {
-  if (!ganttDates.value.length) return 10
-  return Math.max(6, Math.min(14, Math.floor(960 / ganttDates.value.length)))
+const timelineDayWidth = computed(() => timelineZoom.value)
+const todayIso = computed(() => formatIsoDate(new Date()))
+const todayOffset = computed(() => {
+  if (!scheduleBounds.value.min || !scheduleBounds.value.max) return null
+  if (todayIso.value < scheduleBounds.value.min || todayIso.value > scheduleBounds.value.max) return null
+  return diffDays(scheduleBounds.value.min, todayIso.value)
 })
+
+const chartMax = computed(() => Math.max(...activeItems.value.map((item) => (item.increment && item.increment > 0 ? Number(item.increment) : 0)), 10))
 
 const ganttRows = computed(() => {
   const byBrigade = new Map()
@@ -159,50 +165,56 @@ const ganttRows = computed(() => {
         } else {
           laneEnds[lane] = end
         }
-        return { ...item, lane, startOffset: start }
+        const prefix = wellPrefix(item.well)
+        return {
+          ...item,
+          lane,
+          startOffset: start,
+          prefix,
+          color: colorFromPrefix(prefix),
+        }
       })
       return { brigade, laneCount: Math.max(laneEnds.length, 1), bars }
     })
 })
 
-const chartMax = computed(() => Math.max(...activeItems.value.map((item) => (item.increment && item.increment > 0 ? Number(item.increment) : 0)), 10))
 const incrementTimeline = computed(() => {
-  const laneEnds = []
-  const countsByDate = new Map()
-  const items = [...activeItems.value]
-    .sort((a, b) => a.end_date.localeCompare(b.end_date) || a.brigade.localeCompare(b.brigade, 'ru') || a.well.localeCompare(b.well, 'ru'))
-    .map((item) => {
-      const endOffset = diffDays(scheduleBounds.value.min, item.end_date)
-      const virtualStart = Math.max(endOffset - 1, 0)
-      let lane = laneEnds.findIndex((laneEnd) => virtualStart > laneEnd)
-      if (lane === -1) {
-        lane = laneEnds.length
-        laneEnds.push(endOffset)
-      } else {
-        laneEnds[lane] = endOffset
-      }
-      const sameDateCount = countsByDate.get(item.end_date) || 0
-      countsByDate.set(item.end_date, sameDateCount + 1)
-      return { ...item, lane, endOffset, colorIndex: sameDateCount }
-    })
+  const grouped = new Map()
+  activeItems.value.forEach((item) => {
+    const key = item.end_date
+    if (!grouped.has(key)) grouped.set(key, [])
+    grouped.get(key).push(item)
+  })
 
-  const totalsByDate = items.reduce((acc, item) => {
-    acc.set(item.end_date, (acc.get(item.end_date) || 0) + 1)
-    return acc
-  }, new Map())
-
-  const palette = ['#2f80ff', '#35b36b', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6']
-
-  return {
-    laneCount: Math.max(laneEnds.length, 1),
-    items: items.map((item) => ({
-      ...item,
-      color: palette[item.colorIndex % palette.length],
-      clusterOffset: item.colorIndex - (totalsByDate.get(item.end_date) - 1) / 2,
-    })),
-  }
+  return [...grouped.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, items]) => ({
+      date,
+      offset: diffDays(scheduleBounds.value.min, date),
+      positive: items
+        .filter((item) => item.increment && item.increment > 0)
+        .sort((a, b) => Number(b.increment) - Number(a.increment))
+        .map((item) => {
+          const prefix = wellPrefix(item.well)
+          return { ...item, prefix, color: colorFromPrefix(prefix), value: Number(item.increment) }
+        }),
+      zero: items
+        .filter((item) => !item.increment || item.increment <= 0)
+        .map((item) => {
+          const prefix = wellPrefix(item.well)
+          return { ...item, prefix, color: colorFromPrefix(prefix) }
+        }),
+    }))
 })
-const previewColumns = computed(() => Object.keys(uploadedFile.value?.preview?.[0] || {}))
+
+const incrementLegend = computed(() => {
+  const seen = new Map()
+  activeItems.value.forEach((item) => {
+    const prefix = wellPrefix(item.well)
+    if (!seen.has(prefix)) seen.set(prefix, colorFromPrefix(prefix))
+  })
+  return [...seen.entries()].slice(0, 12).map(([prefix, color]) => ({ prefix, color }))
+})
 
 const syncColumns = (nextColumns) => {
   Object.assign(columns, {
@@ -429,9 +441,7 @@ onMounted(async () => {
           <div class="brand">WorkNotOver</div>
           <div class="brand-subtitle">Интерактивный график КРС</div>
         </div>
-        <button class="icon-button" @click="sidebarCollapsed = !sidebarCollapsed">
-          {{ sidebarCollapsed ? '→' : '←' }}
-        </button>
+        <button class="icon-button" @click="sidebarCollapsed = !sidebarCollapsed">{{ sidebarCollapsed ? '→' : '←' }}</button>
       </div>
 
       <nav class="nav-list">
@@ -445,9 +455,7 @@ onMounted(async () => {
         </button>
       </nav>
 
-      <div v-if="!sidebarCollapsed" class="sidebar-note">
-        Базовая версия служит эталоном. Для перетаскивания мероприятий сначала создайте новую версию графика.
-      </div>
+      <div v-if="!sidebarCollapsed" class="sidebar-note">Базовая версия служит эталоном. Для перетаскивания мероприятий сначала создайте новую версию графика.</div>
     </aside>
 
     <main class="main-area">
@@ -486,22 +494,10 @@ onMounted(async () => {
             </div>
 
             <div v-if="uploadedFile" class="info-cards">
-              <div class="info-card">
-                <span>Файл</span>
-                <strong>{{ uploadedFile.original_name }}</strong>
-              </div>
-              <div class="info-card">
-                <span>Лист</span>
-                <strong>{{ uploadedFile.selected_sheet }}</strong>
-              </div>
-              <div class="info-card">
-                <span>Мероприятий</span>
-                <strong>{{ activeItems.length }}</strong>
-              </div>
-              <div class="info-card">
-                <span>Период</span>
-                <strong>{{ scheduleBounds.min ? `${formatDateCell(scheduleBounds.min)} — ${formatDateCell(scheduleBounds.max)}` : '—' }}</strong>
-              </div>
+              <div class="info-card"><span>Файл</span><strong>{{ uploadedFile.original_name }}</strong></div>
+              <div class="info-card"><span>Лист</span><strong>{{ uploadedFile.selected_sheet }}</strong></div>
+              <div class="info-card"><span>Мероприятий</span><strong>{{ activeItems.length }}</strong></div>
+              <div class="info-card"><span>Период</span><strong>{{ scheduleBounds.min ? `${formatDateCell(scheduleBounds.min)} — ${formatDateCell(scheduleBounds.max)}` : '—' }}</strong></div>
             </div>
           </div>
 
@@ -510,30 +506,12 @@ onMounted(async () => {
             <p class="subtitle">Сервис пытается найти нужные поля автоматически, но вы всегда можете выбрать реальные колонки вручную.</p>
 
             <div class="form-grid">
-              <select v-model="columns.brigade">
-                <option value="">Бригада</option>
-                <option v-for="column in availableColumns" :key="`brigade-${column.name}`" :value="column.name">{{ column.name }}</option>
-              </select>
-              <select v-model="columns.well">
-                <option value="">Скв.</option>
-                <option v-for="column in availableColumns" :key="`well-${column.name}`" :value="column.name">{{ column.name }}</option>
-              </select>
-              <select v-model="columns.start_date">
-                <option value="">Дата начала (план)</option>
-                <option v-for="column in availableColumns" :key="`start-${column.name}`" :value="column.name">{{ column.name }}</option>
-              </select>
-              <select v-model="columns.end_date">
-                <option value="">Заверш рем (план)</option>
-                <option v-for="column in availableColumns" :key="`end-${column.name}`" :value="column.name">{{ column.name }}</option>
-              </select>
-              <select v-model="columns.increment">
-                <option value="">Qн, тн/сут</option>
-                <option v-for="column in availableColumns" :key="`increment-${column.name}`" :value="column.name">{{ column.name }}</option>
-              </select>
-              <select v-model="columns.planned_work">
-                <option value="">Планируемый объем работ</option>
-                <option v-for="column in availableColumns" :key="`work-${column.name}`" :value="column.name">{{ column.name }}</option>
-              </select>
+              <select v-model="columns.brigade"><option value="">Бригада</option><option v-for="column in availableColumns" :key="`brigade-${column.name}`" :value="column.name">{{ column.name }}</option></select>
+              <select v-model="columns.well"><option value="">Скв.</option><option v-for="column in availableColumns" :key="`well-${column.name}`" :value="column.name">{{ column.name }}</option></select>
+              <select v-model="columns.start_date"><option value="">Дата начала (план)</option><option v-for="column in availableColumns" :key="`start-${column.name}`" :value="column.name">{{ column.name }}</option></select>
+              <select v-model="columns.end_date"><option value="">Заверш рем (план)</option><option v-for="column in availableColumns" :key="`end-${column.name}`" :value="column.name">{{ column.name }}</option></select>
+              <select v-model="columns.increment"><option value="">Qн, тн/сут</option><option v-for="column in availableColumns" :key="`increment-${column.name}`" :value="column.name">{{ column.name }}</option></select>
+              <select v-model="columns.planned_work"><option value="">Планируемый объем работ</option><option v-for="column in availableColumns" :key="`work-${column.name}`" :value="column.name">{{ column.name }}</option></select>
             </div>
 
             <div class="toolbar">
@@ -547,40 +525,21 @@ onMounted(async () => {
           <h2>Предпросмотр исходных данных</h2>
           <div class="table-wrap preview-wrap">
             <table>
-              <thead>
-                <tr>
-                  <th v-for="column in previewColumns" :key="column">{{ column }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(row, index) in uploadedFile.preview" :key="index">
-                  <td v-for="column in previewColumns" :key="`${index}-${column}`">{{ row[column] }}</td>
-                </tr>
-              </tbody>
+              <thead><tr><th v-for="column in previewColumns" :key="column">{{ column }}</th></tr></thead>
+              <tbody><tr v-for="(row, index) in uploadedFile.preview" :key="index"><td v-for="column in previewColumns" :key="`${index}-${column}`">{{ row[column] }}</td></tr></tbody>
             </table>
           </div>
         </div>
       </section>
 
       <section v-else class="page-stack planner-stack">
-        <div v-if="!activeItems.length" class="panel empty-state">
-          Сначала загрузите график КРС на вкладке «Загрузка графика». После этого здесь появятся диаграмма Ганта, версии графика и аналитика приростов.
-        </div>
+        <div v-if="!activeItems.length" class="panel empty-state">Сначала загрузите график КРС на вкладке «Загрузка графика». После этого здесь появятся диаграмма Ганта, версии графика и аналитика приростов.</div>
 
         <template v-else>
           <div class="stats-grid">
-            <div class="stat-card">
-              <span>Активная версия</span>
-              <strong>{{ activeVersion?.name }}</strong>
-            </div>
-            <div class="stat-card">
-              <span>Мероприятий</span>
-              <strong>{{ activeItems.length }}</strong>
-            </div>
-            <div class="stat-card">
-              <span>Суммарный прирост Qн</span>
-              <strong>{{ totalIncrement.toFixed(1) }}</strong>
-            </div>
+            <div class="stat-card"><span>Активная версия</span><strong>{{ activeVersion?.name }}</strong></div>
+            <div class="stat-card"><span>Мероприятий</span><strong>{{ activeItems.length }}</strong></div>
+            <div class="stat-card"><span>Суммарный прирост Qн</span><strong>{{ totalIncrement.toFixed(1) }}</strong></div>
           </div>
 
           <div class="panel soft">
@@ -590,118 +549,130 @@ onMounted(async () => {
                 <p class="subtitle">Создайте новую версию, чтобы переносить мероприятия между датами и бригадами без изменения эталонного плана.</p>
               </div>
               <div class="toolbar actions-wrap">
-                <select v-model="activeVersionId">
-                  <option v-for="version in versions" :key="version.id" :value="version.id">{{ version.name }}</option>
-                </select>
+                <select v-model="activeVersionId"><option v-for="version in versions" :key="version.id" :value="version.id">{{ version.name }}</option></select>
                 <button class="button primary" @click="createVersion">Создать версию</button>
                 <button class="button success" @click="exportVersion">Выгрузить Excel</button>
               </div>
             </div>
-            <div class="notice">
-              {{ canEditVersion ? 'Редактирование активно: перетаскивайте карточки мероприятий по строкам бригад и по датам.' : 'Редактирование выключено: сначала создайте новую версию графика.' }}
+            <div class="notice">{{ canEditVersion ? 'Редактирование активно: перетаскивайте карточки мероприятий по строкам бригад и по датам.' : 'Редактирование выключено: сначала создайте новую версию графика.' }}</div>
+          </div>
+
+          <div class="panel soft compact-controls">
+            <div class="toolbar between align-start">
+              <div>
+                <h2>Масштаб времени</h2>
+                <p class="subtitle">Регулируйте ширину дня и синхронно меняйте верхнюю диаграмму и Гант.</p>
+              </div>
+              <div class="zoom-control">
+                <span>Компактно</span>
+                <input v-model="timelineZoom" type="range" min="8" max="28" step="1" />
+                <span>Детально</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel planner-panel summary-panel">
+            <div class="section-head">
+              <div>
+                <h2>Приросты</h2>
+                <p class="subtitle">Отдельная синхронная столбчатая диаграмма на дату завершения ремонта. Высота столбца пропорциональна дебиту.</p>
+              </div>
+              <div class="legend">
+                <span class="legend-item"><i class="legend-swatch today"></i> Сегодня</span>
+                <span class="legend-item"><i class="legend-swatch zero"></i> Без прироста</span>
+                <span class="legend-item"><i class="legend-swatch ppd"></i> Перевод в ППД</span>
+              </div>
+            </div>
+
+            <div class="gantt-wrap compact-board summary-wrap">
+              <div class="gantt-board" :style="{ '--day-count': ganttDates.length, '--day-width': `${timelineDayWidth}px` }">
+                <div class="gantt-header gantt-grid month-grid">
+                  <div class="gantt-corner">Мес.</div>
+                  <div v-for="segment in monthSegments" :key="segment.key" class="gantt-month" :style="{ gridColumn: `span ${segment.span}` }">{{ segment.label }}</div>
+                </div>
+                <div class="gantt-header gantt-grid day-grid">
+                  <div class="gantt-corner">Дн.</div>
+                  <div v-for="date in ganttDates" :key="date" class="gantt-date">{{ formatDayNumber(date) }}</div>
+                </div>
+
+                <div class="gantt-grid summary-row">
+                  <div class="summary-side">
+                    <strong>Приросты</strong>
+                    <span>Все столбцы стоят на завершении периода.</span>
+                    <div class="summary-pills">
+                      <span class="pill red">{{ zeroCount }} без прироста</span>
+                      <span class="pill blue">{{ ppdZeroCount }} ППД</span>
+                    </div>
+                    <div class="prefix-legend">
+                      <span v-for="item in incrementLegend" :key="item.prefix" class="prefix-chip"><i :style="{ background: item.color }"></i>{{ item.prefix }}</span>
+                    </div>
+                  </div>
+                  <div class="summary-track">
+                    <div v-if="todayOffset !== null" class="today-line" :style="{ left: `calc(${todayOffset} * var(--day-width) + (var(--day-width) / 2))` }"></div>
+                    <div v-for="group in incrementTimeline" :key="group.date" class="summary-group" :style="{ left: `calc(${group.offset} * var(--day-width))` }">
+                      <div class="summary-bars">
+                        <div v-for="item in group.positive" :key="item.event_id" class="summary-bar-wrap" :title="`${item.well} · ${formatIncrement(item.increment)} · ${item.planned_work}`">
+                          <div class="summary-value">{{ formatIncrement(item.increment) }}</div>
+                          <div class="summary-bar" :style="{ height: `${Math.max((item.value / chartMax) * 56, 6)}px`, background: item.color }"></div>
+                        </div>
+                      </div>
+                      <div class="summary-dots">
+                        <div v-for="item in group.zero" :key="`${item.event_id}-zero`" class="summary-dot" :class="{ ppd: item.is_ppd }" :style="item.is_ppd ? {} : { background: item.color }" :title="`${item.well} · ${item.is_ppd ? '0 / ППД' : '0 / без прироста'} · ${item.planned_work}`"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
           <div class="panel planner-panel">
             <div class="section-head">
               <div>
-                <h2>Лента приростов и диаграмма Ганта</h2>
-                <p class="subtitle">Приросты и безприростные мероприятия стоят на дате завершения ремонта, а ниже остаётся тот же календарь для строк бригад.</p>
+                <h2>Диаграмма Ганта</h2>
+                <p class="subtitle">Тот же календарь, что и на диаграмме приростов. Текущая дата показана красной вертикальной линией.</p>
               </div>
               <div class="legend">
-                <span class="legend-item"><i class="legend-swatch"></i> Ремонт с приростом</span>
-                <span class="legend-item"><i class="legend-swatch zero"></i> Без прироста</span>
-                <span class="legend-item"><i class="legend-swatch ppd"></i> Перевод в ППД</span>
+                <span class="legend-item"><i class="legend-swatch today"></i> Сегодня</span>
+                <span class="legend-item"><i class="legend-swatch"></i> Цвет по первым двум буквам скважины</span>
               </div>
             </div>
 
             <div class="gantt-wrap compact-board">
-              <div class="gantt-board" :style="{ '--day-count': ganttDates.length, '--summary-lane-count': incrementTimeline.laneCount, '--day-width': `${timelineDayWidth}px` }">
+              <div class="gantt-board" :style="{ '--day-count': ganttDates.length, '--day-width': `${timelineDayWidth}px` }">
                 <div class="gantt-header gantt-grid month-grid">
-                  <div class="gantt-corner">Месяц</div>
-                  <div
-                    v-for="segment in monthSegments"
-                    :key="segment.key"
-                    class="gantt-month"
-                    :style="{ gridColumn: `span ${segment.span}` }"
-                  >
-                    {{ segment.label }}
-                  </div>
+                  <div class="gantt-corner">Мес.</div>
+                  <div v-for="segment in monthSegments" :key="`gantt-${segment.key}`" class="gantt-month" :style="{ gridColumn: `span ${segment.span}` }">{{ segment.label }}</div>
                 </div>
-
                 <div class="gantt-header gantt-grid day-grid">
-                  <div class="gantt-corner">День</div>
-                  <div v-for="date in ganttDates" :key="date" class="gantt-date">{{ formatDayNumber(date) }}</div>
+                  <div class="gantt-corner">Дн.</div>
+                  <div v-for="date in ganttDates" :key="`gantt-${date}`" class="gantt-date">{{ formatDayNumber(date) }}</div>
                 </div>
 
-                <div class="gantt-grid summary-row" :style="{ '--lane-count': incrementTimeline.laneCount }">
-                  <div class="summary-side">
-                    <strong>Приросты</strong>
-                    <span>Столбец стоит на дате завершения.</span>
-                    <div class="summary-pills">
-                      <span class="pill red">{{ zeroCount }} без прироста</span>
-                      <span class="pill blue">{{ ppdZeroCount }} ППД</span>
-                    </div>
-                  </div>
-                  <div class="summary-track">
-                    <div
-                      v-for="item in incrementTimeline.items"
-                      :key="`summary-${item.event_id}`"
-                      class="summary-point"
-                      :class="{ zero: !item.has_increment, ppd: item.is_ppd }"
-                      :style="{
-                        left: `calc(${item.endOffset} * var(--day-width) + (var(--day-width) / 2) + ${item.clusterOffset * 8}px - 13px)`,
-                        top: `calc(${item.lane} * var(--summary-lane-height) + 6px)`,
-                      }"
-                      :title="`${item.well} · ${formatIncrement(item.increment)} · ${item.planned_work}`"
-                    >
-                      <div class="summary-marker">
-                        <div
-                          v-if="item.increment && item.increment > 0"
-                          class="summary-bar"
-                          :style="{ height: `${Math.max((Number(item.increment) / chartMax) * 34, 4)}px`, background: item.color }"
-                        ></div>
-                        <div v-else class="summary-dot" :class="{ ppd: item.is_ppd }" :style="item.is_ppd ? {} : { background: item.color }"></div>
-                      </div>
-                      <div class="summary-value">{{ formatIncrement(item.increment) }}</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  v-for="row in ganttRows"
-                  :key="row.brigade"
-                  class="gantt-grid gantt-row"
-                  :style="{ '--lane-count': row.laneCount }"
-                >
+                <div v-for="row in ganttRows" :key="row.brigade" class="gantt-grid gantt-row" :style="{ '--lane-count': row.laneCount }">
                   <div class="gantt-brigade">{{ row.brigade }}</div>
                   <div class="gantt-track">
+                    <div v-if="todayOffset !== null" class="today-line" :style="{ left: `calc(${todayOffset} * var(--day-width) + (var(--day-width) / 2))` }"></div>
                     <div class="gantt-drop-grid">
-                      <div
-                        v-for="date in ganttDates"
-                        :key="`${row.brigade}-${date}`"
-                        class="gantt-drop-cell"
-                        :class="{ editable: canEditVersion }"
-                        @dragover.prevent
-                        @drop="moveEvent($event.dataTransfer.getData('text/plain'), row.brigade, date)"
-                      ></div>
+                      <div v-for="date in ganttDates" :key="`${row.brigade}-${date}`" class="gantt-drop-cell" :class="{ editable: canEditVersion }" @dragover.prevent @drop="moveEvent($event.dataTransfer.getData('text/plain'), row.brigade, date)"></div>
                     </div>
-
                     <div
                       v-for="item in row.bars"
                       :key="item.event_id"
                       class="gantt-bar"
-                      :class="{ zero: !item.has_increment, ppd: item.is_ppd, readonly: !canEditVersion }"
+                      :class="{ readonly: !canEditVersion }"
                       :style="{
                         left: `calc(${item.startOffset} * var(--day-width))`,
-                        width: `calc(${item.duration_days} * var(--day-width) - 8px)`,
-                        top: `calc(${item.lane} * var(--lane-height) + 8px)`,
+                        width: `calc(${item.duration_days} * var(--day-width) - 2px)`,
+                        top: `calc(${item.lane} * var(--lane-height) + 2px)`,
+                        background: item.color,
                       }"
                       :draggable="canEditVersion"
                       @dragstart="dragStart($event, item)"
                     >
                       <strong>{{ item.well }}</strong>
-                      <span>{{ formatIncrement(item.increment) }} · {{ item.planned_work }}</span>
+                      <span>{{ formatIncrement(item.increment) }}</span>
+                      <span>{{ item.planned_work }}</span>
                     </div>
                   </div>
                 </div>
