@@ -18,6 +18,9 @@ const selectedSheet = ref('')
 const versions = ref([])
 const activeVersionId = ref('base')
 const timelineZoom = ref(12)
+const minIncrementFilter = ref(0)
+const showPpd = ref(true)
+const selectedArea = ref('')
 
 const columns = reactive({
   brigade: '',
@@ -87,24 +90,39 @@ const formatDateCell = (value) => {
 const formatIncrement = (value) => (value && value > 0 ? Number(value).toFixed(1) : '0')
 const cloneItems = (items) => items.map((item) => ({ ...item }))
 const wellPrefix = (value) => String(value || '').trim().slice(0, 2).toUpperCase() || 'NA'
+const deriveArea = (value) => {
+  const text = String(value || '').trim()
+  if (!text) return 'Без участка'
+  const match = text.match(/(участ[а-я]*\s*[^,;/-]*)/i)
+  return (match?.[1] || text).trim()
+}
 const colorFromPrefix = (prefix) => {
   const hash = [...prefix].reduce((acc, char) => acc + char.charCodeAt(0), 0)
-  return `hsl(${(hash * 19) % 360} 62% 62%)`
+  return `hsl(${(hash * 19) % 360} 72% 56%)`
 }
 
 const availableColumns = computed(() => uploadedFile.value?.columns_info || [])
 const activeVersion = computed(() => versions.value.find((version) => version.id === activeVersionId.value) || versions.value[0] || null)
 const activeItems = computed(() => activeVersion.value?.items || [])
+const areaOptions = computed(() => [...new Set(activeItems.value.map((item) => deriveArea(item.brigade)))].sort((a, b) => a.localeCompare(b, 'ru')))
+const visibleItems = computed(() =>
+  activeItems.value.filter((item) => {
+    const increment = item.increment && item.increment > 0 ? Number(item.increment) : 0
+    const area = deriveArea(item.brigade)
+    if (!showPpd.value && item.is_ppd) return false
+    if (selectedArea.value && selectedArea.value !== area) return false
+    if (!item.is_ppd && increment < Number(minIncrementFilter.value || 0)) return false
+    return true
+  }),
+)
 const canEditVersion = computed(() => activeVersionId.value !== 'base')
-const totalIncrement = computed(() => activeItems.value.reduce((sum, item) => sum + (item.increment && item.increment > 0 ? Number(item.increment) : 0), 0))
-const zeroCount = computed(() => activeItems.value.filter((item) => !item.increment || item.increment <= 0).length)
-const ppdZeroCount = computed(() => activeItems.value.filter((item) => (!item.increment || item.increment <= 0) && item.is_ppd).length)
+const totalIncrement = computed(() => visibleItems.value.reduce((sum, item) => sum + (item.increment && item.increment > 0 ? Number(item.increment) : 0), 0))
 const previewColumns = computed(() => Object.keys(uploadedFile.value?.preview?.[0] || {}))
 
 const scheduleBounds = computed(() => {
-  if (!activeItems.value.length) return { min: null, max: null }
-  const min = activeItems.value.reduce((acc, item) => (!acc || item.start_date < acc ? item.start_date : acc), null)
-  const max = activeItems.value.reduce((acc, item) => (!acc || item.end_date > acc ? item.end_date : acc), null)
+  if (!visibleItems.value.length) return { min: null, max: null }
+  const min = visibleItems.value.reduce((acc, item) => (!acc || item.start_date < acc ? item.start_date : acc), null)
+  const max = visibleItems.value.reduce((acc, item) => (!acc || item.end_date > acc ? item.end_date : acc), null)
   return { min, max }
 })
 
@@ -141,11 +159,11 @@ const todayOffset = computed(() => {
   return diffDays(scheduleBounds.value.min, todayIso.value)
 })
 
-const chartMax = computed(() => Math.max(...activeItems.value.map((item) => (item.increment && item.increment > 0 ? Number(item.increment) : 0)), 10))
+const chartMax = computed(() => Math.max(...visibleItems.value.map((item) => (item.increment && item.increment > 0 ? Number(item.increment) : 0)), 10))
 
 const ganttRows = computed(() => {
   const byBrigade = new Map()
-  activeItems.value.forEach((item) => {
+  visibleItems.value.forEach((item) => {
     if (!byBrigade.has(item.brigade)) byBrigade.set(item.brigade, [])
     byBrigade.get(item.brigade).push(item)
   })
@@ -158,7 +176,7 @@ const ganttRows = computed(() => {
       const bars = sorted.map((item) => {
         const start = diffDays(scheduleBounds.value.min, item.start_date)
         const end = diffDays(scheduleBounds.value.min, item.end_date)
-        let lane = laneEnds.findIndex((laneEnd) => start > laneEnd)
+        let lane = laneEnds.findIndex((laneEnd) => start >= laneEnd)
         if (lane === -1) {
           lane = laneEnds.length
           laneEnds.push(end)
@@ -180,7 +198,7 @@ const ganttRows = computed(() => {
 
 const incrementTimeline = computed(() => {
   const grouped = new Map()
-  activeItems.value.forEach((item) => {
+  visibleItems.value.forEach((item) => {
     const key = item.end_date
     if (!grouped.has(key)) grouped.set(key, [])
     grouped.get(key).push(item)
@@ -216,15 +234,6 @@ const topChartBars = computed(() =>
 )
 
 const topChartMax = computed(() => Math.max(...topChartBars.value.map((group) => group.total), 10))
-
-const incrementLegend = computed(() => {
-  const seen = new Map()
-  activeItems.value.forEach((item) => {
-    const prefix = wellPrefix(item.well)
-    if (!seen.has(prefix)) seen.set(prefix, colorFromPrefix(prefix))
-  })
-  return [...seen.entries()].slice(0, 12).map(([prefix, color]) => ({ prefix, color }))
-})
 
 const syncColumns = (nextColumns) => {
   Object.assign(columns, {
@@ -506,7 +515,7 @@ onMounted(async () => {
             <div v-if="uploadedFile" class="info-cards">
               <div class="info-card"><span>Файл</span><strong>{{ uploadedFile.original_name }}</strong></div>
               <div class="info-card"><span>Лист</span><strong>{{ uploadedFile.selected_sheet }}</strong></div>
-              <div class="info-card"><span>Мероприятий</span><strong>{{ activeItems.length }}</strong></div>
+            <div class="info-card"><span>Мероприятий</span><strong>{{ visibleItems.length }}</strong></div>
               <div class="info-card"><span>Период</span><strong>{{ scheduleBounds.min ? `${formatDateCell(scheduleBounds.min)} — ${formatDateCell(scheduleBounds.max)}` : '—' }}</strong></div>
             </div>
           </div>
@@ -548,7 +557,7 @@ onMounted(async () => {
         <template v-else>
           <div class="stats-grid">
             <div class="stat-card"><span>Активная версия</span><strong>{{ activeVersion?.name }}</strong></div>
-            <div class="stat-card"><span>Мероприятий</span><strong>{{ activeItems.length }}</strong></div>
+            <div class="stat-card"><span>Мероприятий</span><strong>{{ visibleItems.length }}</strong></div>
             <div class="stat-card"><span>Суммарный прирост Qн</span><strong>{{ totalIncrement.toFixed(1) }}</strong></div>
           </div>
 
@@ -567,25 +576,11 @@ onMounted(async () => {
             <div class="notice">{{ canEditVersion ? 'Редактирование активно: перетаскивайте карточки мероприятий по строкам бригад и по датам.' : 'Редактирование выключено: сначала создайте новую версию графика.' }}</div>
           </div>
 
-          <div class="panel soft compact-controls">
-            <div class="toolbar between align-start">
-              <div>
-                <h2>Масштаб времени</h2>
-                <p class="subtitle">Регулируйте ширину дня и синхронно меняйте верхнюю диаграмму и Гант.</p>
-              </div>
-              <div class="zoom-control">
-                <span>Компактно</span>
-                <input v-model="timelineZoom" type="range" min="8" max="28" step="1" />
-                <span>Детально</span>
-              </div>
-            </div>
-          </div>
-
           <div class="panel planner-panel summary-panel">
             <div class="section-head">
               <div>
                 <h2>Приросты</h2>
-                <p class="subtitle">Новая синхронная диаграмма по дате завершения ремонта.</p>
+                <p class="subtitle">Синхронная столбчатая диаграмма по дате завершения ремонта.</p>
               </div>
               <div class="legend">
                 <span class="legend-item"><i class="legend-swatch today"></i> Сегодня</span>
@@ -596,42 +591,39 @@ onMounted(async () => {
 
             <div class="gantt-wrap compact-board summary-wrap">
               <div class="gantt-board" :style="{ '--day-count': ganttDates.length, '--day-width': `${timelineDayWidth}px` }">
-                <div class="gantt-header gantt-grid month-grid">
-                  <div class="gantt-corner">Мес.</div>
+                <div class="gantt-grid chart-grid chart-month-grid">
+                  <div class="gantt-corner"></div>
                   <div v-for="segment in monthSegments" :key="segment.key" class="gantt-month" :style="{ gridColumn: `span ${segment.span}` }">{{ segment.label }}</div>
                 </div>
-                <div class="gantt-header gantt-grid day-grid">
-                  <div class="gantt-corner">Дн.</div>
+                <div class="gantt-grid chart-grid chart-day-grid">
+                  <div class="gantt-corner"></div>
                   <div v-for="date in ganttDates" :key="date" class="gantt-date">{{ formatDayNumber(date) }}</div>
                 </div>
-
-                <div class="gantt-grid summary-row">
-                  <div class="summary-side">
-                    <div class="summary-pills">
-                      <span class="pill red">{{ zeroCount }} без прироста</span>
-                      <span class="pill blue">{{ ppdZeroCount }} ППД</span>
-                    </div>
-                    <div class="prefix-legend">
-                      <span v-for="item in incrementLegend" :key="item.prefix" class="prefix-chip"><i :style="{ background: item.color }"></i>{{ item.prefix }}</span>
-                    </div>
-                  </div>
-                  <div class="summary-track">
+                <div class="gantt-grid chart-row">
+                  <div class="chart-side"></div>
+                  <div class="chart-track">
                     <div v-if="todayOffset !== null" class="today-line" :style="{ left: `calc(${todayOffset} * var(--day-width) + (var(--day-width) / 2))` }"></div>
-                    <div v-for="group in topChartBars" :key="group.date" class="summary-group" :style="{ left: `calc(${group.offset} * var(--day-width))` }">
-                      <div class="summary-bars">
-                        <div
-                          v-if="group.total > 0"
-                          class="summary-bar-wrap single"
-                          :title="group.labels.join('\n')"
-                        >
-                          <div class="summary-total">{{ group.total.toFixed(1) }}</div>
-                          <div
-                            class="summary-single-bar"
-                            :style="{ height: `${Math.max((group.total / topChartMax) * 100, 8)}%` }"
-                          ></div>
+                    <div v-for="group in topChartBars" :key="group.date" class="chart-group" :style="{ left: `calc(${group.offset} * var(--day-width))` }">
+                      <div v-if="group.total > 0" class="chart-total" :title="group.labels.join('\n')">
+                        <div class="chart-total-bar-wrap" :style="{ height: `${Math.max((group.total / topChartMax) * 100, 10)}%` }">
+                          <div class="chart-total-bar">
+                            <div
+                              v-for="item in group.positive"
+                              :key="item.event_id"
+                              class="chart-segment"
+                              :style="{
+                                background: item.color,
+                                flex: `${Math.max(item.value, 1)} 1 0`,
+                              }"
+                            >
+                              <span class="chart-segment-text">{{ item.well }}</span>
+                              <span class="chart-segment-text">{{ formatIncrement(item.increment) }}</span>
+                            </div>
+                          </div>
                         </div>
+                        <div class="chart-total-label">{{ group.total.toFixed(1) }}</div>
                       </div>
-                      <div class="summary-dots">
+                      <div class="chart-zeroes">
                         <div v-for="item in group.zero" :key="`${item.event_id}-zero`" class="summary-dot" :class="{ ppd: item.is_ppd }" :style="item.is_ppd ? {} : { background: item.color }" :title="`${item.well} · ${item.is_ppd ? '0 / ППД' : '0 / без прироста'} · ${item.planned_work}`"></div>
                       </div>
                     </div>
@@ -641,26 +633,38 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div class="panel planner-panel">
-            <div class="section-head">
-              <div>
-                <h2>Диаграмма Ганта</h2>
-                <p class="subtitle">Тот же календарь, что и на диаграмме приростов. Текущая дата показана красной вертикальной линией.</p>
-              </div>
-              <div class="legend">
-                <span class="legend-item"><i class="legend-swatch today"></i> Сегодня</span>
-                <span class="legend-item"><i class="legend-swatch"></i> Цвет по первым двум буквам скважины</span>
-              </div>
-            </div>
+          <div class="zoom-strip">
+            <label class="control-inline">
+              <span>ГТМ</span>
+              <input v-model="minIncrementFilter" type="range" min="0" max="100" step="1" />
+              <strong>от {{ minIncrementFilter }}</strong>
+            </label>
+            <label class="toggle-inline">
+              <input v-model="showPpd" type="checkbox" />
+              <span>ППД</span>
+            </label>
+            <label class="control-inline compact-select">
+              <span>Участки</span>
+              <select v-model="selectedArea">
+                <option value="">Все</option>
+                <option v-for="area in areaOptions" :key="area" :value="area">{{ area }}</option>
+              </select>
+            </label>
+            <span>Масштаб</span>
+            <input v-model="timelineZoom" type="range" min="8" max="28" step="1" />
+            <span>{{ timelineZoom }} px/день</span>
+          </div>
 
-            <div class="gantt-wrap compact-board">
-              <div class="gantt-board" :style="{ '--day-count': ganttDates.length, '--day-width': `${timelineDayWidth}px` }">
+          <div class="panel planner-panel">
+            <div class="gantt-main-wrap">
+              <div class="gantt-wrap gantt-main-scroll">
+                <div class="gantt-board" :style="{ '--day-count': ganttDates.length, '--day-width': `${timelineDayWidth}px` }">
                 <div class="gantt-header gantt-grid month-grid">
-                  <div class="gantt-corner">Мес.</div>
+                  <div class="gantt-corner"></div>
                   <div v-for="segment in monthSegments" :key="`gantt-${segment.key}`" class="gantt-month" :style="{ gridColumn: `span ${segment.span}` }">{{ segment.label }}</div>
                 </div>
                 <div class="gantt-header gantt-grid day-grid">
-                  <div class="gantt-corner">Дн.</div>
+                  <div class="gantt-corner"></div>
                   <div v-for="date in ganttDates" :key="`gantt-${date}`" class="gantt-date">{{ formatDayNumber(date) }}</div>
                 </div>
 
@@ -678,20 +682,25 @@ onMounted(async () => {
                       :class="{ readonly: !canEditVersion }"
                       :style="{
                         left: `calc(${item.startOffset} * var(--day-width))`,
-                        width: `calc(${item.duration_days} * var(--day-width) - 2px)`,
-                        top: `calc(${item.lane} * var(--lane-height) + 2px)`,
+                        width: `calc(${item.duration_days} * var(--day-width))`,
+                        top: `calc(${item.lane} * var(--lane-height))`,
                         background: item.color,
                       }"
                       :draggable="canEditVersion"
                       @dragstart="dragStart($event, item)"
+                      :title="`${item.planned_work}\n${formatDateCell(item.start_date)} - ${formatDateCell(item.end_date)}`"
                     >
                       <strong>{{ item.well }}</strong>
                       <span>{{ formatIncrement(item.increment) }}</span>
-                      <div class="gantt-tooltip">{{ item.planned_work }}</div>
+                      <div class="gantt-tooltip">
+                        <div>{{ item.planned_work }}</div>
+                        <div>{{ formatDateCell(item.start_date) }} - {{ formatDateCell(item.end_date) }}</div>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
+            </div>
             </div>
           </div>
         </template>
