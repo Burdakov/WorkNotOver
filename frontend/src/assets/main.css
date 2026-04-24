@@ -370,55 +370,55 @@ select:disabled {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 2px 0;
+  gap: 2px;
+  padding: 0;
   color: #6d7f94;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .zoom-strip-row {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 4px;
   flex-wrap: nowrap;
   overflow-x: auto;
   width: 100%;
 }
 
 .zoom-strip-row-secondary {
-  justify-content: flex-start;
+  justify-content: center;
 }
 
 .zoom-strip input {
-  width: min(220px, 20vw);
+  width: min(160px, 14vw);
 }
 
 .control-inline,
 .toggle-inline {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   white-space: nowrap;
   color: #5e7187;
 }
 
 .control-inline span,
 .toggle-inline span {
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .control-inline strong {
-  font-size: 11px;
+  font-size: 10px;
   color: #203044;
 }
 
 .compact-select select {
-  min-height: 28px;
-  padding: 4px 8px;
+  min-height: 24px;
+  padding: 2px 6px;
   border-radius: 10px;
-  font-size: 12px;
-  min-width: 140px;
+  font-size: 11px;
+  min-width: 100px;
 }
 
 .toggle-inline input {
@@ -695,6 +695,36 @@ th {
 
 .chart-track {
   min-height: 202px;
+}
+
+.chart-line-overlay {
+  position: absolute;
+  left: 0;
+  bottom: 18px;
+  width: calc(var(--day-count) * var(--day-width));
+  height: 180px;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.chart-cumulative-line {
+  fill: none;
+  stroke: #111111;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chart-cumulative-label {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 700;
+  color: #111111;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 3;
 }
 
 .chart-grid {

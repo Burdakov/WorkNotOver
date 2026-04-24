@@ -4,6 +4,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8010/api'
 const SESSION_KEY = 'worknotover-krs-session'
 const VERSIONS_KEY = 'worknotover-krs-versions'
+const CHART_PLOT_HEIGHT = 180
 
 const sidebarCollapsed = ref(false)
 const currentView = ref('upload')
@@ -18,8 +19,11 @@ const selectedSheet = ref('')
 const versions = ref([])
 const activeVersionId = ref('base')
 const timelineZoom = ref(12)
+const timelineStartOffset = ref(0)
+const timelineEndOffset = ref(0)
 const minIncrementFilter = ref(0)
 const showPpd = ref(true)
+const selectedPrefixes = ref([])
 const selectedAreas = ref([])
 const selectedWorkTypes = ref([])
 
@@ -108,10 +112,12 @@ const colorFromPrefix = (prefix) => {
 const availableColumns = computed(() => uploadedFile.value?.columns_info || [])
 const activeVersion = computed(() => versions.value.find((version) => version.id === activeVersionId.value) || versions.value[0] || null)
 const activeItems = computed(() => activeVersion.value?.items || [])
+const prefixOptions = computed(() => [...new Set(activeItems.value.map((item) => wellPrefix(item.well)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru')))
 const areaOptions = computed(() => [...new Set(activeItems.value.map((item) => String(item.area || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru')))
 const plannedWorkOptions = computed(() => [...new Set(activeItems.value.map((item) => String(item.planned_work || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru')))
 const visibleItems = computed(() =>
   activeItems.value.filter((item) => {
+    if (selectedPrefixes.value.length && !selectedPrefixes.value.includes(wellPrefix(item.well))) return false
     if (!showPpd.value && item.is_ppd) return false
     if (selectedAreas.value.length && !selectedAreas.value.includes(String(item.area || '').trim())) return false
     if (selectedWorkTypes.value.length && !selectedWorkTypes.value.includes(String(item.planned_work || '').trim())) return false
@@ -122,12 +128,32 @@ const canEditVersion = computed(() => activeVersionId.value !== 'base')
 const totalIncrement = computed(() => visibleItems.value.reduce((sum, item) => sum + (item.increment && item.increment > 0 ? Number(item.increment) : 0), 0))
 const previewColumns = computed(() => Object.keys(uploadedFile.value?.preview?.[0] || {}))
 
-const scheduleBounds = computed(() => {
+const fullScheduleBounds = computed(() => {
   if (!visibleItems.value.length) return { min: null, max: null }
   const min = visibleItems.value.reduce((acc, item) => (!acc || item.start_date < acc ? item.start_date : acc), null)
   const max = visibleItems.value.reduce((acc, item) => (!acc || item.end_date > acc ? item.end_date : acc), null)
   return { min, max }
 })
+
+const fullTimelineDays = computed(() => {
+  if (!fullScheduleBounds.value.min || !fullScheduleBounds.value.max) return 0
+  return diffDays(fullScheduleBounds.value.min, fullScheduleBounds.value.max)
+})
+
+const timelineWindowStart = computed(() => {
+  if (!fullScheduleBounds.value.min) return null
+  return addDays(fullScheduleBounds.value.min, Math.min(timelineStartOffset.value, timelineEndOffset.value))
+})
+
+const timelineWindowEnd = computed(() => {
+  if (!fullScheduleBounds.value.min) return null
+  return addDays(fullScheduleBounds.value.min, Math.max(timelineStartOffset.value, timelineEndOffset.value))
+})
+
+const scheduleBounds = computed(() => ({
+  min: timelineWindowStart.value,
+  max: timelineWindowEnd.value,
+}))
 
 const ganttDates = computed(() => {
   if (!scheduleBounds.value.min || !scheduleBounds.value.max) return []
@@ -166,10 +192,12 @@ const chartMax = computed(() => Math.max(...visibleItems.value.map((item) => (it
 
 const ganttRows = computed(() => {
   const byBrigade = new Map()
-  visibleItems.value.forEach((item) => {
-    if (!byBrigade.has(item.brigade)) byBrigade.set(item.brigade, [])
-    byBrigade.get(item.brigade).push(item)
-  })
+  visibleItems.value
+    .filter((item) => item.end_date >= scheduleBounds.value.min && item.start_date <= scheduleBounds.value.max)
+    .forEach((item) => {
+      if (!byBrigade.has(item.brigade)) byBrigade.set(item.brigade, [])
+      byBrigade.get(item.brigade).push(item)
+    })
 
   return [...byBrigade.entries()]
     .sort((a, b) => a[0].localeCompare(b[0], 'ru'))
@@ -177,20 +205,23 @@ const ganttRows = computed(() => {
       const sorted = [...items].sort((a, b) => a.start_date.localeCompare(b.start_date) || a.well.localeCompare(b.well, 'ru'))
       const laneEnds = []
       const bars = sorted.map((item) => {
-        const start = diffDays(scheduleBounds.value.min, item.start_date)
-        const end = diffDays(scheduleBounds.value.min, item.end_date)
-        let lane = laneEnds.findIndex((laneEnd) => start >= laneEnd)
+        const visibleStart = item.start_date < scheduleBounds.value.min ? scheduleBounds.value.min : item.start_date
+        const visibleEnd = item.end_date > scheduleBounds.value.max ? scheduleBounds.value.max : item.end_date
+        const clippedStart = diffDays(scheduleBounds.value.min, visibleStart)
+        const clippedEnd = diffDays(scheduleBounds.value.min, visibleEnd)
+        let lane = laneEnds.findIndex((laneEnd) => clippedStart >= laneEnd)
         if (lane === -1) {
           lane = laneEnds.length
-          laneEnds.push(end)
+          laneEnds.push(clippedEnd)
         } else {
-          laneEnds[lane] = end
+          laneEnds[lane] = clippedEnd
         }
         const prefix = wellPrefix(item.well)
         return {
           ...item,
           lane,
-          startOffset: start,
+          startOffset: clippedStart,
+          visibleDurationDays: clippedEnd - clippedStart + 1,
           prefix,
           color: colorFromPrefix(prefix),
         }
@@ -201,11 +232,13 @@ const ganttRows = computed(() => {
 
 const incrementTimeline = computed(() => {
   const grouped = new Map()
-  visibleItems.value.forEach((item) => {
+  visibleItems.value
+    .filter((item) => item.end_date >= scheduleBounds.value.min && item.end_date <= scheduleBounds.value.max)
+    .forEach((item) => {
     const key = item.end_date
     if (!grouped.has(key)) grouped.set(key, [])
     grouped.get(key).push(item)
-  })
+    })
 
   return [...grouped.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
@@ -237,6 +270,35 @@ const topChartBars = computed(() =>
 )
 
 const topChartMax = computed(() => Math.max(...topChartBars.value.map((group) => group.total), 10))
+const cumulativeIncrementSeries = computed(() => {
+  const grouped = new Map(
+    topChartBars.value.map((group) => [group.date, group.total]),
+  )
+  return ganttDates.value.map((date, index) => {
+    const runningTotal = visibleItems.value.reduce((sum, item) => {
+      const value = item.increment && item.increment > 0 ? Number(item.increment) : 0
+      return item.end_date <= date ? sum + value : sum
+    }, 0)
+    return {
+      date,
+      index,
+      total: runningTotal,
+      x: index * timelineDayWidth.value + timelineDayWidth.value / 2,
+    }
+  })
+})
+const cumulativeIncrementMax = computed(() => Math.max(...cumulativeIncrementSeries.value.map((point) => point.total), 10))
+const cumulativeLinePoints = computed(() =>
+  cumulativeIncrementSeries.value
+    .map((point) => {
+      const y = CHART_PLOT_HEIGHT - (point.total / cumulativeIncrementMax.value) * CHART_PLOT_HEIGHT
+      return `${point.x},${y}`
+    })
+    .join(' '),
+)
+const cumulativeLineLabels = computed(() =>
+  cumulativeIncrementSeries.value.filter((point, index, source) => index % 7 === 0 || index === source.length - 1),
+)
 const incrementLegend = computed(() => {
   const seen = new Map()
   visibleItems.value.forEach((item) => {
@@ -245,6 +307,19 @@ const incrementLegend = computed(() => {
   })
   return [...seen.entries()].slice(0, 16).map(([prefix, color]) => ({ prefix, color }))
 })
+
+watch([fullScheduleBounds, todayIso], ([bounds]) => {
+  if (!bounds.min || !bounds.max) {
+    timelineStartOffset.value = 0
+    timelineEndOffset.value = 0
+    return
+  }
+  const totalDays = diffDays(bounds.min, bounds.max)
+  const preferredStart = addDays(todayIso.value, -7)
+  const startOffset = preferredStart <= bounds.min ? 0 : Math.min(diffDays(bounds.min, preferredStart), totalDays)
+  timelineStartOffset.value = startOffset
+  timelineEndOffset.value = totalDays
+}, { immediate: true })
 
 const syncColumns = (nextColumns) => {
   Object.assign(columns, {
@@ -617,6 +692,20 @@ onMounted(async () => {
                   <div class="chart-side"></div>
                   <div class="chart-track">
                     <div v-if="todayOffset !== null" class="today-line" :style="{ left: `calc(${todayOffset} * var(--day-width) + (var(--day-width) / 2))` }"></div>
+                    <svg v-if="cumulativeIncrementSeries.length" class="chart-line-overlay" :viewBox="`0 0 ${Math.max(ganttDates.length * timelineDayWidth, 1)} ${CHART_PLOT_HEIGHT}`" preserveAspectRatio="none">
+                      <polyline :points="cumulativeLinePoints" class="chart-cumulative-line" />
+                    </svg>
+                    <div
+                      v-for="point in cumulativeLineLabels"
+                      :key="`cum-${point.date}`"
+                      class="chart-cumulative-label"
+                      :style="{
+                        left: `${point.x}px`,
+                        top: `${CHART_PLOT_HEIGHT - (point.total / cumulativeIncrementMax) * CHART_PLOT_HEIGHT - 14}px`,
+                      }"
+                    >
+                      {{ point.total.toFixed(1) }}
+                    </div>
                     <div v-for="group in topChartBars" :key="group.date" class="chart-group" :style="{ left: `calc(${group.offset} * var(--day-width))` }">
                       <div v-if="group.total > 0" class="chart-total" :title="group.labels.join('\n')">
                         <div class="chart-total-label">{{ group.total.toFixed(1) }}</div>
@@ -653,6 +742,12 @@ onMounted(async () => {
                 <input v-model="minIncrementFilter" type="range" min="0" max="100" step="1" />
                 <strong>от {{ minIncrementFilter }}</strong>
               </label>
+              <label class="control-inline compact-select">
+                <span>УН</span>
+                <select v-model="selectedPrefixes" multiple size="1">
+                  <option v-for="prefix in prefixOptions" :key="prefix" :value="prefix">{{ prefix }}</option>
+                </select>
+              </label>
               <label class="toggle-inline toggle-inline-ppd">
                 <input v-model="showPpd" type="checkbox" />
                 <span>ППД</span>
@@ -662,6 +757,16 @@ onMounted(async () => {
                 <select v-model="selectedAreas" multiple size="1">
                   <option v-for="area in areaOptions" :key="area" :value="area">{{ area }}</option>
                 </select>
+              </label>
+              <label class="control-inline">
+                <span>От</span>
+                <input v-model="timelineStartOffset" type="range" min="0" :max="fullTimelineDays" step="1" />
+                <strong>{{ formatDateCell(timelineWindowStart) }}</strong>
+              </label>
+              <label class="control-inline">
+                <span>До</span>
+                <input v-model="timelineEndOffset" type="range" min="0" :max="fullTimelineDays" step="1" />
+                <strong>{{ formatDateCell(timelineWindowEnd) }}</strong>
               </label>
               <span>Масштаб</span>
               <input v-model="timelineZoom" type="range" min="8" max="28" step="1" />
@@ -704,7 +809,7 @@ onMounted(async () => {
                       :class="{ readonly: !canEditVersion }"
                       :style="{
                         left: `calc(${item.startOffset} * var(--day-width))`,
-                        width: `calc(${item.duration_days} * var(--day-width))`,
+                        width: `calc(${item.visibleDurationDays} * var(--day-width))`,
                         top: `calc(${item.lane} * var(--lane-height))`,
                         background: item.color,
                         opacity: gtmOpacity(item),
