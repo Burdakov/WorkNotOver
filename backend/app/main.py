@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.forecast import router as forecast_router
 from app.api.import_api import router as import_router
 from app.api.manual_inputs import router as manual_inputs_router
 from app.api.schedule import router as schedule_router
@@ -31,3 +32,4 @@ def health() -> dict[str, str]:
 app.include_router(import_router)
 app.include_router(manual_inputs_router)
 app.include_router(schedule_router)
+app.include_router(forecast_router)

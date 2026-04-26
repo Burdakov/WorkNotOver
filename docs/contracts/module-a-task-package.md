@@ -117,7 +117,8 @@ Excel-файл текущего режима скважин.
 - cumulative production, если доступно
 - cumulative gas production, если доступно
 - NIZ
-- status / fund type, если доступно
+- status
+- fund type (`Base` / `New wells`), если доступно
 
 ### Входной источник 2
 

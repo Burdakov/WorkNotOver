@@ -73,3 +73,37 @@ class ManualInputSetModel(Base):
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     payload_json: Mapped[dict[str, object]] = mapped_column(JSON())
     metadata_json: Mapped[dict[str, object] | None] = mapped_column(JSON(), nullable=True)
+
+
+class ScenarioModel(Base):
+    __tablename__ = "scenarios"
+
+    scenario_id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(255))
+    source_type: Mapped[str] = mapped_column(String(64), default="uploaded_gtm")
+    parent_scenario_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    forecast_start_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    forecast_end_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow)
+    status: Mapped[str] = mapped_column(String(32), default="calculated")
+    metadata_json: Mapped[dict[str, object] | None] = mapped_column(JSON(), nullable=True)
+
+    results: Mapped[list["ScenarioResultModel"]] = relationship(
+        back_populates="scenario",
+        cascade="all, delete-orphan",
+    )
+
+
+class ScenarioResultModel(Base):
+    __tablename__ = "scenario_results"
+
+    scenario_result_id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
+    scenario_id: Mapped[str] = mapped_column(ForeignKey("scenarios.scenario_id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow)
+    production_summary_json: Mapped[dict[str, object] | None] = mapped_column(JSON(), nullable=True)
+    production_points_json: Mapped[list[dict[str, object]] | None] = mapped_column(JSON(), nullable=True)
+    well_results_json: Mapped[list[dict[str, object]] | None] = mapped_column(JSON(), nullable=True)
+    source_payload_json: Mapped[dict[str, object] | None] = mapped_column(JSON(), nullable=True)
+    metadata_json: Mapped[dict[str, object] | None] = mapped_column(JSON(), nullable=True)
+
+    scenario: Mapped[ScenarioModel] = relationship(back_populates="results")

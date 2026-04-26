@@ -30,6 +30,23 @@ def save_manual_inputs(payload: ManualInputSaveRequest, db: Session = Depends(ge
     return ManualInputSaveResponse(reference=reference, payload=normalized_payload)
 
 
+@router.get("")
+def list_manual_inputs(db: Session = Depends(get_db)) -> list[dict]:
+    items = ManualInputRepository(db).list_items()
+    return [
+        {
+            "reference": {
+                "manual_input_set_id": item.manual_input_set_id,
+                "name": item.name,
+                "created_at": item.created_at.isoformat(),
+                "metadata": item.metadata_json,
+            },
+            "payload": item.payload_json,
+        }
+        for item in items
+    ]
+
+
 @router.get("/{manual_input_set_id}")
 def get_manual_inputs(manual_input_set_id: str, db: Session = Depends(get_db)) -> dict:
     item = ManualInputRepository(db).get_payload(manual_input_set_id)

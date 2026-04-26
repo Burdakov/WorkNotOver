@@ -222,16 +222,25 @@
 - `current_cumulative_liquid: float | None`
 - `niz: float | None`
 - `reserves_group: str | None`
-- `launch_date: str | None`
 - `metadata: dict[str, object] | None`
+
+### Fund Types
+
+- `Base`
+- `New wells`
 
 ### Инварианты
 
 - `well_id` должен быть устойчивым во всех модулях;
 - `lu_id`, `sloy_id`, `well_pad_id` задают иерархию принадлежности скважины, если доступны;
+- `fund_type`, если задан, должен использовать канонические значения `Base` и `New wells`;
+- для `fund_type = Base` скважина считается частью базового фонда, и её baseline forecast строится от последнего фактического режима;
+- для `fund_type = New wells` baseline-rule базового фонда не должен применяться автоматически без отдельной сценарной логики; дата запуска в текущей методике определяется датой соответствующего ГТМ или planner-side события, а не отдельным полем `WellState`;
+- после наступления события ГТМ или запуска для `fund_type = New wells` жидкостный инкремент применяется по той же логике `expected_liquid_increment`, что и для `Base`;
 - дебиты и накопленные показатели неотрицательны, если заданы;
 - `current_gor` задаётся в одном согласованном формате и единицах измерения по проекту;
-- `current_watercut` задаётся в одном согласованном формате: доля или проценты.
+- `current_watercut` задаётся в одном согласованном формате: доля или проценты;
+- `niz`, `current_cumulative_oil` и `current_watercut`, если доступны, должны быть достаточны для расчёта текущего положения скважины на характеристике вытеснения и обратного расчёта remaining NIZ.
 
 ---
 
@@ -280,20 +289,26 @@
 ### Поля
 
 - `config_id: str`
+- `lu_id: str | None`
+- `sloy_id: str | None`
 - `curve_points: list[DisplacementCurvePoint]`
 - `watercut_unit: str`
 - `notes: str | None`
 
 ### Related Entity: DisplacementCurvePoint
 
-- `recovery_share: float`
+- `NIZ: float`
 - `watercut: float`
 
 ### Инварианты
 
-- точки отсортированы по `recovery_share`;
-- `recovery_share` монотонен;
-- формат `watercut` согласован с `watercut_unit`.
+- `lu_id` и `sloy_id` задают scope конфига по `LU/SLOY`; конфиг может быть привязан к `LU` и при необходимости уточнён до уровня `SLOY`;
+- точки отсортированы по `NIZ`;
+- `NIZ` монотонен;
+- формат `watercut` согласован с `watercut_unit`;
+- в текущей методике `Module B` ось `NIZ` используется как нормализованный показатель, рассчитываемый из `NIZ` и накопленной нефти по формуле, зафиксированной в контракте `Module B`;
+- поле `NIZ` внутри `DisplacementCurvePoint` хранит именно нормализованную координату характеристики вытеснения, а не абсолютный объём начальных извлекаемых запасов;
+- между соседними точками характеристики используется линейная интерполяция.
 
 ---
 
@@ -304,8 +319,10 @@
 ### Поля
 
 - `config_id: str`
-- `decline_mode: str`
-- `monthly_decline_values: list[MonthlyDeclinePoint]`
+- `lu_id: str | None`
+- `sloy_id: str | None`
+- `base_monthly_decline_values: list[MonthlyDeclinePoint]`
+- `new_wells_monthly_decline_values: list[MonthlyDeclinePoint]`
 - `notes: str | None`
 
 ### Related Entity: MonthlyDeclinePoint
@@ -313,10 +330,20 @@
 - `month_index: int`
 - `liquid_decline_factor: float`
 
+### Интерпретация
+
+- в текущем интерфейсе `Module G` значение `liquid_decline_factor` вводится как годовой темп падения жидкости для соответствующего месяца горизонта;
+- `Module B` не должен трактовать это поле как уже готовый месячный коэффициент, а обязан пересчитывать его во внутренний суточный шаг расчёта.
+
 ### Инварианты
 
 - `month_index >= 0`;
-- коэффициенты неотрицательны.
+- коэффициенты неотрицательны;
+- `lu_id` и `sloy_id` задают scope конфига по `LU/SLOY`; конфиг может быть привязан к `LU` и при необходимости уточнён до уровня `SLOY`;
+- в текущей методике `Module B` массив `base_monthly_decline_values` используется как характеристика снижения жидкости для фонда `Base`;
+- в текущей методике `Module B` массив `new_wells_monthly_decline_values` используется как характеристика снижения жидкости для `New wells` после даты соответствующего ГТМ или события запуска;
+- годовой темп падения должен пересчитываться `Module B` в эквивалентный суточный коэффициент перед применением к `liquid_rate`;
+- стандартный горизонт ручных рядов decline — 24 месяца, если отдельный сценарий не задаёт иное.
 
 ---
 
@@ -346,6 +373,33 @@
 - `available_from` хранится в ISO-формате;
 - `available_to >= available_from`, если задано;
 - `capacity_share` положителен, если задан.
+
+---
+
+## Entity: BrigadeCapacityByLuConfig
+
+Описывает помесячную доступность бригад КРС по участкам недр для optimizer-level планирования.
+
+### Поля
+
+- `config_id: str`
+- `manual_input_set_id: str`
+- `items: list[BrigadeCapacityByLuItem]`
+- `notes: str | None`
+
+### Related Entity: BrigadeCapacityByLuItem
+
+- `lu_id: str`
+- `month_date: str`
+- `brigade_count: int`
+- `metadata: dict[str, object] | None`
+
+### Инварианты
+
+- `manual_input_set_id` ссылается на `ManualInputSet.manual_input_set_id`;
+- `month_date` хранится в ISO-формате и представляет месяц расчёта;
+- `brigade_count >= 0`;
+- для одной пары `lu_id + month_date` внутри одного `BrigadeCapacityByLuConfig` не должно быть более одной активной записи.
 
 ---
 
@@ -530,15 +584,16 @@
 
 ### Поля
 
-- `brigade_count: int`
+- `brigade_count: int | None`
 - `durations_by_gtm_type: dict[str, int]`
 - `calendar_rules: dict[str, object] | None`
 - `notes: str | None`
 
 ### Инварианты
 
-- `brigade_count > 0`;
+- `brigade_count`, если задан, > 0;
 - все длительности положительные целые.
+- `brigade_count` может использоваться как глобальный fallback, если детальный `BrigadeCapacityByLuConfig` не задан.
 
 ---
 
@@ -743,6 +798,8 @@
 - `name: str`
 - `source_type: str`
 - `parent_scenario_id: str | None`
+- `forecast_start_date: str | None`
+- `forecast_end_date: str | None`
 - `created_at: str`
 - `status: str`
 - `metadata: dict[str, object] | None`
@@ -756,6 +813,7 @@
 ### Инварианты
 
 - сценарии неизменяемы после создания;
+- если `forecast_start_date` и `forecast_end_date` не заданы явно пользователем, система должна назначать default horizon от даты запуска сценария до `31 декабря` следующего календарного года;
 - производные сценарии ссылаются на родителя, если это применимо.
 
 ---
@@ -856,7 +914,7 @@
 - Module A владеет raw upload, ручными исходными вводными, нормализацией и сущностями `Dataset`, `DatasetVersion`, `DatasetReference`, `ManualInputSet`, `ManualInputReference`;
 - Module B владеет production outputs;
 - Module C владеет economics outputs;
-- Module D владеет KRS schedule и optimization outputs и потребляет `BrigadeAvailabilityConfig` и `FailureCoefficientConfig`;
+- Module D владеет KRS schedule и optimization outputs и потребляет `BrigadeAvailabilityConfig`, `BrigadeCapacityByLuConfig`, `FailureCoefficientConfig` и `KrsResourceConfig`;
 - Module E владеет infrastructure validation outputs;
 - Module F владеет planner revisions и editable schedule payloads;
 - Module G владеет orchestration payloads для пересчёта сценариев;

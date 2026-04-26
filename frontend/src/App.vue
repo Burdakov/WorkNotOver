@@ -26,6 +26,74 @@ const showPpd = ref(true)
 const selectedPrefixes = ref([])
 const selectedAreas = ref([])
 const selectedWorkTypes = ref([])
+const inputTab = ref('upload')
+const selectedSourceKind = ref('external_krs_schedule')
+const datasets = ref([])
+const selectedDatasetId = ref('')
+const datasetDetail = ref(null)
+const manualInputSets = ref([])
+const latestNormalization = ref(null)
+const plannerSourceMode = ref('file')
+const plannerDatasetReference = ref(null)
+const knownLuOptions = ref([])
+
+const INPUT_TABS = [
+  { id: 'upload', label: 'Загрузка' },
+  { id: 'reservoir', label: 'Характеристики пласта' },
+  { id: 'economics', label: 'Экономические вводные' },
+  { id: 'brigades', label: 'Ограничения бригад' },
+  { id: 'optimizer', label: 'Схема работы оптимизатора' },
+]
+
+const SOURCE_KIND_OPTIONS = [
+  { id: 'external_krs_schedule', label: '1. Загрузить существующий график КРС' },
+  { id: 'wells', label: '2. Загрузить базовый фонд' },
+  { id: 'gtm', label: '3. Загрузить план ГТМ' },
+  { id: 'infrastructure', label: '4. Загрузить ограничения инфраструктуры' },
+]
+
+const SOURCE_KIND_FIELD_LABELS = {
+  brigade: 'Бригада',
+  area: 'Участок',
+  lu: 'LU',
+  sloy: 'SLOY',
+  well_pad: 'Куст',
+  well: 'Скважина',
+  fund_type: 'Тип фонда',
+  start_date: 'Дата начала',
+  end_date: 'Дата завершения',
+  planned_work: 'Планируемый объем работ',
+  increment: 'Oil increment / Qн',
+  liquid_increment: 'Liquid increment',
+  gas_increment: 'Gas increment',
+  gor_change: 'GOR change',
+  oil_rate: 'Текущая нефть',
+  gas_rate: 'Текущий газ',
+  liquid_rate: 'Текущая жидкость',
+  watercut: 'Обводненность',
+  gor: 'Газовый фактор',
+  cumulative_oil: 'Накопленная нефть',
+  cumulative_gas: 'Накопленный газ',
+  niz: 'НИЗ',
+  gtm_type: 'Тип ГТМ',
+  duration_days: 'Длительность, дни',
+  object_name: 'Объект инфраструктуры',
+  object_type: 'Тип объекта',
+  commissioning_date: 'Дата ввода',
+  capacity_oil: 'Мощность по нефти',
+  capacity_gas: 'Мощность по газу',
+  capacity_liquid: 'Мощность по жидкости',
+  capacity_water: 'Мощность по воде',
+  connection_well: 'Привязка скважины',
+  parent_object: 'Родительский объект',
+}
+
+const SOURCE_KIND_FIELDS = {
+  external_krs_schedule: ['brigade', 'area', 'lu', 'sloy', 'well_pad', 'well', 'start_date', 'end_date', 'planned_work', 'increment', 'liquid_increment', 'gas_increment', 'gor_change'],
+  wells: ['area', 'lu', 'sloy', 'well_pad', 'well', 'fund_type', 'oil_rate', 'gas_rate', 'liquid_rate', 'watercut', 'gor', 'cumulative_oil', 'cumulative_gas', 'niz'],
+  gtm: ['area', 'lu', 'sloy', 'well_pad', 'well', 'gtm_type', 'planned_work', 'start_date', 'end_date', 'duration_days', 'increment', 'liquid_increment', 'gas_increment', 'gor_change'],
+  infrastructure: ['area', 'lu', 'sloy', 'well_pad', 'object_name', 'object_type', 'commissioning_date', 'capacity_oil', 'capacity_gas', 'capacity_liquid', 'capacity_water', 'connection_well', 'parent_object'],
+}
 
 const columns = reactive({
   brigade: '',
@@ -35,6 +103,99 @@ const columns = reactive({
   end_date: '',
   increment: '',
   planned_work: '',
+})
+
+const normalizeColumns = reactive({
+  well: '',
+  area: '',
+  lu: '',
+  sloy: '',
+  well_pad: '',
+  brigade: '',
+  fund_type: '',
+  start_date: '',
+  end_date: '',
+  planned_work: '',
+  increment: '',
+  liquid_increment: '',
+  gas_increment: '',
+  gor_change: '',
+  oil_rate: '',
+  gas_rate: '',
+  liquid_rate: '',
+  watercut: '',
+  gor: '',
+  cumulative_oil: '',
+  cumulative_gas: '',
+  niz: '',
+  gtm_type: '',
+  duration_days: '',
+  object_name: '',
+  object_type: '',
+  commissioning_date: '',
+  capacity_oil: '',
+  capacity_gas: '',
+  capacity_liquid: '',
+  capacity_water: '',
+  connection_well: '',
+  parent_object: '',
+})
+
+const reservoirForm = reactive({
+  name: 'Характеристики пласта',
+  selectedLu: '',
+  selectedSloy: '',
+  watercutUnit: 'percent',
+  displacementPoints: Array.from({ length: 21 }, (_, index) => ({
+    watercut: index * 5,
+    niz: '',
+  })),
+  declineMode: 'annual_percent_by_month',
+  baseDeclineRows: Array.from({ length: 24 }, (_, index) => ({
+    month_index: index + 1,
+    decline_percent: 5,
+  })),
+  newWellsDeclineRows: Array.from({ length: 24 }, (_, index) => ({
+    month_index: index + 1,
+    decline_percent: index < 12 ? 50 : 5,
+  })),
+  notes: '',
+})
+
+const economicsForm = reactive({
+  name: 'Экономические вводные',
+  rows: [{
+    lu_id: '',
+    net_back: '',
+    oil_price: '',
+    gas_price: '',
+    liquid_handling_cost: '',
+    water_handling_cost: '',
+    gas_handling_cost: '',
+    discount_rate: '',
+  }],
+  gtmCostsText: '',
+  notes: '',
+})
+
+const brigadesForm = reactive({
+  name: 'Ограничения бригад',
+  capacityRows: [{ lu_id: '', month_date: '', brigade_count: '' }],
+  failureRows: [{ scope_type: 'lu', lu_id: '', sloy_id: '', coefficient: '' }],
+  durationRows: [{ gtm_type: '', duration_days: '' }],
+  fallbackBrigadeCount: '',
+  notes: '',
+})
+
+const optimizerForm = reactive({
+  name: 'Схема работы оптимизатора',
+  targetFunction: 'max_npv',
+  buildMode: 'build_and_optimize',
+  scenarioSelection: 'best_feasible',
+  infraReactionMode: 'hard_stop',
+  heuristicMode: 'guided_search',
+  scenarioDescription: '',
+  constraintsLogic: '',
 })
 
 const showMessage = (text, type = 'info') => {
@@ -127,6 +288,54 @@ const visibleItems = computed(() =>
 const canEditVersion = computed(() => activeVersionId.value !== 'base')
 const totalIncrement = computed(() => visibleItems.value.reduce((sum, item) => sum + (item.increment && item.increment > 0 ? Number(item.increment) : 0), 0))
 const previewColumns = computed(() => Object.keys(uploadedFile.value?.preview?.[0] || {}))
+const sourceKindFields = computed(() => SOURCE_KIND_FIELDS[selectedSourceKind.value] || [])
+const selectedSourceKindLabel = computed(() => SOURCE_KIND_OPTIONS.find((item) => item.id === selectedSourceKind.value)?.label || 'Источник')
+const viewTitle = computed(() => (currentView.value === 'upload' ? 'Исходные данные' : 'Планировщик КРС'))
+const viewSubtitle = computed(() =>
+  currentView.value === 'upload'
+    ? 'Подготовка внешнего графика КРС, базового фонда, плана ГТМ, ограничений инфраструктуры и ручных вводных для расчётного контура.'
+    : 'Светлый рабочий интерфейс для версий графика, анализа приростов, ручной корректировки и последующей выгрузки обновлённого плана.',
+)
+const uploadedFileRowCount = computed(() => uploadedFile.value?.preview?.length || 0)
+const datasetsByType = computed(() => {
+  const grouped = new Map()
+  datasets.value.forEach((item) => {
+    const type = item.dataset_reference.dataset_type
+    if (!grouped.has(type)) grouped.set(type, [])
+    grouped.get(type).push(item)
+  })
+  return grouped
+})
+const sourceKindStatusCards = computed(() =>
+  SOURCE_KIND_OPTIONS.map((option) => {
+    const items = datasetsByType.value.get(option.id) || []
+    const latest = items[0] || null
+    return {
+      id: option.id,
+      label: option.label,
+      loaded: Boolean(latest),
+      rows: latest?.dataset_reference?.row_count || 0,
+      name: latest?.dataset_reference?.name || 'Не загружено',
+    }
+  }),
+)
+const manualInputSummaryCards = computed(() => {
+  const categories = [
+    { id: 'displacement_config', label: 'Характеристики пласта' },
+    { id: 'economics_config', label: 'Экономические вводные' },
+    { id: 'brigade_capacity_by_lu_config', label: 'Ограничения бригад' },
+    { id: 'optimizer_config', label: 'Схема оптимизатора' },
+  ]
+  return categories.map((category) => {
+    const latest = manualInputSets.value.find((item) => item.payload?.[category.id])
+    return {
+      ...category,
+      loaded: Boolean(latest),
+      name: latest?.reference?.name || 'Не сохранено',
+    }
+  })
+})
+const luSelectOptions = computed(() => [...knownLuOptions.value].sort((a, b) => a.localeCompare(b, 'ru')))
 
 const fullScheduleBounds = computed(() => {
   if (!visibleItems.value.length) return { min: null, max: null }
@@ -334,13 +543,15 @@ const syncColumns = (nextColumns) => {
 }
 
 const persistSession = () => {
-  if (!uploadedFile.value?.file_id) return
+  if (!uploadedFile.value?.file_id && !plannerDatasetReference.value?.dataset_id) return
   writeJson(SESSION_KEY, {
-    file_id: uploadedFile.value.file_id,
-    sheet_name: uploadedFile.value.selected_sheet,
+    file_id: uploadedFile.value?.file_id || null,
+    sheet_name: uploadedFile.value?.selected_sheet || null,
     columns: { ...columns },
     view: currentView.value,
     active_version_id: activeVersionId.value,
+    planner_source_mode: plannerSourceMode.value,
+    planner_dataset_reference: plannerDatasetReference.value,
   })
 }
 
@@ -387,6 +598,44 @@ const request = async (path, options = {}) => {
   return response
 }
 
+const syncPlannerDefaults = () => {
+  syncColumns({
+    brigade: columns.brigade || 'Бригада',
+    area: columns.area || 'Участок',
+    well: columns.well || 'Скв.',
+    start_date: columns.start_date || 'Дата начала (план)',
+    end_date: columns.end_date || 'Заверш рем (план)',
+    increment: columns.increment || 'Qн, тн/сут',
+    planned_work: columns.planned_work || 'Планируемый объем работ',
+  })
+}
+
+const normalizeColumnsPayload = () =>
+  Object.fromEntries(
+    sourceKindFields.value
+      .map((field) => [field, normalizeColumns[field]])
+      .filter(([, value]) => Boolean(value)),
+  )
+
+const loadDatasets = async () => {
+  const response = await request('/datasets')
+  datasets.value = await response.json()
+  await hydrateLuOptions()
+}
+
+const loadManualInputSets = async () => {
+  const response = await request('/manual-inputs')
+  manualInputSets.value = await response.json()
+}
+
+const loadDatasetDetail = async (datasetId, datasetVersionId = null) => {
+  const query = datasetVersionId ? `?dataset_version_id=${encodeURIComponent(datasetVersionId)}` : ''
+  const response = await request(`/datasets/${datasetId}${query}`)
+  datasetDetail.value = await response.json()
+  selectedDatasetId.value = datasetId
+  appendLuOptionsFromPayload(datasetDetail.value.normalized_payload)
+}
+
 const loadUploadedFiles = async () => {
   const response = await request('/files')
   uploadedFiles.value = await response.json()
@@ -409,6 +658,23 @@ const parseSchedule = async (customColumns = null, keepVersions = true) => {
   persistVersions()
 }
 
+const loadSourceFile = async (fileId, sheetName = null) => {
+  loading.value = true
+  try {
+    const query = sheetName ? `?sheet_name=${encodeURIComponent(sheetName)}` : ''
+    const response = await request(`/files/${fileId}${query}`)
+    uploadedFile.value = await response.json()
+    selectedFileId.value = uploadedFile.value.file_id
+    selectedSheet.value = uploadedFile.value.selected_sheet
+    latestNormalization.value = null
+    showMessage('Файл исходных данных открыт.', 'success')
+  } catch (error) {
+    showMessage(error.message, 'error')
+  } finally {
+    loading.value = false
+  }
+}
+
 const openFile = async (fileId, sheetName = null, keepVersions = true) => {
   loading.value = true
   try {
@@ -417,6 +683,8 @@ const openFile = async (fileId, sheetName = null, keepVersions = true) => {
     uploadedFile.value = await response.json()
     selectedFileId.value = uploadedFile.value.file_id
     selectedSheet.value = uploadedFile.value.selected_sheet
+    plannerSourceMode.value = 'file'
+    plannerDatasetReference.value = null
     await parseSchedule(null, keepVersions)
     showMessage('График КРС открыт.', 'success')
   } catch (error) {
@@ -437,10 +705,10 @@ const handleFileChange = async (event) => {
     uploadedFile.value = await response.json()
     selectedFileId.value = uploadedFile.value.file_id
     selectedSheet.value = uploadedFile.value.selected_sheet
-    await parseSchedule(null, false)
     await loadUploadedFiles()
-    currentView.value = 'planner'
-    showMessage('Excel загружен и разобран.', 'success')
+    latestNormalization.value = null
+    datasetDetail.value = null
+    showMessage('Excel загружен. Проверьте сопоставление и сохраните набор данных.', 'success')
   } catch (error) {
     showMessage(error.message, 'error')
   } finally {
@@ -460,6 +728,327 @@ const applyColumnMapping = async () => {
     loading.value = false
   }
 }
+
+const openImportedDataset = async (datasetReference, keepVersions = false) => {
+  if (!datasetReference?.dataset_id) return
+  loading.value = true
+  try {
+    const response = await request('/schedule/open-imported', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        dataset_id: datasetReference.dataset_id,
+        dataset_version_id: datasetReference.dataset_version_id,
+      }),
+    })
+    const payload = await response.json()
+    const storageKey = `dataset:${payload.dataset_reference.dataset_id}:${payload.dataset_reference.dataset_version_id}`
+    uploadedFile.value = {
+      file_id: storageKey,
+      original_name: payload.source_file_name || payload.version_name,
+      sheets: ['normalized'],
+      selected_sheet: 'normalized',
+      preview: [],
+      columns_info: [],
+    }
+    plannerSourceMode.value = 'dataset'
+    plannerDatasetReference.value = payload.dataset_reference
+    selectedFileId.value = ''
+    selectedSheet.value = 'normalized'
+    syncPlannerDefaults()
+    restoreVersions(
+      storageKey,
+      payload.items,
+      keepVersions,
+    )
+    if (!keepVersions) {
+      versions.value = [{
+        id: 'base',
+        name: payload.version_name || 'Загруженный график',
+        version_type: 'uploaded',
+        created_at: new Date().toISOString(),
+        items: cloneItems(payload.items),
+      }]
+      activeVersionId.value = 'base'
+    }
+    persistVersions()
+    currentView.value = 'planner'
+    showMessage('Импортированный график КРС открыт в planner.', 'success')
+  } catch (error) {
+    showMessage(error.message, 'error')
+  } finally {
+    loading.value = false
+  }
+}
+
+const normalizeDataset = async () => {
+  if (!uploadedFile.value?.file_id) {
+    showMessage('Сначала загрузите или откройте Excel-файл.', 'error')
+    return
+  }
+  loading.value = true
+  try {
+    const response = await request('/import/normalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_id: uploadedFile.value.file_id,
+        sheet_name: uploadedFile.value.selected_sheet,
+        source_kind: selectedSourceKind.value,
+        dataset_name: `${selectedSourceKindLabel.value} · ${uploadedFile.value.original_name}`,
+        columns: normalizeColumnsPayload(),
+      }),
+    })
+    latestNormalization.value = await response.json()
+    await loadDatasets()
+    await loadDatasetDetail(
+      latestNormalization.value.dataset_reference.dataset_id,
+      latestNormalization.value.dataset_reference.dataset_version_id,
+    )
+    appendLuOptionsFromPayload(latestNormalization.value.normalized_payload)
+    if (selectedSourceKind.value === 'external_krs_schedule') {
+      await openImportedDataset(latestNormalization.value.dataset_reference, false)
+      return
+    }
+    showMessage('Набор данных нормализован и сохранён в базе.', 'success')
+  } catch (error) {
+    showMessage(error.message, 'error')
+  } finally {
+    loading.value = false
+  }
+}
+
+const appendLuOptions = (values) => {
+  const next = new Set(knownLuOptions.value)
+  values.filter(Boolean).forEach((value) => next.add(String(value).trim()))
+  knownLuOptions.value = [...next]
+}
+
+const appendLuOptionsFromPayload = (payload) => {
+  if (!payload) return
+  if (Array.isArray(payload)) {
+    appendLuOptions(payload.map((item) => item?.lu_id))
+    return
+  }
+  if (payload.schedule?.items) {
+    appendLuOptions(payload.schedule.items.map((item) => item?.lu_id))
+    return
+  }
+  if (payload.objects) {
+    appendLuOptions(payload.objects.map((item) => item?.lu_id))
+  }
+}
+
+const hydrateLuOptions = async () => {
+  if (knownLuOptions.value.length || !datasets.value.length) return
+  const candidate = datasets.value.find((item) => ['wells', 'gtm', 'external_krs_schedule'].includes(item.dataset_reference.dataset_type))
+  if (!candidate) return
+  try {
+    const response = await request(`/datasets/${candidate.dataset_reference.dataset_id}?dataset_version_id=${encodeURIComponent(candidate.dataset_reference.dataset_version_id)}`)
+    const payload = await response.json()
+    appendLuOptionsFromPayload(payload.normalized_payload)
+  } catch {
+    // ignore optional hydration errors
+  }
+}
+
+const handleDisplacementPaste = (event, startIndex) => {
+  const text = event.clipboardData?.getData('text/plain')
+  if (!text) return
+  const values = text
+    .split(/\r?\n/)
+    .flatMap((line) => line.split('\t'))
+    .map((value) => value.trim())
+    .filter(Boolean)
+  if (!values.length) return
+  event.preventDefault()
+  values.forEach((value, offset) => {
+    const row = reservoirForm.displacementPoints[startIndex + offset]
+    if (!row) return
+    row.niz = value.replace(',', '.')
+  })
+}
+
+const addReservoirPoint = () => reservoirForm.displacementPoints.push({ niz: '', watercut: reservoirForm.displacementPoints.length * 5 })
+const removeReservoirPoint = (index) => {
+  if (reservoirForm.displacementPoints.length === 1) return
+  reservoirForm.displacementPoints.splice(index, 1)
+}
+const addBaseDeclineRow = () => reservoirForm.baseDeclineRows.push({ month_index: reservoirForm.baseDeclineRows.length + 1, decline_percent: 5 })
+const removeBaseDeclineRow = (index) => {
+  if (reservoirForm.baseDeclineRows.length === 1) return
+  reservoirForm.baseDeclineRows.splice(index, 1)
+}
+const addNewWellsDeclineRow = () => reservoirForm.newWellsDeclineRows.push({
+  month_index: reservoirForm.newWellsDeclineRows.length + 1,
+  decline_percent: reservoirForm.newWellsDeclineRows.length < 12 ? 50 : 5,
+})
+const removeDeclineRow = (index) => {
+  if (reservoirForm.newWellsDeclineRows.length === 1) return
+  reservoirForm.newWellsDeclineRows.splice(index, 1)
+}
+
+const addEconomicsRow = () => economicsForm.rows.push({
+  lu_id: '',
+  net_back: '',
+  oil_price: '',
+  gas_price: '',
+  liquid_handling_cost: '',
+  water_handling_cost: '',
+  gas_handling_cost: '',
+  discount_rate: '',
+})
+const removeEconomicsRow = (index) => {
+  if (economicsForm.rows.length === 1) return
+  economicsForm.rows.splice(index, 1)
+}
+
+const addBrigadeCapacityRow = () => brigadesForm.capacityRows.push({ lu_id: '', month_date: '', brigade_count: '' })
+const removeBrigadeCapacityRow = (index) => {
+  if (brigadesForm.capacityRows.length === 1) return
+  brigadesForm.capacityRows.splice(index, 1)
+}
+const addFailureRow = () => brigadesForm.failureRows.push({ scope_type: 'lu', lu_id: '', sloy_id: '', coefficient: '' })
+const removeFailureRow = (index) => {
+  if (brigadesForm.failureRows.length === 1) return
+  brigadesForm.failureRows.splice(index, 1)
+}
+const addDurationRow = () => brigadesForm.durationRows.push({ gtm_type: '', duration_days: '' })
+const removeDurationRow = (index) => {
+  if (brigadesForm.durationRows.length === 1) return
+  brigadesForm.durationRows.splice(index, 1)
+}
+
+const toNumberOrNull = (value) => {
+  if (value === '' || value === null || value === undefined) return null
+  const normalized = Number(String(value).replace(',', '.'))
+  return Number.isFinite(normalized) ? normalized : null
+}
+
+const parseKeyValueLines = (value) =>
+  Object.fromEntries(
+    String(value || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [key, ...rest] = line.split(':')
+        return [key.trim(), toNumberOrNull(rest.join(':').trim()) ?? rest.join(':').trim()]
+      })
+      .filter(([key]) => key),
+  )
+
+const saveManualInputSet = async (name, payload) => {
+  loading.value = true
+  try {
+    await request('/manual-inputs/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        payload,
+      }),
+    })
+    await loadManualInputSets()
+    showMessage(`Набор «${name}» сохранён.`, 'success')
+  } catch (error) {
+    showMessage(error.message, 'error')
+  } finally {
+    loading.value = false
+  }
+}
+
+const saveReservoirInputs = async () => saveManualInputSet(reservoirForm.name, {
+  displacement_config: {
+    lu_id: reservoirForm.selectedLu || null,
+    sloy_id: reservoirForm.selectedSloy || null,
+    watercut_unit: reservoirForm.watercutUnit,
+    curve_points: reservoirForm.displacementPoints
+      .map((item) => ({
+        NIZ: toNumberOrNull(item.niz),
+        watercut: toNumberOrNull(item.watercut),
+      }))
+      .filter((item) => item.NIZ !== null && item.watercut !== null),
+  },
+  decline_config: {
+    decline_mode: reservoirForm.declineMode,
+    lu_id: reservoirForm.selectedLu || null,
+    sloy_id: reservoirForm.selectedSloy || null,
+    base_monthly_decline_values: reservoirForm.baseDeclineRows
+      .map((item) => ({
+        month_index: toNumberOrNull(item.month_index),
+        liquid_decline_factor: toNumberOrNull(item.decline_percent),
+      }))
+      .filter((item) => item.month_index !== null && item.liquid_decline_factor !== null),
+    new_wells_monthly_decline_values: reservoirForm.newWellsDeclineRows
+      .map((item) => ({
+        month_index: toNumberOrNull(item.month_index),
+        liquid_decline_factor: toNumberOrNull(item.decline_percent),
+      }))
+      .filter((item) => item.month_index !== null && item.liquid_decline_factor !== null),
+  },
+  metadata: {
+    notes: reservoirForm.notes,
+  },
+})
+
+const saveEconomicsInputs = async () => saveManualInputSet(economicsForm.name, {
+  economics_config: {
+    lu_items: economicsForm.rows.map((item) => ({
+      lu_id: item.lu_id,
+      net_back: toNumberOrNull(item.net_back),
+      oil_price: toNumberOrNull(item.oil_price),
+      gas_price: toNumberOrNull(item.gas_price),
+      liquid_handling_cost: toNumberOrNull(item.liquid_handling_cost),
+      water_handling_cost: toNumberOrNull(item.water_handling_cost),
+      gas_handling_cost: toNumberOrNull(item.gas_handling_cost),
+      discount_rate: toNumberOrNull(item.discount_rate),
+    })).filter((item) => item.lu_id),
+    gtm_costs_by_type: parseKeyValueLines(economicsForm.gtmCostsText),
+    notes: economicsForm.notes,
+  },
+})
+
+const saveBrigadeInputs = async () => saveManualInputSet(brigadesForm.name, {
+  brigade_capacity_by_lu_config: {
+    items: brigadesForm.capacityRows.map((item) => ({
+      lu_id: item.lu_id,
+      month_date: item.month_date,
+      brigade_count: toNumberOrNull(item.brigade_count),
+    })).filter((item) => item.lu_id && item.month_date && item.brigade_count !== null),
+  },
+  failure_coefficient_config: {
+    items: brigadesForm.failureRows.map((item) => ({
+      scope_type: item.scope_type,
+      lu_id: item.lu_id || null,
+      sloy_id: item.sloy_id || null,
+      coefficient: toNumberOrNull(item.coefficient),
+    })).filter((item) => item.coefficient !== null && ((item.scope_type === 'lu' && item.lu_id) || (item.scope_type === 'sloy' && item.sloy_id))),
+  },
+  krs_resource_config: {
+    brigade_count: toNumberOrNull(brigadesForm.fallbackBrigadeCount),
+    durations_by_gtm_type: Object.fromEntries(
+      brigadesForm.durationRows
+        .map((item) => [item.gtm_type.trim(), toNumberOrNull(item.duration_days)])
+        .filter(([key, value]) => key && value !== null),
+    ),
+    notes: brigadesForm.notes,
+  },
+})
+
+const saveOptimizerInputs = async () => saveManualInputSet(optimizerForm.name, {
+  optimizer_config: {
+    target_metric: optimizerForm.targetFunction,
+    search_mode: optimizerForm.heuristicMode,
+    build_mode: optimizerForm.buildMode,
+    scenario_selection: optimizerForm.scenarioSelection,
+    infrastructure_reaction_mode: optimizerForm.infraReactionMode,
+    notes: optimizerForm.scenarioDescription,
+    hard_constraints: {
+      constraints_logic: optimizerForm.constraintsLogic,
+    },
+  },
+})
 
 const createVersion = () => {
   if (!activeVersion.value) return
@@ -532,9 +1121,16 @@ watch(activeVersionId, () => persistVersions())
 
 onMounted(async () => {
   await loadUploadedFiles()
+  await loadDatasets()
+  await loadManualInputSets()
   const session = readJson(SESSION_KEY, null)
-  if (!session?.file_id) return
+  if (!session) return
   currentView.value = session.view || 'upload'
+  if (session.planner_source_mode === 'dataset' && session.planner_dataset_reference?.dataset_id) {
+    await openImportedDataset(session.planner_dataset_reference, true)
+    return
+  }
+  if (!session.file_id) return
   await openFile(session.file_id, session.sheet_name || null, true)
 })
 </script>
@@ -553,7 +1149,7 @@ onMounted(async () => {
       <nav class="nav-list">
         <button class="nav-item" :class="{ active: currentView === 'upload' }" @click="currentView = 'upload'">
           <span class="nav-icon">⇪</span>
-          <span v-if="!sidebarCollapsed">Загрузка графика</span>
+          <span v-if="!sidebarCollapsed">Исходные данные</span>
         </button>
         <button class="nav-item" :class="{ active: currentView === 'planner' }" @click="currentView = 'planner'">
           <span class="nav-icon">▦</span>
@@ -568,79 +1164,452 @@ onMounted(async () => {
       <header class="topbar">
         <div class="topbar-accent"></div>
         <div>
-          <h1>{{ currentView === 'upload' ? 'Загрузка графика КРС' : 'Планировщик КРС' }}</h1>
-          <p>Светлый рабочий интерфейс для загрузки, редактирования версий, анализа приростов и последующей выгрузки обновлённого графика.</p>
+          <h1>{{ viewTitle }}</h1>
+          <p>{{ viewSubtitle }}</p>
         </div>
       </header>
 
       <div v-if="message" class="message" :class="messageType">{{ message }}</div>
 
       <section v-if="currentView === 'upload'" class="page-stack">
-        <div class="split-grid">
-          <div class="panel soft">
-            <h2>Источник данных</h2>
-            <p class="subtitle">Загрузите Excel-файл с графиком КРС или откройте уже сохранённый график из сервиса.</p>
+        <div class="input-tabs">
+          <button v-for="tab in INPUT_TABS" :key="tab.id" class="input-tab" :class="{ active: inputTab === tab.id }" @click="inputTab = tab.id">{{ tab.label }}</button>
+        </div>
 
-            <label class="upload-dropzone">
-              <input type="file" accept=".xlsx,.xls" @change="handleFileChange" />
-              <strong>Перетащите Excel-файл сюда или выберите его</strong>
-              <span>Поддерживаются форматы .xlsx и .xls</span>
-            </label>
+        <template v-if="inputTab === 'upload'">
+          <div class="source-kind-grid">
+            <button
+              v-for="option in SOURCE_KIND_OPTIONS"
+              :key="option.id"
+              class="source-kind-card"
+              :class="{ active: selectedSourceKind === option.id }"
+              @click="selectedSourceKind = option.id"
+            >
+              <strong>{{ option.label }}</strong>
+            </button>
+          </div>
 
-            <div class="form-grid single">
-              <select v-model="selectedFileId">
-                <option value="">Сохранённый график</option>
-                <option v-for="item in uploadedFiles" :key="item.file_id" :value="item.file_id">{{ item.original_name }}</option>
-              </select>
-              <select v-model="selectedSheet" :disabled="!selectedFileId">
-                <option value="">Лист Excel</option>
-                <option v-for="sheet in (uploadedFiles.find((item) => item.file_id === selectedFileId)?.sheets || [])" :key="sheet" :value="sheet">{{ sheet }}</option>
-              </select>
-              <button class="button" :disabled="!selectedFileId || loading" @click="openFile(selectedFileId, selectedSheet || null, true)">Открыть</button>
+          <div class="split-grid">
+            <div class="panel soft">
+              <h2>Текущая загрузка</h2>
+              <p class="subtitle">Выбран режим: {{ selectedSourceKindLabel }}. Сначала откройте Excel, затем проверьте mapping и сохраните его как dataset.</p>
+
+              <label class="upload-dropzone">
+                <input type="file" accept=".xlsx,.xls" @change="handleFileChange" />
+                <strong>Перетащите Excel-файл сюда или выберите его</strong>
+                <span>Поддерживаются форматы .xlsx и .xls</span>
+              </label>
+
+              <div class="form-grid single">
+                <select v-model="selectedFileId">
+                  <option value="">Ранее загруженный файл</option>
+                  <option v-for="item in uploadedFiles" :key="item.file_id" :value="item.file_id">{{ item.original_name }}</option>
+                </select>
+                <select v-model="selectedSheet" :disabled="!selectedFileId">
+                  <option value="">Лист Excel</option>
+                  <option v-for="sheet in (uploadedFiles.find((item) => item.file_id === selectedFileId)?.sheets || [])" :key="sheet" :value="sheet">{{ sheet }}</option>
+                </select>
+                <button class="button" :disabled="!selectedFileId || loading" @click="loadSourceFile(selectedFileId, selectedSheet || null)">Открыть</button>
+              </div>
+
+              <div v-if="uploadedFile" class="info-cards">
+                <div class="info-card"><span>Файл</span><strong>{{ uploadedFile.original_name }}</strong></div>
+                <div class="info-card"><span>Лист</span><strong>{{ uploadedFile.selected_sheet }}</strong></div>
+                <div class="info-card"><span>Строк preview</span><strong>{{ uploadedFileRowCount }}</strong></div>
+                <div class="info-card"><span>Тип набора</span><strong>{{ selectedSourceKind }}</strong></div>
+              </div>
             </div>
 
-            <div v-if="uploadedFile" class="info-cards">
-              <div class="info-card"><span>Файл</span><strong>{{ uploadedFile.original_name }}</strong></div>
-              <div class="info-card"><span>Лист</span><strong>{{ uploadedFile.selected_sheet }}</strong></div>
-            <div class="info-card"><span>Мероприятий</span><strong>{{ visibleItems.length }}</strong></div>
-              <div class="info-card"><span>Период</span><strong>{{ scheduleBounds.min ? `${formatDateCell(scheduleBounds.min)} — ${formatDateCell(scheduleBounds.max)}` : '—' }}</strong></div>
+            <div class="panel">
+              <h2>Состояние источников</h2>
+              <p class="subtitle">Реестр показывает, какие типы исходных данных уже есть в системе и готовы к сценарию.</p>
+              <div class="status-grid">
+                <div v-for="card in sourceKindStatusCards" :key="card.id" class="status-card" :class="{ ready: card.loaded }">
+                  <span>{{ card.label }}</span>
+                  <strong>{{ card.loaded ? 'Готово' : 'Не загружено' }}</strong>
+                  <em>{{ card.name }}</em>
+                  <small v-if="card.loaded">{{ card.rows }} строк</small>
+                </div>
+              </div>
             </div>
           </div>
 
           <div class="panel">
-            <h2>Сопоставление колонок</h2>
-            <p class="subtitle">Сервис пытается найти нужные поля автоматически, но вы всегда можете выбрать реальные колонки вручную.</p>
+            <div class="toolbar between align-start">
+              <div>
+                <h2>Сопоставление колонок</h2>
+                <p class="subtitle">Для этого типа источника выводятся только релевантные поля. Пустое значение означает автоопределение на backend.</p>
+              </div>
+              <div class="toolbar actions-wrap">
+                <button class="button primary" :disabled="!uploadedFile || loading" @click="normalizeDataset">Нормализовать и сохранить</button>
+                <button class="button ghost" :disabled="!activeItems.length" @click="currentView = 'planner'">Открыть планировщик</button>
+              </div>
+            </div>
 
             <div class="form-grid">
-              <select v-model="columns.brigade"><option value="">Бригада</option><option v-for="column in availableColumns" :key="`brigade-${column.name}`" :value="column.name">{{ column.name }}</option></select>
-              <select v-model="columns.area"><option value="">Участок</option><option v-for="column in availableColumns" :key="`area-${column.name}`" :value="column.name">{{ column.name }}</option></select>
-              <select v-model="columns.well"><option value="">Скв.</option><option v-for="column in availableColumns" :key="`well-${column.name}`" :value="column.name">{{ column.name }}</option></select>
-              <select v-model="columns.start_date"><option value="">Дата начала (план)</option><option v-for="column in availableColumns" :key="`start-${column.name}`" :value="column.name">{{ column.name }}</option></select>
-              <select v-model="columns.end_date"><option value="">Заверш рем (план)</option><option v-for="column in availableColumns" :key="`end-${column.name}`" :value="column.name">{{ column.name }}</option></select>
-              <select v-model="columns.increment"><option value="">Qн, тн/сут</option><option v-for="column in availableColumns" :key="`increment-${column.name}`" :value="column.name">{{ column.name }}</option></select>
-              <select v-model="columns.planned_work"><option value="">Планируемый объем работ</option><option v-for="column in availableColumns" :key="`work-${column.name}`" :value="column.name">{{ column.name }}</option></select>
+              <select v-for="field in sourceKindFields" :key="field" v-model="normalizeColumns[field]">
+                <option value="">{{ SOURCE_KIND_FIELD_LABELS[field] }}</option>
+                <option v-for="column in availableColumns" :key="`${field}-${column.name}`" :value="column.name">{{ column.name }}</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="split-grid">
+            <div v-if="uploadedFile?.preview?.length" class="panel">
+              <h2>Предпросмотр исходных данных</h2>
+              <div class="table-wrap preview-wrap">
+                <table>
+                  <thead><tr><th v-for="column in previewColumns" :key="column">{{ column }}</th></tr></thead>
+                  <tbody><tr v-for="(row, index) in uploadedFile.preview" :key="index"><td v-for="column in previewColumns" :key="`${index}-${column}`">{{ row[column] }}</td></tr></tbody>
+                </table>
+              </div>
             </div>
 
-            <div class="toolbar">
-              <button class="button primary" :disabled="!uploadedFile || loading" @click="applyColumnMapping">Применить сопоставление</button>
-              <button class="button ghost" :disabled="!uploadedFile" @click="currentView = 'planner'">Открыть планировщик</button>
+            <div class="panel">
+              <h2>Сохранённые datasets</h2>
+              <p class="subtitle">Результаты нормализации доступны повторно. Для внешнего графика КРС можно сразу открыть planner runtime-flow.</p>
+              <div class="dataset-list">
+                <button
+                  v-for="item in datasets"
+                  :key="item.dataset_reference.dataset_id"
+                  class="dataset-item"
+                  :class="{ active: selectedDatasetId === item.dataset_reference.dataset_id }"
+                  @click="loadDatasetDetail(item.dataset_reference.dataset_id, item.dataset_reference.dataset_version_id)"
+                >
+                  <strong>{{ item.dataset_reference.name }}</strong>
+                  <span>{{ item.dataset_reference.dataset_type }} · {{ item.dataset_reference.row_count || 0 }} строк</span>
+                </button>
+                <div v-if="!datasets.length" class="empty-note">Пока нет сохранённых наборов данных.</div>
+              </div>
             </div>
+          </div>
+
+          <div v-if="datasetDetail" class="panel">
+            <div class="toolbar between align-start">
+              <div>
+                <h2>Карточка dataset</h2>
+                <p class="subtitle">{{ datasetDetail.dataset_reference.name }} · {{ datasetDetail.dataset_reference.dataset_type }}</p>
+              </div>
+              <button
+                v-if="datasetDetail.dataset_reference.dataset_type === 'external_krs_schedule'"
+                class="button success"
+                @click="openImportedDataset(datasetDetail.dataset_reference, false)"
+              >
+                Открыть в Planner
+              </button>
+            </div>
+            <div class="info-cards">
+              <div class="info-card"><span>Dataset ID</span><strong>{{ datasetDetail.dataset_reference.dataset_id }}</strong></div>
+              <div class="info-card"><span>Версия</span><strong>{{ datasetDetail.dataset_reference.dataset_version_id }}</strong></div>
+              <div class="info-card"><span>Формат</span><strong>{{ datasetDetail.source_format || '—' }}</strong></div>
+              <div class="info-card"><span>Строк</span><strong>{{ datasetDetail.dataset_reference.row_count || 0 }}</strong></div>
+            </div>
+          </div>
+        </template>
+
+        <div v-else-if="inputTab === 'reservoir'" class="panel">
+          <div class="toolbar between align-start">
+            <div>
+              <h2>Характеристики пласта</h2>
+              <p class="subtitle">Лист хранит входные конфигурации для `Module B`: характеристику вытеснения и ряды снижения жидкости отдельно для `Base` и `ВНС`.</p>
+            </div>
+            <input v-model="reservoirForm.name" class="compact-name-input" placeholder="Название набора" />
+          </div>
+
+          <div class="form-grid">
+            <select v-model="reservoirForm.selectedLu">
+              <option value="">Выберите LU</option>
+              <option v-for="lu in luSelectOptions" :key="lu" :value="lu">{{ lu }}</option>
+            </select>
+            <input v-model="reservoirForm.selectedSloy" placeholder="SLOY, если характеристика задаётся для слоя" />
+          </div>
+
+          <div class="stacked-sections">
+            <div class="section-card">
+              <div class="toolbar between">
+                <h3>Характеристика вытеснения</h3>
+                <div class="toolbar">
+                  <span class="section-chip">Шаг 5%</span>
+                  <button class="button ghost" @click="addReservoirPoint">Добавить точку</button>
+                </div>
+              </div>
+              <div class="editor-table">
+                <div class="editor-table-head two-cols">
+                  <span>Обводнённость</span>
+                  <span>NIZ</span>
+                </div>
+                <div v-for="(item, index) in reservoirForm.displacementPoints" :key="`disp-${index}`" class="editor-table-row two-cols">
+                  <input :value="`${item.watercut}%`" readonly class="readonly-field" />
+                  <div class="inline-action-field">
+                    <input v-model="item.niz" placeholder="0.75" @paste="handleDisplacementPaste($event, index)" />
+                    <button class="button ghost icon-only" @click="removeReservoirPoint(index)">×</button>
+                  </div>
+                </div>
+              </div>
+              <div class="helper-note">Можно вставить колонку значений `NIZ` через `Ctrl+V` в любую ячейку столбца `NIZ`.</div>
+            </div>
+
+            <div class="section-card">
+              <div class="toolbar between">
+                <h3>Падение жидкости во времени</h3>
+                <span class="section-chip">24 месяца</span>
+              </div>
+              <div class="decline-grid">
+                <div class="editor-table">
+                  <div class="toolbar between">
+                    <h4>База</h4>
+                    <button class="button ghost" @click="addBaseDeclineRow">Добавить месяц</button>
+                  </div>
+                  <div class="editor-table-head two-cols">
+                    <span>Месяц</span>
+                    <span>Снижение, %/год</span>
+                  </div>
+                  <div v-for="(item, index) in reservoirForm.baseDeclineRows" :key="`base-decline-${index}`" class="editor-table-row two-cols">
+                    <input v-model="item.month_index" type="number" min="1" placeholder="1" />
+                    <div class="inline-action-field">
+                      <input v-model="item.decline_percent" placeholder="5" />
+                      <button class="button ghost icon-only" @click="removeBaseDeclineRow(index)">×</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="editor-table">
+                  <div class="toolbar between">
+                    <h4>ВНС</h4>
+                    <button class="button ghost" @click="addNewWellsDeclineRow">Добавить месяц</button>
+                  </div>
+                  <div class="editor-table-head two-cols">
+                    <span>Месяц</span>
+                    <span>Снижение, %/год</span>
+                  </div>
+                  <div v-for="(item, index) in reservoirForm.newWellsDeclineRows" :key="`new-decline-${index}`" class="editor-table-row two-cols">
+                    <input v-model="item.month_index" type="number" min="1" placeholder="1" />
+                    <div class="inline-action-field">
+                      <input v-model="item.decline_percent" placeholder="50 / 5" />
+                      <button class="button ghost icon-only" @click="removeDeclineRow(index)">×</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <textarea v-model="reservoirForm.notes" class="text-area compact-text-area" placeholder="Примечания по пласту и допущениям"></textarea>
+            </div>
+          </div>
+
+          <div class="toolbar">
+            <button class="button primary" :disabled="loading" @click="saveReservoirInputs">Сохранить характеристики пласта</button>
           </div>
         </div>
 
-        <div v-if="uploadedFile?.preview?.length" class="panel">
-          <h2>Предпросмотр исходных данных</h2>
-          <div class="table-wrap preview-wrap">
-            <table>
-              <thead><tr><th v-for="column in previewColumns" :key="column">{{ column }}</th></tr></thead>
-              <tbody><tr v-for="(row, index) in uploadedFile.preview" :key="index"><td v-for="column in previewColumns" :key="`${index}-${column}`">{{ row[column] }}</td></tr></tbody>
-            </table>
+        <div v-else-if="inputTab === 'economics'" class="panel">
+          <div class="toolbar between align-start">
+            <div>
+              <h2>Экономические вводные</h2>
+              <p class="subtitle">Экономика задаётся по `LU` и версионируется как отдельный набор ручных вводных.</p>
+            </div>
+            <input v-model="economicsForm.name" class="compact-name-input" placeholder="Название набора" />
+          </div>
+
+          <div class="section-card">
+            <div class="toolbar between">
+              <h3>Экономика по участкам недр</h3>
+              <button class="button ghost" @click="addEconomicsRow">Добавить LU</button>
+            </div>
+            <div class="wide-table-wrap">
+              <table class="editor-table-grid">
+                <thead>
+                  <tr>
+                    <th>LU</th>
+                    <th>Net Back</th>
+                    <th>Цена нефти</th>
+                    <th>Цена газа</th>
+                    <th>Liquid cost</th>
+                    <th>Water cost</th>
+                    <th>Gas cost</th>
+                    <th>Discount</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, index) in economicsForm.rows" :key="`eco-${index}`">
+                    <td><input v-model="row.lu_id" placeholder="LU-01" /></td>
+                    <td><input v-model="row.net_back" placeholder="12000" /></td>
+                    <td><input v-model="row.oil_price" placeholder="4800" /></td>
+                    <td><input v-model="row.gas_price" placeholder="900" /></td>
+                    <td><input v-model="row.liquid_handling_cost" placeholder="120" /></td>
+                    <td><input v-model="row.water_handling_cost" placeholder="85" /></td>
+                    <td><input v-model="row.gas_handling_cost" placeholder="30" /></td>
+                    <td><input v-model="row.discount_rate" placeholder="0.18" /></td>
+                    <td><button class="button ghost icon-only" @click="removeEconomicsRow(index)">×</button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="form-grid single">
+            <textarea v-model="economicsForm.gtmCostsText" class="text-area compact-text-area" placeholder="Стоимость ГТМ по типам, по одной строке:&#10;КРС: 1500000&#10;ППД: 900000"></textarea>
+            <textarea v-model="economicsForm.notes" class="text-area compact-text-area" placeholder="Примечания к экономическим вводным"></textarea>
+          </div>
+
+          <div class="toolbar">
+            <button class="button primary" :disabled="loading" @click="saveEconomicsInputs">Сохранить экономические вводные</button>
+          </div>
+        </div>
+
+        <div v-else-if="inputTab === 'brigades'" class="panel">
+          <div class="toolbar between align-start">
+            <div>
+              <h2>Ограничения бригад</h2>
+              <p class="subtitle">Единый лист для трёх отдельных конфигураций: количества бригад по `LU`, коэффициента отказности и длительностей работ.</p>
+            </div>
+            <input v-model="brigadesForm.name" class="compact-name-input" placeholder="Название набора" />
+          </div>
+
+          <div class="stacked-sections">
+            <div class="section-card">
+              <div class="toolbar between">
+                <h3>Количество бригад по LU и месяцам</h3>
+                <button class="button ghost" @click="addBrigadeCapacityRow">Добавить строку</button>
+              </div>
+              <div class="editor-table">
+                <div class="editor-table-head three-cols">
+                  <span>LU</span>
+                  <span>Месяц</span>
+                  <span>Бригад</span>
+                </div>
+                <div v-for="(item, index) in brigadesForm.capacityRows" :key="`cap-${index}`" class="editor-table-row three-cols">
+                  <input v-model="item.lu_id" placeholder="LU-01" />
+                  <input v-model="item.month_date" type="date" />
+                  <div class="inline-action-field">
+                    <input v-model="item.brigade_count" type="number" min="0" placeholder="3" />
+                    <button class="button ghost icon-only" @click="removeBrigadeCapacityRow(index)">×</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="section-card">
+              <div class="toolbar between">
+                <h3>Коэффициент отказности</h3>
+                <button class="button ghost" @click="addFailureRow">Добавить коэффициент</button>
+              </div>
+              <div class="editor-table">
+                <div class="editor-table-head four-cols">
+                  <span>Область</span>
+                  <span>LU</span>
+                  <span>SLOY</span>
+                  <span>Коэффициент</span>
+                </div>
+                <div v-for="(item, index) in brigadesForm.failureRows" :key="`fail-${index}`" class="editor-table-row four-cols">
+                  <select v-model="item.scope_type">
+                    <option value="lu">LU</option>
+                    <option value="sloy">SLOY</option>
+                  </select>
+                  <input v-model="item.lu_id" :disabled="item.scope_type !== 'lu'" placeholder="LU-01" />
+                  <input v-model="item.sloy_id" :disabled="item.scope_type !== 'sloy'" placeholder="SLOY-A1" />
+                  <div class="inline-action-field">
+                    <input v-model="item.coefficient" placeholder="0.12" />
+                    <button class="button ghost icon-only" @click="removeFailureRow(index)">×</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="section-card">
+              <div class="toolbar between">
+                <h3>Длительности мероприятий</h3>
+                <button class="button ghost" @click="addDurationRow">Добавить тип работ</button>
+              </div>
+              <div class="editor-table">
+                <div class="editor-table-head two-cols">
+                  <span>Тип ГТМ</span>
+                  <span>Длительность, дни</span>
+                </div>
+                <div v-for="(item, index) in brigadesForm.durationRows" :key="`dur-${index}`" class="editor-table-row two-cols">
+                  <input v-model="item.gtm_type" placeholder="КРС / ППД / ГРП" />
+                  <div class="inline-action-field">
+                    <input v-model="item.duration_days" type="number" min="1" placeholder="12" />
+                    <button class="button ghost icon-only" @click="removeDurationRow(index)">×</button>
+                  </div>
+                </div>
+              </div>
+              <div class="form-grid single">
+                <input v-model="brigadesForm.fallbackBrigadeCount" placeholder="Глобальный fallback по бригадам" />
+                <textarea v-model="brigadesForm.notes" class="text-area compact-text-area" placeholder="Примечания к ресурсным ограничениям"></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="toolbar">
+            <button class="button primary" :disabled="loading" @click="saveBrigadeInputs">Сохранить ограничения бригад</button>
+          </div>
+        </div>
+
+        <div v-else class="panel">
+          <div class="toolbar between align-start">
+            <div>
+              <h2>Схема работы оптимизатора</h2>
+              <p class="subtitle">Лист оркестрации `Module D`: как строить график, как выбирать сценарий и как реагировать на ограничения.</p>
+            </div>
+            <input v-model="optimizerForm.name" class="compact-name-input" placeholder="Название набора" />
+          </div>
+
+          <div class="form-grid">
+            <select v-model="optimizerForm.buildMode">
+              <option value="build_only">Только построение графика</option>
+              <option value="build_and_optimize">Построение + оптимизация</option>
+            </select>
+            <select v-model="optimizerForm.targetFunction">
+              <option value="max_npv">Максимум NPV</option>
+              <option value="max_oil">Максимум нефти</option>
+              <option value="min_delay">Минимум задержки запуска</option>
+            </select>
+            <select v-model="optimizerForm.scenarioSelection">
+              <option value="best_feasible">Лучший допустимый сценарий</option>
+              <option value="best_score">Лучший score с предупреждениями</option>
+            </select>
+            <select v-model="optimizerForm.infraReactionMode">
+              <option value="hard_stop">Жёсткая остановка при нарушении</option>
+              <option value="warn_and_rank">Предупреждать и ранжировать</option>
+            </select>
+            <select v-model="optimizerForm.heuristicMode">
+              <option value="guided_search">Guided search</option>
+              <option value="full_enumeration">Полный перебор</option>
+              <option value="priority_rules">Приоритетные правила</option>
+            </select>
+            <textarea v-model="optimizerForm.scenarioDescription" class="text-area compact-text-area" placeholder="Описание сценария оптимизации"></textarea>
+            <textarea v-model="optimizerForm.constraintsLogic" class="text-area compact-text-area" placeholder="Логика реакции на ограничения инфраструктуры и бригад"></textarea>
+          </div>
+
+          <div class="optimizer-status">
+            <span>Лист сохраняет конфиг запуска и стратегию отбора, но не реализует оптимизатор в UI.</span>
+          </div>
+
+          <div class="toolbar">
+            <button class="button primary" :disabled="loading" @click="saveOptimizerInputs">Сохранить схему оптимизатора</button>
+          </div>
+        </div>
+
+        <div v-if="manualInputSets.length && inputTab !== 'upload'" class="panel">
+          <h2>Сохранённые ручные вводные</h2>
+          <div class="status-grid manual-grid">
+            <div v-for="item in manualInputSummaryCards" :key="item.id" class="status-card compact" :class="{ ready: item.loaded }">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.loaded ? 'Сохранено' : 'Пока пусто' }}</strong>
+              <em>{{ item.name }}</em>
+            </div>
+          </div>
+          <div class="dataset-list">
+            <div v-for="item in manualInputSets" :key="item.reference.manual_input_set_id" class="dataset-item static">
+              <strong>{{ item.reference.name }}</strong>
+              <span>{{ item.reference.manual_input_set_id }}</span>
+            </div>
           </div>
         </div>
       </section>
 
       <section v-else class="page-stack planner-stack">
-        <div v-if="!activeItems.length" class="panel empty-state">Сначала загрузите график КРС на вкладке «Загрузка графика». После этого здесь появятся диаграмма Ганта, версии графика и аналитика приростов.</div>
+        <div v-if="!activeItems.length" class="panel empty-state">Сначала загрузите внешний график КРС в разделе «Исходные данные» или откройте уже импортированный dataset. После этого здесь появятся диаграмма Ганта, версии графика и аналитика приростов.</div>
 
         <template v-else>
           <div class="stats-grid">

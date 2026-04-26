@@ -45,6 +45,7 @@
 
 - получает построенный график из `Module D`
 - получает внешний готовый график КРС, нормализованный в `Module A`
+- предоставляет `PlannerScheduleRevision` для прямого чтения `Module B` при planner-side recalculation
 - передаёт planner revisions в `Module G`
 
 ## Контрактные правила

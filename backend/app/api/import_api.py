@@ -30,6 +30,7 @@ _SOURCE_KIND_MAPPING_FIELDS = {
         "lu",
         "sloy",
         "well_pad",
+        "fund_type",
         "oil_rate",
         "gas_rate",
         "liquid_rate",
@@ -153,6 +154,53 @@ def file_details(file_id: str, sheet_name: str | None = None, db: Session = Depe
         preview=preview_records(df),
         columns_info=columns_info(df),
     )
+
+
+@router.get("/datasets")
+def list_datasets(db: Session = Depends(get_db)) -> list[dict]:
+    items = DatasetRepository(db).list_datasets()
+    return [
+        {
+            "dataset_reference": {
+                "dataset_id": dataset.dataset_id,
+                "dataset_version_id": version.dataset_version_id if version else None,
+                "dataset_type": dataset.dataset_type,
+                "name": dataset.name,
+                "row_count": version.row_count if version else None,
+                "created_at": dataset.created_at.isoformat(),
+                "metadata": dataset.metadata_json,
+            },
+            "source_format": dataset.source_format,
+            "source_file_name": dataset.source_file_name,
+            "status": dataset.status,
+            "validation_report": version.validation_report_json if version else None,
+        }
+        for dataset, version in items
+    ]
+
+
+@router.get("/datasets/{dataset_id}")
+def dataset_details(dataset_id: str, dataset_version_id: str | None = None, db: Session = Depends(get_db)) -> dict:
+    resolved = DatasetRepository(db).get_dataset_version(dataset_id, dataset_version_id)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="Dataset не найден.")
+    dataset, version = resolved
+    return {
+        "dataset_reference": {
+            "dataset_id": dataset.dataset_id,
+            "dataset_version_id": version.dataset_version_id,
+            "dataset_type": dataset.dataset_type,
+            "name": dataset.name,
+            "row_count": version.row_count,
+            "created_at": dataset.created_at.isoformat(),
+            "metadata": dataset.metadata_json,
+        },
+        "source_format": dataset.source_format,
+        "source_file_name": dataset.source_file_name,
+        "status": dataset.status,
+        "validation_report": version.validation_report_json,
+        "normalized_payload": version.normalized_payload_json,
+    }
 
 
 @router.post("/import/normalize", response_model=NormalizeResponse)

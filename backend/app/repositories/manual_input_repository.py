@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import ManualInputSetModel
@@ -30,3 +31,7 @@ class ManualInputRepository:
 
     def get_payload(self, manual_input_set_id: str) -> ManualInputSetModel | None:
         return self.session.get(ManualInputSetModel, manual_input_set_id)
+
+    def list_items(self) -> list[ManualInputSetModel]:
+        stmt = select(ManualInputSetModel).order_by(ManualInputSetModel.created_at.desc())
+        return list(self.session.scalars(stmt))

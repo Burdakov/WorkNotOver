@@ -252,7 +252,7 @@ Excel / параметры
 Planner manual edit
   -> Module F
   -> Module G
-  -> Module B
+  -> Module B (читает `PlannerScheduleRevision` из `Module F`)
   -> Module C
   -> new Scenario
 ```
@@ -278,6 +278,7 @@ D <-> E
 D -> F
 D -> G
 
+F -> B
 F -> G
 
 G -> B
@@ -321,6 +322,9 @@ G -> C
 - `D -> F`
   Оптимизированный или просто построенный график КРС передаётся в planner.
 
+- `F -> B`
+  При planner-side recalculation `Module B` читает `PlannerScheduleRevision` напрямую из `Planner`; `Module G` при этом остаётся orchestration-контуром запуска.
+
 - `D -> G`
   Scenario UI показывает результаты оптимизации и рейтинг сценариев.
 
@@ -328,10 +332,10 @@ G -> C
   Planner передаёт ревизии графика в сценарный UI/контур пересчёта.
 
 - `G -> B`
-  После ручной правки planner UI инициирует повторный расчёт добычи.
+  Scenario UI инициирует повторный расчёт добычи, но source of truth для `PlannerScheduleRevision` остаётся `Module F`.
 
 - `G -> C`
-  После ручной правки planner UI инициирует повторный расчёт экономики.
+  После ручной правки planner UI инициирует повторный расчёт экономики и связанного сценарного контура.
 
 ---
 

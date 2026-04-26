@@ -40,7 +40,20 @@ _HINTS: dict[str, list[str]] = {
     "capacity_water": ["мощн", "вода"],
     "connection_well": ["скв", "скваж"],
     "parent_object": ["родител", "parent"],
+    "fund_type": ["вид фонда", "тип фонда", "fund type", "base", "new wells", "внс"],
 }
+
+
+def _normalize_fund_type(value: Any) -> str | None:
+    raw_value = stringify(value)
+    if not raw_value:
+        return None
+    normalized_value = normalize_text(raw_value)
+    if "new wells" in normalized_value or "внс" in normalized_value or "нов" in normalized_value:
+        return "New wells"
+    if "base" in normalized_value or "баз" in normalized_value:
+        return "Base"
+    return raw_value
 
 
 def resolve_columns(df: pd.DataFrame, provided: NormalizeColumns | None, source_kind: str) -> NormalizeColumns:
@@ -89,7 +102,7 @@ def normalize_wells(df: pd.DataFrame, columns: NormalizeColumns, report: ImportV
                 "well_pad_id": stringify(row.get(columns.well_pad)) or None,
                 "infrastructure_object_id": None,
                 "brigade": stringify(row.get(columns.brigade)) or None,
-                "fund_type": None,
+                "fund_type": _normalize_fund_type(row.get(columns.fund_type)),
                 "status": None,
                 "current_oil_rate": coerce_float(row.get(columns.oil_rate)),
                 "current_gas_rate": coerce_float(row.get(columns.gas_rate)),
@@ -101,7 +114,6 @@ def normalize_wells(df: pd.DataFrame, columns: NormalizeColumns, report: ImportV
                 "current_cumulative_liquid": None,
                 "niz": coerce_float(row.get(columns.niz)),
                 "reserves_group": None,
-                "launch_date": None,
                 "metadata": {"source_row_number": index + 2},
             }
         )

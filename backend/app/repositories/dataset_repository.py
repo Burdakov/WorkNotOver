@@ -36,6 +36,20 @@ class DatasetRepository:
         stmt = select(UploadedFileModel).order_by(UploadedFileModel.created_at.desc())
         return list(self.session.scalars(stmt))
 
+    def list_datasets(self) -> list[tuple[DatasetModel, DatasetVersionModel | None]]:
+        stmt = select(DatasetModel).order_by(DatasetModel.created_at.desc())
+        datasets = list(self.session.scalars(stmt))
+        result: list[tuple[DatasetModel, DatasetVersionModel | None]] = []
+        for dataset in datasets:
+            version_stmt = (
+                select(DatasetVersionModel)
+                .where(DatasetVersionModel.dataset_id == dataset.dataset_id)
+                .where(DatasetVersionModel.is_active.is_(True))
+                .order_by(DatasetVersionModel.version_number.desc(), DatasetVersionModel.stored_at.desc())
+            )
+            result.append((dataset, self.session.scalars(version_stmt).first()))
+        return result
+
     def create_dataset_version(
         self,
         *,
