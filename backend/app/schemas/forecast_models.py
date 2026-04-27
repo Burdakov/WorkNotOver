@@ -42,6 +42,7 @@ class WellForecastResult(BaseModel):
     fund_type: str | None = None
     lu_id: str | None = None
     sloy_id: str | None = None
+    well_pad_id: str | None = None
     points: list[ProductionPoint] = Field(default_factory=list)
     total_oil: float = 0.0
     total_liquid: float = 0.0

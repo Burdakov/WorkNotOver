@@ -33,6 +33,16 @@
 - `ScenarioProductionSummary`
 - рассчитанные инкременты по мероприятиям
 
+`WellForecastResult` в текущем контракте должен быть пригоден не только для downstream-расчётов, но и для UI-агрегации раздела `Добыча`, поэтому как минимум обязан нести:
+
+- `well_id`
+- `well_name`
+- `fund_type`
+- `lu_id`
+- `sloy_id`
+- `well_pad_id`
+- профиль `ProductionPoint[]`
+
 ## Зона ответственности
 
 - baseline forecast

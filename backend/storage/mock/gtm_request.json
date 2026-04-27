@@ -1,0 +1,22 @@
+﻿{
+  "file_id": "3216fb1f-905e-4852-84bb-28201e90583e.xlsx",
+  "source_kind": "gtm",
+  "sheet_name": "GTM",
+  "dataset_name": "Mock GTM dataset explicit",
+  "columns": {
+    "well": "Скв",
+    "area": "Участок",
+    "lu": "LU",
+    "sloy": "SLOY",
+    "well_pad": "Куст",
+    "planned_work": "Планируемый объем работ",
+    "gtm_type": "вид ГТМ",
+    "start_date": "дата начала (план)",
+    "end_date": "заверш рем (план)",
+    "duration_days": "Продолжительность",
+    "increment": "Qн, тн/сут",
+    "liquid_increment": "Qж, м3/сут",
+    "gas_increment": "Qг, м3/сут",
+    "gor_change": "Изменение ГФ, м3/м3"
+  }
+}

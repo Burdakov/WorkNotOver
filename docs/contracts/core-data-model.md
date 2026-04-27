@@ -489,6 +489,10 @@
 
 - `well_id: str`
 - `well_name: str`
+- `fund_type: str | None`
+- `lu_id: str | None`
+- `sloy_id: str | None`
+- `well_pad_id: str | None`
 - `profile: list[ProductionPoint]`
 - `summary: dict[str, float | str | None]`
 

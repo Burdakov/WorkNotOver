@@ -392,6 +392,7 @@ class ForecastService:
             fund_type=fund_type,
             lu_id=well.get("lu_id"),
             sloy_id=well.get("sloy_id"),
+            well_pad_id=well.get("well_pad_id"),
             points=points,
             total_oil=round(total_oil, 6),
             total_liquid=round(total_liquid, 6),

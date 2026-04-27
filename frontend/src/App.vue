@@ -36,6 +36,13 @@ const latestNormalization = ref(null)
 const plannerSourceMode = ref('file')
 const plannerDatasetReference = ref(null)
 const knownLuOptions = ref([])
+const forecastScenarios = ref([])
+const selectedScenarioId = ref('')
+const forecastScenarioDetail = ref(null)
+const selectedProductionKeys = ref([])
+
+const PRODUCTION_CHART_HEIGHT = 260
+const PRODUCTION_CHART_MIN_WIDTH = 920
 
 const INPUT_TABS = [
   { id: 'upload', label: 'Загрузка' },
@@ -290,12 +297,20 @@ const totalIncrement = computed(() => visibleItems.value.reduce((sum, item) => s
 const previewColumns = computed(() => Object.keys(uploadedFile.value?.preview?.[0] || {}))
 const sourceKindFields = computed(() => SOURCE_KIND_FIELDS[selectedSourceKind.value] || [])
 const selectedSourceKindLabel = computed(() => SOURCE_KIND_OPTIONS.find((item) => item.id === selectedSourceKind.value)?.label || 'Источник')
-const viewTitle = computed(() => (currentView.value === 'upload' ? 'Исходные данные' : 'Планировщик КРС'))
-const viewSubtitle = computed(() =>
-  currentView.value === 'upload'
-    ? 'Подготовка внешнего графика КРС, базового фонда, плана ГТМ, ограничений инфраструктуры и ручных вводных для расчётного контура.'
-    : 'Светлый рабочий интерфейс для версий графика, анализа приростов, ручной корректировки и последующей выгрузки обновлённого плана.',
-)
+const viewTitle = computed(() => {
+  if (currentView.value === 'upload') return 'Исходные данные'
+  if (currentView.value === 'production') return 'Добыча'
+  return 'Планировщик КРС'
+})
+const viewSubtitle = computed(() => {
+  if (currentView.value === 'upload') {
+    return 'Подготовка внешнего графика КРС, базового фонда, плана ГТМ, ограничений инфраструктуры и ручных вводных для расчётного контура.'
+  }
+  if (currentView.value === 'production') {
+    return 'Сценарный просмотр накопленной добычи по БАЗЕ, ГТМ и ВНС с фильтрацией по полной иерархии LU → SLOY → куст → скважина.'
+  }
+  return 'Светлый рабочий интерфейс для версий графика, анализа приростов, ручной корректировки и последующей выгрузки обновлённого плана.'
+})
 const uploadedFileRowCount = computed(() => uploadedFile.value?.preview?.length || 0)
 const datasetsByType = computed(() => {
   const grouped = new Map()
@@ -336,6 +351,261 @@ const manualInputSummaryCards = computed(() => {
   })
 })
 const luSelectOptions = computed(() => [...knownLuOptions.value].sort((a, b) => a.localeCompare(b, 'ru')))
+
+const formatCompactDateTime = (value) => {
+  if (!value) return '—'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(parsed)
+}
+
+const productionTypeLabel = (row) => {
+  if (row.type === 'total') return 'Итого'
+  if (row.type === 'lu') return 'LU'
+  if (row.type === 'sloy') return 'SLOY'
+  if (row.type === 'well_pad') return 'Куст'
+  if (row.type === 'well') return row.fund_type || 'Скважина'
+  return row.type
+}
+
+const sumPointSeries = (points, field) =>
+  (points || []).reduce((sum, point) => sum + Number(point?.[field] || 0), 0)
+
+const buildProductionHierarchy = (wells) => {
+  const nodeMap = new Map()
+  const root = {
+    key: 'total',
+    parentKey: null,
+    type: 'total',
+    depth: 0,
+    label: 'Итого',
+    fund_type: null,
+    wellIds: new Set(),
+    totals: { oil: 0, liquid: 0, gas: 0 },
+    children: [],
+  }
+  nodeMap.set(root.key, root)
+
+  const ensureNode = (parent, key, type, label, fundType = null) => {
+    if (nodeMap.has(key)) return nodeMap.get(key)
+    const node = {
+      key,
+      parentKey: parent.key,
+      type,
+      depth: parent.depth + 1,
+      label,
+      fund_type: fundType,
+      wellIds: new Set(),
+      totals: { oil: 0, liquid: 0, gas: 0 },
+      children: [],
+    }
+    parent.children.push(node)
+    nodeMap.set(key, node)
+    return node
+  }
+
+  const addWellToNode = (node, wellId, totals) => {
+    node.wellIds.add(wellId)
+    node.totals.oil += totals.oil
+    node.totals.liquid += totals.liquid
+    node.totals.gas += totals.gas
+  }
+
+  for (const well of wells || []) {
+    const wellId = String(well.well_id || well.well_name || '')
+    const totals = {
+      oil: Number(well.total_oil || 0),
+      liquid: Number(well.total_liquid || 0),
+      gas: Number(well.total_gas || 0),
+    }
+    const lu = String(well.lu_id || 'Без LU')
+    const sloy = String(well.sloy_id || 'Без слоя')
+    const wellPad = String(well.well_pad_id || 'Без куста')
+    const wellName = String(well.well_name || wellId || 'Скважина')
+
+    const luNode = ensureNode(root, `lu:${lu}`, 'lu', lu)
+    const sloyNode = ensureNode(luNode, `lu:${lu}|sloy:${sloy}`, 'sloy', sloy)
+    const padNode = ensureNode(sloyNode, `lu:${lu}|sloy:${sloy}|pad:${wellPad}`, 'well_pad', wellPad)
+    const wellNode = ensureNode(
+      padNode,
+      `lu:${lu}|sloy:${sloy}|pad:${wellPad}|well:${wellId}`,
+      'well',
+      wellName,
+      well.fund_type || null,
+    )
+
+    addWellToNode(root, wellId, totals)
+    addWellToNode(luNode, wellId, totals)
+    addWellToNode(sloyNode, wellId, totals)
+    addWellToNode(padNode, wellId, totals)
+    addWellToNode(wellNode, wellId, totals)
+  }
+
+  const sortNodes = (nodes) => {
+    nodes.sort((left, right) => left.label.localeCompare(right.label, 'ru'))
+    nodes.forEach((child) => sortNodes(child.children))
+  }
+  sortNodes(root.children)
+
+  const rows = []
+  const walk = (node) => {
+    rows.push({
+      key: node.key,
+      parentKey: node.parentKey,
+      type: node.type,
+      depth: node.depth,
+      label: node.label,
+      fund_type: node.fund_type,
+      wellCount: node.wellIds.size,
+      totals: {
+        oil: Number(node.totals.oil.toFixed(2)),
+        liquid: Number(node.totals.liquid.toFixed(2)),
+        gas: Number(node.totals.gas.toFixed(2)),
+      },
+    })
+    node.children.forEach(walk)
+  }
+  walk(root)
+
+  return {
+    rows,
+    nodeMap,
+  }
+}
+
+const forecastScenarioOptions = computed(() =>
+  [...forecastScenarios.value].sort((left, right) => {
+    const leftDate = new Date(left.latest_result_created_at || left.created_at || 0).getTime()
+    const rightDate = new Date(right.latest_result_created_at || right.created_at || 0).getTime()
+    return rightDate - leftDate
+  }),
+)
+const selectedForecastScenarioMeta = computed(() =>
+  forecastScenarioOptions.value.find((item) => item.scenario_id === selectedScenarioId.value) || null,
+)
+const forecastScenarioWells = computed(() => forecastScenarioDetail.value?.wells || [])
+const productionHierarchy = computed(() => buildProductionHierarchy(forecastScenarioWells.value))
+const productionRowLookup = computed(() => productionHierarchy.value.nodeMap)
+const selectedProductionRows = computed(() =>
+  selectedProductionKeys.value
+    .map((key) => productionHierarchy.value.rows.find((row) => row.key === key))
+    .filter(Boolean),
+)
+const selectedProductionWellIds = computed(() => {
+  if (!selectedProductionKeys.value.length) return new Set(forecastScenarioWells.value.map((well) => String(well.well_id)))
+  const wellIds = new Set()
+  selectedProductionKeys.value.forEach((key) => {
+    const node = productionRowLookup.value.get(key)
+    node?.wellIds?.forEach((wellId) => wellIds.add(String(wellId)))
+  })
+  return wellIds
+})
+const selectedForecastWells = computed(() => {
+  const allowed = selectedProductionWellIds.value
+  return forecastScenarioWells.value.filter((well) => allowed.has(String(well.well_id)))
+})
+const selectedProductionTotals = computed(() => ({
+  oil: Number(selectedForecastWells.value.reduce((sum, well) => sum + Number(well.total_oil || 0), 0).toFixed(2)),
+  liquid: Number(selectedForecastWells.value.reduce((sum, well) => sum + Number(well.total_liquid || 0), 0).toFixed(2)),
+  gas: Number(selectedForecastWells.value.reduce((sum, well) => sum + Number(well.total_gas || 0), 0).toFixed(2)),
+}))
+const productionSeries = computed(() => {
+  if (!forecastScenarioDetail.value) return []
+  const pointsByDate = new Map()
+  selectedForecastWells.value.forEach((well) => {
+    const fundBucket = String(well.fund_type || '').toLowerCase() === 'new wells' ? 'vns' : 'base'
+    ;(well.points || []).forEach((point) => {
+      const existing = pointsByDate.get(point.date) || { date: point.date, base: 0, gtm: 0, vns: 0 }
+      existing[fundBucket] += Number(point.oil_rate || 0)
+      existing.gtm += Number(point.oil_increment || 0)
+      pointsByDate.set(point.date, existing)
+    })
+  })
+  const orderedDates = (forecastScenarioDetail.value.production_points || [])
+    .map((point) => point.date)
+    .filter((date, index, items) => items.indexOf(date) === index)
+  let cumulativeBase = 0
+  let cumulativeGtm = 0
+  let cumulativeVns = 0
+  return orderedDates.map((date) => {
+    const bucket = pointsByDate.get(date) || { base: 0, gtm: 0, vns: 0 }
+    cumulativeBase += bucket.base
+    cumulativeGtm += bucket.gtm
+    cumulativeVns += bucket.vns
+    return {
+      date,
+      base: Number(cumulativeBase.toFixed(2)),
+      gtm: Number(cumulativeGtm.toFixed(2)),
+      vns: Number(cumulativeVns.toFixed(2)),
+      total: Number((cumulativeBase + cumulativeGtm + cumulativeVns).toFixed(2)),
+    }
+  })
+})
+const productionChartWidth = computed(() => Math.max(PRODUCTION_CHART_MIN_WIDTH, productionSeries.value.length * 2.2))
+const productionChartMax = computed(() => productionSeries.value.reduce((max, point) => Math.max(max, point.total), 0))
+const productionChartLegend = computed(() => {
+  const last = productionSeries.value[productionSeries.value.length - 1]
+  return [
+    { key: 'base', label: 'БАЗА', color: '#497ee8', value: last?.base || 0 },
+    { key: 'gtm', label: 'ГТМ', color: '#f08b32', value: last?.gtm || 0 },
+    { key: 'vns', label: 'ВНС', color: '#41b77a', value: last?.vns || 0 },
+  ]
+})
+const productionSelectedLabel = computed(() =>
+  selectedProductionRows.value.length ? selectedProductionRows.value.map((row) => row.label).join(', ') : 'Весь сценарий',
+)
+
+const productionStackedPaths = computed(() => {
+  if (!productionSeries.value.length || !productionChartMax.value) return []
+  const width = productionChartWidth.value
+  const maxValue = productionChartMax.value
+  const toX = (index) => (productionSeries.value.length === 1 ? width / 2 : (index / (productionSeries.value.length - 1)) * width)
+  const toY = (value) => PRODUCTION_CHART_HEIGHT - (value / maxValue) * PRODUCTION_CHART_HEIGHT
+  const buildPath = (upperValues, lowerValues) => {
+    const upper = upperValues.map((value, index) => `${index === 0 ? 'M' : 'L'} ${toX(index)} ${toY(value)}`).join(' ')
+    const lower = lowerValues
+      .map((value, index) => {
+        const reverseIndex = lowerValues.length - 1 - index
+        return `L ${toX(reverseIndex)} ${toY(lowerValues[reverseIndex])}`
+      })
+      .join(' ')
+    return `${upper} ${lower} Z`
+  }
+  const baseUpper = productionSeries.value.map((point) => point.base)
+  const gtmUpper = productionSeries.value.map((point) => point.base + point.gtm)
+  const vnsUpper = productionSeries.value.map((point) => point.total)
+  const zeroLine = productionSeries.value.map(() => 0)
+  return [
+    { key: 'base', label: 'БАЗА', color: '#497ee8', path: buildPath(baseUpper, zeroLine) },
+    { key: 'gtm', label: 'ГТМ', color: '#f08b32', path: buildPath(gtmUpper, baseUpper) },
+    { key: 'vns', label: 'ВНС', color: '#41b77a', path: buildPath(vnsUpper, gtmUpper) },
+  ]
+})
+const productionTotalLine = computed(() => {
+  if (!productionSeries.value.length || !productionChartMax.value) return ''
+  const width = productionChartWidth.value
+  const toX = (index) => (productionSeries.value.length === 1 ? width / 2 : (index / (productionSeries.value.length - 1)) * width)
+  const toY = (value) => PRODUCTION_CHART_HEIGHT - (value / productionChartMax.value) * PRODUCTION_CHART_HEIGHT
+  return productionSeries.value.map((point, index) => `${index === 0 ? 'M' : 'L'} ${toX(index)} ${toY(point.total)}`).join(' ')
+})
+const productionAxisLabels = computed(() => {
+  if (!productionSeries.value.length) return []
+  const every = Math.max(1, Math.floor(productionSeries.value.length / 6))
+  return productionSeries.value
+    .map((point, index) => ({ ...point, index }))
+    .filter((point, index, items) => index === 0 || index === items.length - 1 || index % every === 0)
+    .map((point) => ({
+      key: point.date,
+      date: point.date,
+      left: productionSeries.value.length === 1 ? productionChartWidth.value / 2 : (point.index / (productionSeries.value.length - 1)) * productionChartWidth.value,
+    }))
+})
 
 const fullScheduleBounds = computed(() => {
   if (!visibleItems.value.length) return { min: null, max: null }
@@ -543,7 +813,6 @@ const syncColumns = (nextColumns) => {
 }
 
 const persistSession = () => {
-  if (!uploadedFile.value?.file_id && !plannerDatasetReference.value?.dataset_id) return
   writeJson(SESSION_KEY, {
     file_id: uploadedFile.value?.file_id || null,
     sheet_name: uploadedFile.value?.selected_sheet || null,
@@ -552,6 +821,7 @@ const persistSession = () => {
     active_version_id: activeVersionId.value,
     planner_source_mode: plannerSourceMode.value,
     planner_dataset_reference: plannerDatasetReference.value,
+    selected_scenario_id: selectedScenarioId.value || null,
   })
 }
 
@@ -628,12 +898,53 @@ const loadManualInputSets = async () => {
   manualInputSets.value = await response.json()
 }
 
+const loadForecastScenarios = async () => {
+  const response = await request('/forecast/scenarios')
+  const payload = await response.json()
+  forecastScenarios.value = Array.isArray(payload) ? payload : []
+  if (
+    selectedScenarioId.value
+    && !forecastScenarios.value.some((item) => item.scenario_id === selectedScenarioId.value)
+  ) {
+    selectedScenarioId.value = ''
+  }
+  if (!selectedScenarioId.value && forecastScenarioOptions.value.length) {
+    selectedScenarioId.value = forecastScenarioOptions.value[0].scenario_id
+  }
+}
+
+const loadForecastScenarioDetail = async (scenarioId) => {
+  if (!scenarioId) {
+    forecastScenarioDetail.value = null
+    selectedProductionKeys.value = []
+    return
+  }
+  const response = await request(`/forecast/scenarios/${encodeURIComponent(scenarioId)}`)
+  forecastScenarioDetail.value = await response.json()
+  selectedProductionKeys.value = []
+}
+
 const loadDatasetDetail = async (datasetId, datasetVersionId = null) => {
   const query = datasetVersionId ? `?dataset_version_id=${encodeURIComponent(datasetVersionId)}` : ''
   const response = await request(`/datasets/${datasetId}${query}`)
   datasetDetail.value = await response.json()
   selectedDatasetId.value = datasetId
   appendLuOptionsFromPayload(datasetDetail.value.normalized_payload)
+}
+
+const toggleProductionNode = (key) => {
+  if (key === 'total') {
+    selectedProductionKeys.value = selectedProductionKeys.value.includes('total') ? [] : ['total']
+    return
+  }
+  const next = new Set(selectedProductionKeys.value.filter((item) => item !== 'total'))
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  selectedProductionKeys.value = [...next]
+}
+
+const clearProductionSelection = () => {
+  selectedProductionKeys.value = []
 }
 
 const loadUploadedFiles = async () => {
@@ -1118,14 +1429,23 @@ const exportVersion = async () => {
 
 watch(currentView, () => persistSession())
 watch(activeVersionId, () => persistVersions())
+watch(selectedScenarioId, async (scenarioId, previousId) => {
+  if (!scenarioId || scenarioId === previousId) return
+  await loadForecastScenarioDetail(scenarioId)
+  persistSession()
+})
 
 onMounted(async () => {
   await loadUploadedFiles()
   await loadDatasets()
   await loadManualInputSets()
+  await loadForecastScenarios()
   const session = readJson(SESSION_KEY, null)
   if (!session) return
   currentView.value = session.view || 'upload'
+  if (session.selected_scenario_id) {
+    selectedScenarioId.value = session.selected_scenario_id
+  }
   if (session.planner_source_mode === 'dataset' && session.planner_dataset_reference?.dataset_id) {
     await openImportedDataset(session.planner_dataset_reference, true)
     return
@@ -1150,6 +1470,10 @@ onMounted(async () => {
         <button class="nav-item" :class="{ active: currentView === 'upload' }" @click="currentView = 'upload'">
           <span class="nav-icon">⇪</span>
           <span v-if="!sidebarCollapsed">Исходные данные</span>
+        </button>
+        <button class="nav-item" :class="{ active: currentView === 'production' }" @click="currentView = 'production'">
+          <span class="nav-icon">◔</span>
+          <span v-if="!sidebarCollapsed">Добыча</span>
         </button>
         <button class="nav-item" :class="{ active: currentView === 'planner' }" @click="currentView = 'planner'">
           <span class="nav-icon">▦</span>
@@ -1608,7 +1932,166 @@ onMounted(async () => {
         </div>
       </section>
 
-      <section v-else class="page-stack planner-stack">
+      <section v-else-if="currentView === 'production'" class="page-stack production-stack">
+        <div v-if="!forecastScenarioOptions.length" class="panel empty-state">
+          Сначала выполните расчёт сценария прогноза через backend `Module B`. После этого здесь появятся выбор сценария, накопительная диаграмма добычи и иерархический анализ.
+        </div>
+
+        <template v-else>
+          <div class="panel soft production-toolbar-panel">
+            <div class="toolbar between align-start">
+              <div>
+                <h2>Сценарий расчёта</h2>
+                <p class="subtitle">Выберите сохранённый сценарий прогноза и отберите группы в таблице ниже, чтобы накопительная диаграмма обновилась только по ним.</p>
+              </div>
+              <div class="toolbar actions-wrap">
+                <select v-model="selectedScenarioId" class="compact-select-inline production-scenario-select">
+                  <option v-for="item in forecastScenarioOptions" :key="item.scenario_id" :value="item.scenario_id">
+                    {{ item.name }} · {{ item.forecast_start_date }} → {{ item.forecast_end_date }}
+                  </option>
+                </select>
+                <button class="button ghost" :disabled="loading" @click="loadForecastScenarios">Обновить</button>
+                <button class="button ghost" :disabled="!selectedProductionKeys.length" @click="clearProductionSelection">Сбросить выбор</button>
+              </div>
+            </div>
+
+            <div class="info-cards production-info-cards">
+              <div class="info-card">
+                <span>Выбранный контур</span>
+                <strong>{{ productionSelectedLabel }}</strong>
+              </div>
+              <div class="info-card">
+                <span>Период</span>
+                <strong>{{ selectedForecastScenarioMeta?.forecast_start_date || '—' }} → {{ selectedForecastScenarioMeta?.forecast_end_date || '—' }}</strong>
+              </div>
+              <div class="info-card">
+                <span>Создан</span>
+                <strong>{{ formatCompactDateTime(selectedForecastScenarioMeta?.latest_result_created_at || selectedForecastScenarioMeta?.created_at) }}</strong>
+              </div>
+              <div class="info-card">
+                <span>Статус</span>
+                <strong>{{ selectedForecastScenarioMeta?.status || '—' }}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="forecastScenarioDetail" class="stats-grid production-stats-grid">
+            <div class="stat-card"><span>Нефть</span><strong>{{ selectedProductionTotals.oil.toFixed(1) }}</strong></div>
+            <div class="stat-card"><span>Жидкость</span><strong>{{ selectedProductionTotals.liquid.toFixed(1) }}</strong></div>
+            <div class="stat-card"><span>Газ</span><strong>{{ selectedProductionTotals.gas.toFixed(1) }}</strong></div>
+          </div>
+
+          <div v-if="forecastScenarioDetail" class="panel production-chart-panel">
+            <div class="toolbar between align-start">
+              <div>
+                <h2>Накопительная добыча нефти</h2>
+                <p class="subtitle">Категории `БАЗА`, `ГТМ`, `ВНС` отображаются накопительно на весь период расчёта. При выборе нескольких групп в таблице ниже диаграмма пересчитывается только по их скважинам.</p>
+              </div>
+              <div class="prefix-legend production-legend">
+                <span v-for="item in productionChartLegend" :key="item.key" class="prefix-chip production-chip">
+                  <i :style="{ background: item.color }"></i>
+                  {{ item.label }} · {{ item.value.toFixed(1) }}
+                </span>
+              </div>
+            </div>
+
+            <div v-if="productionSeries.length" class="production-chart-wrap">
+              <div class="production-chart-scroll">
+                <svg
+                  class="production-chart-svg"
+                  :viewBox="`0 0 ${productionChartWidth} ${PRODUCTION_CHART_HEIGHT + 32}`"
+                  preserveAspectRatio="none"
+                >
+                  <g>
+                    <path
+                      v-for="area in productionStackedPaths"
+                      :key="area.key"
+                      :d="area.path"
+                      :fill="area.color"
+                      class="production-area-path"
+                    />
+                    <path :d="productionTotalLine" class="production-total-line" />
+                  </g>
+                  <g class="production-axis">
+                    <line
+                      v-for="label in productionAxisLabels"
+                      :key="`tick-${label.key}`"
+                      :x1="label.left"
+                      :x2="label.left"
+                      y1="0"
+                      :y2="PRODUCTION_CHART_HEIGHT"
+                      class="production-grid-line"
+                    />
+                  </g>
+                  <g>
+                    <text
+                      v-for="label in productionAxisLabels"
+                      :key="label.key"
+                      :x="label.left"
+                      :y="PRODUCTION_CHART_HEIGHT + 18"
+                      text-anchor="middle"
+                      class="production-axis-label"
+                    >
+                      {{ formatDateCell(label.date) }}
+                    </text>
+                  </g>
+                </svg>
+              </div>
+            </div>
+            <div v-else class="empty-note">Для выбранной группы нет точек профиля.</div>
+          </div>
+
+          <div v-if="forecastScenarioDetail" class="panel">
+            <div class="toolbar between align-start">
+              <div>
+                <h2>Иерархия добычи</h2>
+                <p class="subtitle">Кликайте по строкам, чтобы собрать одну или несколько групп. Поддерживается путь `Итого → LU → SLOY → куст → скважина`.</p>
+              </div>
+              <div class="notice production-notice">
+                {{ selectedProductionKeys.length ? `Выбрано групп: ${selectedProductionKeys.length}` : 'Показан весь сценарий' }}
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table class="production-table">
+                <thead>
+                  <tr>
+                    <th>Группа</th>
+                    <th>Тип</th>
+                    <th>Скважин</th>
+                    <th>Нефть</th>
+                    <th>Жидкость</th>
+                    <th>Газ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="row in productionHierarchy.rows"
+                    :key="row.key"
+                    class="production-row"
+                    :class="{ selected: selectedProductionKeys.includes(row.key) || (!selectedProductionKeys.length && row.key === 'total') }"
+                    @click="toggleProductionNode(row.key)"
+                  >
+                    <td>
+                      <div class="production-label" :style="{ '--depth': row.depth }">
+                        <span class="production-bullet"></span>
+                        <strong>{{ row.label }}</strong>
+                      </div>
+                    </td>
+                    <td>{{ productionTypeLabel(row) }}</td>
+                    <td>{{ row.wellCount }}</td>
+                    <td>{{ row.totals.oil.toFixed(1) }}</td>
+                    <td>{{ row.totals.liquid.toFixed(1) }}</td>
+                    <td>{{ row.totals.gas.toFixed(1) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </template>
+      </section>
+
+      <section v-else-if="currentView === 'planner'" class="page-stack planner-stack">
         <div v-if="!activeItems.length" class="panel empty-state">Сначала загрузите внешний график КРС в разделе «Исходные данные» или откройте уже импортированный dataset. После этого здесь появятся диаграмма Ганта, версии графика и аналитика приростов.</div>
 
         <template v-else>
