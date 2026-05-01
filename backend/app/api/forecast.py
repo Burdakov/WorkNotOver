@@ -11,7 +11,7 @@ from app.schemas.common import DatasetReference, ManualInputReference
 from app.schemas.forecast_models import ForecastCalculateRequest, ForecastCalculateResponse, ScenarioModelResponse
 from app.services.forecast_service import ForecastService
 
-router = APIRouter(prefix="/api/forecast", tags=["forecast"])
+router = APIRouter(prefix="/api/forecast", tags=["module-b"])
 
 
 def get_db():
@@ -32,15 +32,18 @@ def _resolve_dataset(
     resolved = DatasetRepository(db).get_dataset_version(dataset_id, dataset_version_id)
     if resolved is None:
         raise HTTPException(status_code=404, detail="Dataset не найден.")
+
     dataset, version = resolved
     if dataset.dataset_type != expected_type:
         raise HTTPException(
             status_code=400,
             detail=f"Ожидался dataset типа '{expected_type}', получен '{dataset.dataset_type}'.",
         )
+
     payload = version.normalized_payload_json
     if not isinstance(payload, list):
-        raise HTTPException(status_code=400, detail="Normalized payload dataset должен быть списком объектов.")
+        raise HTTPException(status_code=400, detail="Normalized payload должен быть списком объектов.")
+
     reference = DatasetReference(
         dataset_id=dataset.dataset_id,
         dataset_version_id=version.dataset_version_id,
@@ -92,19 +95,18 @@ def calculate_forecast(payload: ForecastCalculateRequest, db: Session = Depends(
         manual_input_reference=manual_input_reference,
         manual_input_payload=manual_input_payload,
     )
-    response = service.calculate(payload)
+    result = service.calculate(payload)
 
-    scenario_repo = ScenarioRepository(db)
-    saved_scenario, _ = scenario_repo.create_scenario_with_result(
-        name=response.scenario.name,
-        source_type=response.scenario.source_type,
-        parent_scenario_id=response.scenario.parent_scenario_id,
-        forecast_start_date=response.scenario.forecast_start_date,
-        forecast_end_date=response.scenario.forecast_end_date,
-        metadata=response.scenario.metadata,
-        production_summary=response.production_summary.model_dump(),
-        production_points=[point.model_dump() for point in response.production_points],
-        well_results=[item.model_dump() for item in response.wells],
+    saved_scenario, _ = ScenarioRepository(db).create_scenario_with_result(
+        name=result.scenario.name,
+        source_type=result.scenario.source_type,
+        parent_scenario_id=result.scenario.parent_scenario_id,
+        forecast_start_date=result.scenario.forecast_start_date,
+        forecast_end_date=result.scenario.forecast_end_date,
+        metadata=result.scenario.metadata,
+        production_summary=result.production_summary.model_dump(),
+        production_points=[item.model_dump() for item in result.production_points],
+        well_results=[item.model_dump() for item in result.wells],
         source_payload={
             "wells_dataset": wells_reference.model_dump(),
             "gtm_dataset": gtm_reference.model_dump(),
@@ -113,7 +115,7 @@ def calculate_forecast(payload: ForecastCalculateRequest, db: Session = Depends(
         },
     )
 
-    response.scenario = ScenarioModelResponse(
+    result.scenario = ScenarioModelResponse(
         scenario_id=saved_scenario.scenario_id,
         name=saved_scenario.name,
         source_type=saved_scenario.source_type,
@@ -124,12 +126,11 @@ def calculate_forecast(payload: ForecastCalculateRequest, db: Session = Depends(
         status=saved_scenario.status,
         metadata=saved_scenario.metadata_json,
     )
-    return response
+    return result
 
 
 @router.get("/scenarios")
 def list_scenarios(db: Session = Depends(get_db)) -> list[dict]:
-    items = ScenarioRepository(db).list_scenarios()
     return [
         {
             "scenario_id": scenario.scenario_id,
@@ -144,7 +145,7 @@ def list_scenarios(db: Session = Depends(get_db)) -> list[dict]:
             "latest_result_created_at": result.created_at.isoformat() if result else None,
             "production_summary": result.production_summary_json if result else None,
         }
-        for scenario, result in items
+        for scenario, result in ScenarioRepository(db).list_scenarios()
     ]
 
 
@@ -153,6 +154,7 @@ def get_scenario(scenario_id: str, db: Session = Depends(get_db)) -> dict:
     resolved = ScenarioRepository(db).get_latest_result(scenario_id)
     if resolved is None:
         raise HTTPException(status_code=404, detail="Сценарий не найден.")
+
     scenario, result = resolved
     return {
         "scenario": {

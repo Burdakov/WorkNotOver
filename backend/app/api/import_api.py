@@ -21,7 +21,7 @@ from app.services.importing.normalizers import (
     validate_hierarchy,
 )
 
-router = APIRouter(prefix="/api", tags=["import"])
+router = APIRouter(prefix="/api", tags=["module-a"])
 
 _SOURCE_KIND_MAPPING_FIELDS = {
     "wells": {
@@ -30,6 +30,7 @@ _SOURCE_KIND_MAPPING_FIELDS = {
         "lu",
         "sloy",
         "well_pad",
+        "brigade",
         "fund_type",
         "oil_rate",
         "gas_rate",
@@ -46,8 +47,9 @@ _SOURCE_KIND_MAPPING_FIELDS = {
         "lu",
         "sloy",
         "well_pad",
-        "planned_work",
+        "brigade",
         "gtm_type",
+        "planned_work",
         "start_date",
         "end_date",
         "duration_days",
@@ -57,6 +59,10 @@ _SOURCE_KIND_MAPPING_FIELDS = {
         "gor_change",
     },
     "infrastructure": {
+        "area",
+        "lu",
+        "sloy",
+        "well_pad",
         "object_name",
         "object_type",
         "commissioning_date",
@@ -66,18 +72,14 @@ _SOURCE_KIND_MAPPING_FIELDS = {
         "capacity_water",
         "connection_well",
         "parent_object",
-        "area",
-        "lu",
-        "sloy",
-        "well_pad",
     },
     "external_krs_schedule": {
         "brigade",
-        "well",
         "area",
         "lu",
         "sloy",
         "well_pad",
+        "well",
         "start_date",
         "end_date",
         "planned_work",
@@ -97,28 +99,24 @@ def get_db():
         db.close()
 
 
-def build_column_mappings(source_kind: str, resolved_columns: dict[str, str | None]) -> dict[str, str]:
+def _build_column_mappings(source_kind: str, resolved_columns: dict[str, str | None]) -> dict[str, str]:
     allowed_fields = _SOURCE_KIND_MAPPING_FIELDS.get(source_kind, set())
-    return {
-        key: value
-        for key, value in resolved_columns.items()
-        if key in allowed_fields and value
-    }
+    return {key: value for key, value in resolved_columns.items() if key in allowed_fields and value}
 
 
 @router.post("/files/upload", response_model=UploadResponse)
 def upload_excel(file: UploadFile = File(...), db: Session = Depends(get_db)) -> UploadResponse:
     extension = Path(file.filename or "source.xlsx").suffix.lower()
     if extension not in {".xlsx", ".xls"}:
-        raise HTTPException(status_code=400, detail="Поддерживаются только файлы Excel .xlsx и .xls.")
+        raise HTTPException(status_code=400, detail="Поддерживаются только Excel-файлы .xlsx и .xls.")
 
     file_id = f"{uuid4()}{extension}"
-    path = STORAGE_DIR / file_id
-    with path.open("wb") as buffer:
+    stored_path = STORAGE_DIR / file_id
+    with stored_path.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    sheets, selected_sheet, df = sheet_df(path, None)
-    DatasetRepository(db).upsert_uploaded_file(file_id, file.filename or file_id, str(path), sheets)
+    sheets, selected_sheet, df = sheet_df(stored_path, None)
+    DatasetRepository(db).upsert_uploaded_file(file_id, file.filename or file_id, str(stored_path), sheets)
 
     return UploadResponse(
         file_id=file_id,
@@ -132,23 +130,22 @@ def upload_excel(file: UploadFile = File(...), db: Session = Depends(get_db)) ->
 
 @router.get("/files", response_model=list[UploadedFileItem])
 def list_files(db: Session = Depends(get_db)) -> list[UploadedFileItem]:
-    items = DatasetRepository(db).list_uploaded_files()
     return [
         UploadedFileItem(file_id=item.file_id, original_name=item.original_name, sheets=item.sheets_json or [])
-        for item in items
+        for item in DatasetRepository(db).list_uploaded_files()
     ]
 
 
 @router.get("/files/{file_id}", response_model=UploadResponse)
-def file_details(file_id: str, sheet_name: str | None = None, db: Session = Depends(get_db)) -> UploadResponse:
-    item = next((entry for entry in DatasetRepository(db).list_uploaded_files() if entry.file_id == file_id), None)
-    if item is None:
+def get_file_details(file_id: str, sheet_name: str | None = None, db: Session = Depends(get_db)) -> UploadResponse:
+    uploaded = next((item for item in DatasetRepository(db).list_uploaded_files() if item.file_id == file_id), None)
+    if uploaded is None:
         raise HTTPException(status_code=404, detail="Файл не найден.")
-    path = Path(item.stored_path)
-    sheets, selected_sheet, df = sheet_df(path, sheet_name)
+
+    sheets, selected_sheet, df = sheet_df(Path(uploaded.stored_path), sheet_name)
     return UploadResponse(
-        file_id=file_id,
-        original_name=item.original_name,
+        file_id=uploaded.file_id,
+        original_name=uploaded.original_name,
         sheets=sheets,
         selected_sheet=selected_sheet,
         preview=preview_records(df),
@@ -180,10 +177,11 @@ def list_datasets(db: Session = Depends(get_db)) -> list[dict]:
 
 
 @router.get("/datasets/{dataset_id}")
-def dataset_details(dataset_id: str, dataset_version_id: str | None = None, db: Session = Depends(get_db)) -> dict:
+def get_dataset(dataset_id: str, dataset_version_id: str | None = None, db: Session = Depends(get_db)) -> dict:
     resolved = DatasetRepository(db).get_dataset_version(dataset_id, dataset_version_id)
     if resolved is None:
         raise HTTPException(status_code=404, detail="Dataset не найден.")
+
     dataset, version = resolved
     return {
         "dataset_reference": {
@@ -206,14 +204,15 @@ def dataset_details(dataset_id: str, dataset_version_id: str | None = None, db: 
 @router.post("/import/normalize", response_model=NormalizeResponse)
 def normalize_dataset(payload: NormalizeRequest, db: Session = Depends(get_db)) -> NormalizeResponse:
     repo = DatasetRepository(db)
-    uploaded = next((entry for entry in repo.list_uploaded_files() if entry.file_id == payload.file_id), None)
+    uploaded = next((item for item in repo.list_uploaded_files() if item.file_id == payload.file_id), None)
     if uploaded is None:
         raise HTTPException(status_code=404, detail="Файл не найден.")
 
-    path = Path(uploaded.stored_path)
-    _, selected_sheet, df = sheet_df(path, payload.sheet_name)
+    file_path = Path(uploaded.stored_path)
+    _, selected_sheet, df = sheet_df(file_path, payload.sheet_name)
+
     try:
-        resolved = resolve_columns(df, payload.columns, payload.source_kind)
+        resolved_columns = resolve_columns(df, payload.columns, payload.source_kind)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -222,36 +221,40 @@ def normalize_dataset(payload: NormalizeRequest, db: Session = Depends(get_db)) 
         file_id=payload.file_id,
         original_name=uploaded.original_name,
         sheet_name=selected_sheet,
-        column_mappings=build_column_mappings(payload.source_kind, resolved.model_dump()),
+        column_mappings=_build_column_mappings(payload.source_kind, resolved_columns.model_dump()),
     )
 
     if payload.source_kind == "wells":
-        normalized_payload = normalize_wells(df, resolved, report)
+        normalized_payload = normalize_wells(df, resolved_columns, report)
         validate_hierarchy(normalized_payload, report)
     elif payload.source_kind == "gtm":
-        normalized_payload = normalize_gtm(df, resolved, report)
+        normalized_payload = normalize_gtm(df, resolved_columns, report)
         validate_hierarchy(normalized_payload, report)
     elif payload.source_kind == "infrastructure":
-        normalized_payload = normalize_infrastructure(df, resolved, report)
+        normalized_payload = normalize_infrastructure(df, resolved_columns, report)
     elif payload.source_kind == "external_krs_schedule":
-        normalized_payload = normalize_external_krs_schedule(df, resolved, report)
+        normalized_payload = normalize_external_krs_schedule(df, resolved_columns, report)
     else:
         raise HTTPException(status_code=400, detail="Неподдерживаемый source_kind.")
 
-    dataset_reference = repo.create_dataset_version(
-        dataset_type=payload.source_kind,
-        name=payload.dataset_name or f"{payload.source_kind}:{uploaded.original_name}",
-        source_format=path.suffix.lstrip("."),
-        source_file_name=uploaded.original_name,
-        normalized_payload=normalized_payload,
-        validation_report=report.model_dump(),
-        row_count=report.row_count,
-        metadata={"sheet_name": selected_sheet},
-    )
+    try:
+        dataset_reference = repo.create_dataset_version(
+            dataset_type=payload.source_kind,
+            name=payload.dataset_name or f"{payload.source_kind}:{uploaded.original_name}",
+            source_format=file_path.suffix.lstrip("."),
+            source_file_name=uploaded.original_name,
+            normalized_payload=normalized_payload,
+            validation_report=report.model_dump(),
+            row_count=report.row_count,
+            metadata={"sheet_name": selected_sheet},
+            dataset_id=payload.dataset_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if payload.source_kind == "external_krs_schedule" and isinstance(normalized_payload, dict):
         normalized_payload["dataset_reference"] = dataset_reference.model_dump()
-        normalized_payload["source_format"] = path.suffix.lstrip(".")
+        normalized_payload["source_format"] = file_path.suffix.lstrip(".")
         normalized_payload["source_file_name"] = uploaded.original_name
 
     return NormalizeResponse(

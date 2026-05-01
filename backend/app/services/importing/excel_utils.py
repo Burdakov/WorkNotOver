@@ -30,12 +30,13 @@ def sheet_df(path: Path, sheet_name: str | None) -> tuple[list[str], str, pd.Dat
     sheets = workbook.sheet_names
     if not sheets:
         raise HTTPException(status_code=400, detail="В Excel нет листов.")
-    active_sheet = sheet_name or sheets[0]
+
+    selected_sheet = sheet_name or sheets[0]
     try:
-        df = workbook.parse(active_sheet)
+        df = workbook.parse(selected_sheet)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Не удалось прочитать лист '{active_sheet}': {exc}") from exc
-    return sheets, active_sheet, df
+        raise HTTPException(status_code=400, detail=f"Не удалось прочитать лист '{selected_sheet}': {exc}") from exc
+    return sheets, selected_sheet, df
 
 
 def column_type(series: pd.Series) -> str:
@@ -66,7 +67,7 @@ def columns_info(df: pd.DataFrame) -> list[ColumnInfo]:
 
 
 def preview_records(df: pd.DataFrame, limit: int = 12) -> list[dict[str, Any]]:
-    def serialize_preview_value(value: Any) -> Any:
+    def serialize(value: Any) -> Any:
         if value is None or pd.isna(value):
             return None
         if isinstance(value, pd.Timestamp):
@@ -78,12 +79,8 @@ def preview_records(df: pd.DataFrame, limit: int = 12) -> list[dict[str, Any]]:
                 pass
         return value
 
-    preview = df.head(limit).copy()
-    preview = preview.where(pd.notnull(preview), None)
-    return [
-        {str(column): serialize_preview_value(value) for column, value in row.items()}
-        for row in preview.to_dict(orient="records")
-    ]
+    preview = df.head(limit).copy().where(pd.notnull(df.head(limit)), None)
+    return [{str(column): serialize(value) for column, value in row.items()} for row in preview.to_dict(orient="records")]
 
 
 def coerce_date(value: object) -> str | None:

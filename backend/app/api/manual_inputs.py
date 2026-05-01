@@ -20,14 +20,14 @@ def get_db():
 
 @router.post("/save", response_model=ManualInputSaveResponse)
 def save_manual_inputs(payload: ManualInputSaveRequest, db: Session = Depends(get_db)) -> ManualInputSaveResponse:
-    normalized_payload = payload.normalized_payload()
+    storage_payload = payload.payload.to_storage_payload()
     reference = ManualInputRepository(db).create(
         name=payload.name,
-        payload=normalized_payload.model_dump(),
+        payload=storage_payload,
         created_by=payload.created_by,
-        metadata=normalized_payload.metadata,
+        metadata=storage_payload.get("metadata"),
     )
-    return ManualInputSaveResponse(reference=reference, payload=normalized_payload)
+    return ManualInputSaveResponse(reference=reference, payload=storage_payload)
 
 
 @router.get("")

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from app.schemas.common import DatasetReference, ManualInputReference
@@ -50,7 +50,7 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
 
 def _normalize_watercut(value: float) -> float:
     if value > 1:
-        return max(0.0, min(1.0, value / 100.0))
+        value = value / 100.0
     return max(0.0, min(1.0, value))
 
 
@@ -59,20 +59,25 @@ def _annual_percent_to_daily_factor(annual_percent: float) -> float:
     return 1 - (1 - bounded / 100.0) ** (1 / 365.0)
 
 
-def _find_curve_point_watercut(curve_points: list[dict[str, Any]], normalized_niz: float) -> float:
-    if not curve_points:
-        return 0.0
-    ordered = sorted(
-        (
+def _sort_curve_points(curve_points: list[dict[str, Any]]) -> list[dict[str, float]]:
+    return sorted(
+        [
             {
                 "NIZ": _coerce_float(point.get("NIZ")),
                 "watercut": _normalize_watercut(_coerce_float(point.get("watercut"))),
             }
             for point in curve_points
-        ),
+        ],
         key=lambda item: item["NIZ"],
     )
-    x = max(ordered[0]["NIZ"], min(ordered[-1]["NIZ"], normalized_niz))
+
+
+def _watercut_from_curve(curve_points: list[dict[str, Any]], remaining_share: float) -> float:
+    ordered = _sort_curve_points(curve_points)
+    if not ordered:
+        return 0.0
+
+    x = max(ordered[0]["NIZ"], min(ordered[-1]["NIZ"], remaining_share))
     for left, right in zip(ordered, ordered[1:]):
         if left["NIZ"] <= x <= right["NIZ"]:
             span = right["NIZ"] - left["NIZ"]
@@ -83,20 +88,12 @@ def _find_curve_point_watercut(curve_points: list[dict[str, Any]], normalized_ni
     return ordered[-1]["watercut"]
 
 
-def _invert_curve_for_niz(curve_points: list[dict[str, Any]], watercut: float) -> float | None:
-    if not curve_points:
+def _remaining_share_from_watercut(curve_points: list[dict[str, Any]], watercut: float) -> float | None:
+    ordered = sorted(_sort_curve_points(curve_points), key=lambda item: item["watercut"])
+    if not ordered:
         return None
+
     target = _normalize_watercut(watercut)
-    ordered = sorted(
-        (
-            {
-                "NIZ": _coerce_float(point.get("NIZ")),
-                "watercut": _normalize_watercut(_coerce_float(point.get("watercut"))),
-            }
-            for point in curve_points
-        ),
-        key=lambda item: item["watercut"],
-    )
     y = max(ordered[0]["watercut"], min(ordered[-1]["watercut"], target))
     for left, right in zip(ordered, ordered[1:]):
         if left["watercut"] <= y <= right["watercut"]:
@@ -108,34 +105,62 @@ def _invert_curve_for_niz(curve_points: list[dict[str, Any]], watercut: float) -
     return ordered[-1]["NIZ"]
 
 
-def _select_decline_percent(
-    series: list[dict[str, Any]],
-    current_day: date,
-    anchor_day: date,
-) -> float:
+def _month_index(current_day: date, anchor_day: date) -> int:
+    return ((current_day.year - anchor_day.year) * 12) + (current_day.month - anchor_day.month) + 1
+
+
+def _decline_percent(series: list[dict[str, Any]], current_day: date, anchor_day: date) -> float:
     if not series:
         return 0.0
-    month_index = ((current_day.year - anchor_day.year) * 12) + (current_day.month - anchor_day.month) + 1
+
     lookup = {
-        int(_coerce_float(item.get("month_index"), default=0)): _coerce_float(item.get("liquid_decline_factor"))
+        int(_coerce_float(item.get("month_index"), 0)): _coerce_float(item.get("liquid_decline_factor"))
         for item in series
-        if _coerce_float(item.get("month_index"), default=0) > 0
+        if int(_coerce_float(item.get("month_index"), 0)) > 0
     }
     if not lookup:
         return 0.0
-    if month_index in lookup:
-        return lookup[month_index]
+
+    current_month_index = _month_index(current_day, anchor_day)
+    if current_month_index in lookup:
+        return lookup[current_month_index]
+
     max_key = max(lookup)
-    return lookup[max_key] if month_index > max_key else lookup[min(lookup)]
+    if current_month_index > max_key:
+        return lookup[max_key]
+    return lookup[min(lookup)]
+
+
+def _scope_rank(config: dict[str, Any], lu_id: str | None, sloy_id: str | None) -> int:
+    config_lu = config.get("lu_id")
+    config_sloy = config.get("sloy_id")
+
+    if config_sloy:
+        if config_sloy == sloy_id and (not config_lu or config_lu == lu_id):
+            return 3
+        return 0
+    if config_lu:
+        return 2 if config_lu == lu_id else 0
+    return 1
+
+
+def _select_scoped_config(configs: list[dict[str, Any]], lu_id: str | None, sloy_id: str | None) -> dict[str, Any] | None:
+    best_config: dict[str, Any] | None = None
+    best_rank = -1
+    for config in configs:
+        rank = _scope_rank(config, lu_id, sloy_id)
+        if rank > best_rank:
+            best_rank = rank
+            best_config = config
+    return best_config if best_rank > 0 else None
 
 
 @dataclass
 class ForecastContext:
     start_day: date
     end_day: date
-    curve_points: list[dict[str, Any]]
-    base_decline: list[dict[str, Any]]
-    new_wells_decline: list[dict[str, Any]]
+    displacement_configs: list[dict[str, Any]]
+    decline_configs: list[dict[str, Any]]
     warnings: list[str]
 
 
@@ -162,61 +187,55 @@ class ForecastService:
         end_day = _parse_iso_date(payload.forecast_end_date) or _default_forecast_end(start_day)
         warnings: list[str] = []
 
-        displacement_config = self.manual_input_payload.get("displacement_config") or {}
-        decline_config = self.manual_input_payload.get("decline_config") or {}
-        curve_points = list(displacement_config.get("curve_points") or [])
-        base_decline = list(decline_config.get("base_monthly_decline_values") or [])
-        new_wells_decline = list(decline_config.get("new_wells_monthly_decline_values") or [])
+        displacement_configs = self._extract_config_list("displacement_configs", "displacement_config")
+        decline_configs = self._extract_config_list("decline_configs", "decline_config")
 
-        if not curve_points:
-            warnings.append("Не задана характеристика вытеснения; обводненность будет считаться как 0.")
-        if not base_decline:
-            warnings.append("Не задан ряд снижения жидкости для Base; будет использовано нулевое падение.")
-        if not new_wells_decline:
-            warnings.append("Не задан ряд снижения жидкости для New wells; будет использовано нулевое падение.")
+        if not displacement_configs:
+            warnings.append("Не задана характеристика вытеснения. Обводненность будет взята из фактической, если она есть.")
+        if not decline_configs:
+            warnings.append("Не задан DeclineConfig. Снижение жидкости будет равно нулю.")
 
         context = ForecastContext(
             start_day=start_day,
             end_day=end_day,
-            curve_points=curve_points,
-            base_decline=base_decline,
-            new_wells_decline=new_wells_decline,
+            displacement_configs=displacement_configs,
+            decline_configs=decline_configs,
             warnings=warnings,
         )
 
         events_by_well: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for event in self.gtm_payload:
-            well_key = str(event.get("well_name") or event.get("well_id") or "").strip()
-            if well_key:
-                events_by_well[well_key].append(event)
+            well_id = str(event.get("well_id") or "").strip()
+            if well_id:
+                events_by_well[well_id].append(event)
         for event_list in events_by_well.values():
-            event_list.sort(key=lambda item: item.get("candidate_start_date") or "")
+            event_list.sort(key=lambda item: str(item.get("candidate_start_date") or ""))
 
         daily_aggregate: dict[str, dict[str, float]] = {}
         well_results: list[WellForecastResult] = []
 
         for well in self.wells_payload:
-            result = self._calculate_well(well, events_by_well.get(str(well.get("well_name") or "").strip(), []), context)
-            well_results.append(result)
-            for point in result.points:
+            well_result = self._calculate_well(well, events_by_well.get(str(well.get("well_id") or ""), []), context)
+            well_results.append(well_result)
+            for point in well_result.points:
                 bucket = daily_aggregate.setdefault(
                     point.date,
                     {
                         "oil_rate": 0.0,
                         "liquid_rate": 0.0,
                         "gas_rate": 0.0,
+                        "oil_increment": 0.0,
+                        "liquid_increment": 0.0,
+                        "gas_increment": 0.0,
                         "watercut_weighted": 0.0,
                         "gor_weighted": 0.0,
-                        "liquid_increment": 0.0,
-                        "oil_increment": 0.0,
-                        "gas_increment": 0.0,
                     },
                 )
                 bucket["oil_rate"] += point.oil_rate
                 bucket["liquid_rate"] += point.liquid_rate
                 bucket["gas_rate"] += point.gas_rate
-                bucket["liquid_increment"] += point.liquid_increment
                 bucket["oil_increment"] += point.oil_increment
+                bucket["liquid_increment"] += point.liquid_increment
                 bucket["gas_increment"] += point.gas_increment
                 bucket["watercut_weighted"] += point.watercut * point.liquid_rate
                 bucket["gor_weighted"] += point.gor * point.oil_rate
@@ -225,15 +244,16 @@ class ForecastService:
         total_oil = total_liquid = total_gas = 0.0
         peak_oil = peak_liquid = peak_gas = 0.0
         gor_sum = 0.0
-        gor_count = 0
+        gor_weight_count = 0
 
         for current_day in _daterange(start_day, end_day):
             bucket = daily_aggregate.get(_iso(current_day), {})
-            liquid_rate = float(bucket.get("liquid_rate", 0.0))
             oil_rate = float(bucket.get("oil_rate", 0.0))
+            liquid_rate = float(bucket.get("liquid_rate", 0.0))
             gas_rate = float(bucket.get("gas_rate", 0.0))
-            watercut = (bucket.get("watercut_weighted", 0.0) / liquid_rate) if liquid_rate > 0 else 0.0
-            gor = (bucket.get("gor_weighted", 0.0) / oil_rate) if oil_rate > 0 else 0.0
+            watercut = bucket.get("watercut_weighted", 0.0) / liquid_rate if liquid_rate > 0 else 0.0
+            gor = bucket.get("gor_weighted", 0.0) / oil_rate if oil_rate > 0 else 0.0
+
             point = ProductionPoint(
                 date=_iso(current_day),
                 oil_rate=round(oil_rate, 6),
@@ -246,6 +266,7 @@ class ForecastService:
                 gas_increment=round(float(bucket.get("gas_increment", 0.0)), 6),
             )
             production_points.append(point)
+
             total_oil += point.oil_rate
             total_liquid += point.liquid_rate
             total_gas += point.gas_rate
@@ -254,7 +275,7 @@ class ForecastService:
             peak_gas = max(peak_gas, point.gas_rate)
             if point.gor > 0:
                 gor_sum += point.gor
-                gor_count += 1
+                gor_weight_count += 1
 
         summary = ScenarioProductionSummary(
             total_oil=round(total_oil, 6),
@@ -263,7 +284,7 @@ class ForecastService:
             peak_oil_rate=round(peak_oil, 6),
             peak_liquid_rate=round(peak_liquid, 6),
             peak_gas_rate=round(peak_gas, 6),
-            average_gor=round(gor_sum / gor_count, 6) if gor_count else 0.0,
+            average_gor=round(gor_sum / gor_weight_count, 6) if gor_weight_count else 0.0,
             point_count=len(production_points),
         )
 
@@ -288,6 +309,18 @@ class ForecastService:
             warnings=warnings,
         )
 
+    def _extract_config_list(self, plural_key: str, legacy_key: str) -> list[dict[str, Any]]:
+        value = self.manual_input_payload.get(plural_key)
+        if value is None:
+            value = self.manual_input_payload.get(legacy_key)
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, dict):
+            return [value]
+        return []
+
     def _calculate_well(
         self,
         well: dict[str, Any],
@@ -297,82 +330,95 @@ class ForecastService:
         well_id = str(well.get("well_id") or "")
         well_name = str(well.get("well_name") or well_id)
         fund_type = str(well.get("fund_type") or "Base")
-        current_liquid = _coerce_float(well.get("current_liquid_rate"))
-        current_oil = _coerce_float(well.get("current_oil_rate"))
-        current_gas = _coerce_float(well.get("current_gas_rate"))
-        current_gor = _coerce_float(well.get("current_gor"))
-        niz = _coerce_float(well.get("niz"))
-        cumulative_oil = _coerce_float(well.get("current_cumulative_oil"))
-        current_watercut = _coerce_float(well.get("current_watercut"))
+        lu_id = well.get("lu_id")
+        sloy_id = well.get("sloy_id")
+
+        displacement_config = _select_scoped_config(context.displacement_configs, lu_id, sloy_id)
+        decline_config = _select_scoped_config(context.decline_configs, lu_id, sloy_id)
+
+        curve_points = list((displacement_config or {}).get("curve_points") or [])
+        base_decline = list((decline_config or {}).get("base_monthly_decline_values") or [])
+        new_wells_decline = list((decline_config or {}).get("new_wells_monthly_decline_values") or [])
+
+        current_liquid = max(_coerce_float(well.get("current_liquid_rate")), 0.0)
+        current_oil = max(_coerce_float(well.get("current_oil_rate")), 0.0)
+        current_gas = max(_coerce_float(well.get("current_gas_rate")), 0.0)
+        current_gor = max(_coerce_float(well.get("current_gor")), 0.0)
+        current_watercut = _normalize_watercut(_coerce_float(well.get("current_watercut")))
+        cumulative_oil = max(_coerce_float(well.get("current_cumulative_oil")), 0.0)
+        niz = max(_coerce_float(well.get("niz")), 0.0)
 
         if current_gor <= 0 and current_oil > 0 and current_gas > 0:
             current_gor = current_gas / current_oil
 
-        normalized_remaining_niz = None
-        if current_watercut > 0 and context.curve_points:
-            normalized_remaining_niz = _invert_curve_for_niz(context.curve_points, current_watercut)
-        if normalized_remaining_niz is None and niz > 0:
-            normalized_remaining_niz = max(0.0, min(1.0, (niz - cumulative_oil) / niz))
-        if normalized_remaining_niz is None:
-            normalized_remaining_niz = 1.0
+        if curve_points and current_watercut > 0:
+            remaining_share = _remaining_share_from_watercut(curve_points, current_watercut)
+        elif niz > 0:
+            remaining_share = max(0.0, min(1.0, (niz - cumulative_oil) / niz))
+        else:
+            remaining_share = 1.0
+        if remaining_share is None:
+            remaining_share = 1.0
 
-        watercut = _find_curve_point_watercut(context.curve_points, normalized_remaining_niz) if context.curve_points else _normalize_watercut(current_watercut)
+        current_watercut = _watercut_from_curve(curve_points, remaining_share) if curve_points else current_watercut
         if current_oil <= 0 and current_liquid > 0:
-            current_oil = current_liquid * (1 - watercut)
+            current_oil = current_liquid * (1 - current_watercut)
         if current_gor <= 0 and current_oil > 0 and current_gas > 0:
             current_gor = current_gas / current_oil
 
-        event_index = 0
         active_liquid = current_liquid if fund_type == "Base" else 0.0
         active_gor = current_gor
-        active_gas_direct = current_gas if fund_type == "Base" else 0.0
-        anchor_day = context.start_day
+        gas_floor = current_gas if fund_type == "Base" else 0.0
+        decline_anchor = context.start_day
+        startup_day: date | None = None
+
+        events_by_day: dict[date, list[dict[str, Any]]] = defaultdict(list)
+        for event in events:
+            event_day = _parse_iso_date(event.get("candidate_start_date"))
+            if event_day is not None:
+                events_by_day[event_day].append(event)
 
         points: list[ProductionPoint] = []
         total_oil = total_liquid = total_gas = 0.0
 
         for current_day in _daterange(context.start_day, context.end_day):
             day_liquid_increment = 0.0
-            day_oil_increment = 0.0
             day_gas_increment = 0.0
 
-            while event_index < len(events):
-                event_day = _parse_iso_date(events[event_index].get("candidate_start_date"))
-                if event_day is None or event_day != current_day:
-                    break
-                expected_liquid_increment = _coerce_float(events[event_index].get("expected_liquid_increment"))
-                expected_gas_increment = _coerce_float(events[event_index].get("expected_gas_increment"))
-                expected_gor_change = _coerce_float(events[event_index].get("expected_gor_change"))
-                active_liquid += expected_liquid_increment
-                active_gas_direct += expected_gas_increment
-                active_gor += expected_gor_change
-                if fund_type == "New wells" and anchor_day == context.start_day and current_day >= context.start_day:
-                    anchor_day = current_day
+            if fund_type == "Base" and current_day > context.start_day and active_liquid > 0:
+                annual_decline_percent = _decline_percent(base_decline, current_day, decline_anchor)
+                active_liquid *= 1 - _annual_percent_to_daily_factor(annual_decline_percent)
+            elif fund_type != "Base" and startup_day is not None and current_day > startup_day and active_liquid > 0:
+                annual_decline_percent = _decline_percent(new_wells_decline, current_day, startup_day)
+                active_liquid *= 1 - _annual_percent_to_daily_factor(annual_decline_percent)
+
+            for event in events_by_day.get(current_day, []):
+                expected_liquid_increment = _coerce_float(event.get("expected_liquid_increment"))
+                expected_gas_increment = _coerce_float(event.get("expected_gas_increment"))
+                expected_gor_change = _coerce_float(event.get("expected_gor_change"))
+
+                active_liquid = max(active_liquid + expected_liquid_increment, 0.0)
+                gas_floor = max(gas_floor + expected_gas_increment, 0.0)
+                active_gor = max(active_gor + expected_gor_change, 0.0)
                 day_liquid_increment += expected_liquid_increment
                 day_gas_increment += expected_gas_increment
-                event_index += 1
 
-            decline_series = context.base_decline if fund_type == "Base" else context.new_wells_decline
-            annual_decline_percent = _select_decline_percent(decline_series, current_day, anchor_day)
-            daily_factor = _annual_percent_to_daily_factor(annual_decline_percent)
-            if current_day > anchor_day or fund_type == "Base":
-                active_liquid *= 1 - daily_factor
+                if fund_type != "Base" and startup_day is None:
+                    startup_day = current_day
 
-            if niz > 0:
-                normalized_remaining_niz = max(0.0, normalized_remaining_niz - (max(active_liquid * (1 - watercut), 0.0) / max(niz, 1e-9)))
-                normalized_remaining_niz = max(0.0, min(1.0, normalized_remaining_niz))
-            watercut = _find_curve_point_watercut(context.curve_points, normalized_remaining_niz) if context.curve_points else watercut
+            watercut = _watercut_from_curve(curve_points, remaining_share) if curve_points else current_watercut
             oil_rate = max(active_liquid * (1 - watercut), 0.0)
-            gas_rate = max(active_gas_direct, 0.0)
+            gas_rate = gas_floor
             if active_gor > 0 and oil_rate > 0:
                 gas_rate = max(gas_rate, oil_rate * active_gor)
-            gor = (gas_rate / oil_rate) if oil_rate > 0 else active_gor
+            gor = gas_rate / oil_rate if oil_rate > 0 else active_gor
+
             day_oil_increment = max(day_liquid_increment * (1 - watercut), 0.0)
 
             point = ProductionPoint(
                 date=_iso(current_day),
                 oil_rate=round(oil_rate, 6),
-                liquid_rate=round(max(active_liquid, 0.0), 6),
+                liquid_rate=round(active_liquid, 6),
                 gas_rate=round(gas_rate, 6),
                 watercut=round(watercut, 6),
                 gor=round(gor, 6),
@@ -381,17 +427,21 @@ class ForecastService:
                 gas_increment=round(day_gas_increment, 6),
             )
             points.append(point)
+
             total_oil += point.oil_rate
             total_liquid += point.liquid_rate
             total_gas += point.gas_rate
-            cumulative_oil += point.oil_rate
+
+            if niz > 0:
+                cumulative_oil += point.oil_rate
+                remaining_share = max(0.0, min(1.0, (niz - cumulative_oil) / niz))
 
         return WellForecastResult(
             well_id=well_id,
             well_name=well_name,
             fund_type=fund_type,
-            lu_id=well.get("lu_id"),
-            sloy_id=well.get("sloy_id"),
+            lu_id=lu_id,
+            sloy_id=sloy_id,
             well_pad_id=well.get("well_pad_id"),
             points=points,
             total_oil=round(total_oil, 6),

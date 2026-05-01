@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from app.schemas.common import ColumnInfo, DatasetReference, ImportValidationReport, ManualInputReference
 
@@ -64,6 +64,7 @@ class NormalizeRequest(BaseModel):
     sheet_name: str | None = None
     columns: NormalizeColumns | None = None
     dataset_name: str | None = None
+    dataset_id: str | None = None
 
 
 class NormalizeResponse(BaseModel):
@@ -72,58 +73,83 @@ class NormalizeResponse(BaseModel):
     normalized_payload: dict[str, Any] | list[dict[str, Any]]
 
 
-class ManualInputPayload(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+class DisplacementCurvePointInput(BaseModel):
+    NIZ: float
+    watercut: float
 
-    displacement_config: dict[str, Any] | None = None
-    decline_config: dict[str, Any] | None = None
-    brigade_availability_config: dict[str, Any] | None = Field(
-        default=None,
-        validation_alias=AliasChoices("brigade_availability_config", "brigade_availability"),
-    )
+
+class DisplacementConfigInput(BaseModel):
+    config_id: str | None = None
+    lu_id: str | None = None
+    sloy_id: str | None = None
+    curve_points: list[DisplacementCurvePointInput] = Field(default_factory=list)
+    watercut_unit: str = "percent"
+    notes: str | None = None
+
+
+class MonthlyDeclinePointInput(BaseModel):
+    month_index: int
+    liquid_decline_factor: float
+
+
+class DeclineConfigInput(BaseModel):
+    config_id: str | None = None
+    lu_id: str | None = None
+    sloy_id: str | None = None
+    base_monthly_decline_values: list[MonthlyDeclinePointInput] = Field(default_factory=list)
+    new_wells_monthly_decline_values: list[MonthlyDeclinePointInput] = Field(default_factory=list)
+    notes: str | None = None
+
+
+class ManualInputPayload(BaseModel):
+    displacement_config: DisplacementConfigInput | list[DisplacementConfigInput] | None = None
+    decline_config: DeclineConfigInput | list[DeclineConfigInput] | None = None
+    brigade_availability_config: dict[str, Any] | None = None
     brigade_capacity_by_lu_config: dict[str, Any] | None = None
     failure_coefficient_config: dict[str, Any] | None = None
     krs_resource_config: dict[str, Any] | None = None
     economics_config: dict[str, Any] | None = None
     optimizer_config: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
+
+    @staticmethod
+    def _ensure_list(value: Any) -> list[Any]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        return [value]
+
+    def to_storage_payload(self) -> dict[str, Any]:
+        displacement_configs = [
+            item.model_dump()
+            for item in self._ensure_list(self.displacement_config)
+            if isinstance(item, DisplacementConfigInput)
+        ]
+        decline_configs = [
+            item.model_dump()
+            for item in self._ensure_list(self.decline_config)
+            if isinstance(item, DeclineConfigInput)
+        ]
+        return {
+            "displacement_configs": displacement_configs,
+            "decline_configs": decline_configs,
+            "brigade_availability_config": self.brigade_availability_config,
+            "brigade_capacity_by_lu_config": self.brigade_capacity_by_lu_config,
+            "failure_coefficient_config": self.failure_coefficient_config,
+            "krs_resource_config": self.krs_resource_config,
+            "economics_config": self.economics_config,
+            "optimizer_config": self.optimizer_config,
+            "metadata": self.metadata,
+        }
 
 
 class ManualInputSaveRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
     name: str
-    payload: ManualInputPayload | None = None
+    payload: ManualInputPayload
     created_by: str | None = None
-    displacement_config: dict[str, Any] | None = None
-    decline_config: dict[str, Any] | None = None
-    brigade_availability_config: dict[str, Any] | None = Field(
-        default=None,
-        validation_alias=AliasChoices("brigade_availability_config", "brigade_availability"),
-    )
-    brigade_capacity_by_lu_config: dict[str, Any] | None = None
-    failure_coefficient_config: dict[str, Any] | None = None
-    krs_resource_config: dict[str, Any] | None = None
-    economics_config: dict[str, Any] | None = None
-    optimizer_config: dict[str, Any] | None = None
-    metadata: dict[str, Any] | None = None
-
-    def normalized_payload(self) -> ManualInputPayload:
-        if self.payload is not None:
-            return self.payload
-        return ManualInputPayload(
-            displacement_config=self.displacement_config,
-            decline_config=self.decline_config,
-            brigade_availability_config=self.brigade_availability_config,
-            brigade_capacity_by_lu_config=self.brigade_capacity_by_lu_config,
-            failure_coefficient_config=self.failure_coefficient_config,
-            krs_resource_config=self.krs_resource_config,
-            economics_config=self.economics_config,
-            optimizer_config=self.optimizer_config,
-            metadata=self.metadata,
-        )
 
 
 class ManualInputSaveResponse(BaseModel):
     reference: ManualInputReference
-    payload: ManualInputPayload
+    payload: dict[str, Any]

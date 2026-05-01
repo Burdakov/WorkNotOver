@@ -11,19 +11,20 @@ from app.services.importing.excel_utils import coerce_date, coerce_float, normal
 _HINTS: dict[str, list[str]] = {
     "well": ["скв", "скваж", "well"],
     "area": ["участок", "area"],
-    "lu": ["лу", "участок недр", "lu"],
+    "lu": ["участок недр", "лу", "lu"],
     "sloy": ["слой", "пласт", "sloy"],
     "well_pad": ["куст", "wellpad", "well_pad"],
     "brigade": ["бригада", "brigade"],
+    "fund_type": ["вид фонда", "тип фонда", "fund type"],
     "start_date": ["дата начала", "начало", "start"],
     "end_date": ["заверш", "оконч", "конец", "end"],
     "planned_work": ["планируемый объем работ", "планируемый объём работ", "объем работ", "объём работ", "мероприят"],
-    "increment": ["qн", "qh", "прирост нефти", "дебит нефти"],
-    "liquid_increment": ["прирост жидк", "прирост жидкости", "liquid increment"],
-    "gas_increment": ["прирост газа", "дебит газа", "qг", "qg"],
-    "gor_change": ["газовый фактор", "gor"],
+    "increment": ["qн", "прирост нефти", "дебит нефти", "oil increment"],
+    "liquid_increment": ["прирост жидкости", "прирост жидк", "liquid increment"],
+    "gas_increment": ["прирост газа", "дебит газа", "gas increment", "qг"],
+    "gor_change": ["газовый фактор", "gor", "изменение gor"],
     "oil_rate": ["дебит нефти", "oil rate", "qн"],
-    "gas_rate": ["дебит газа", "gas rate", "qг", "qg"],
+    "gas_rate": ["дебит газа", "gas rate", "qг"],
     "liquid_rate": ["дебит жидкости", "liquid rate", "qж"],
     "watercut": ["обводнен", "watercut"],
     "gor": ["газовый фактор", "gor", "гф"],
@@ -34,49 +35,59 @@ _HINTS: dict[str, list[str]] = {
     "duration_days": ["длитель", "продолжительность", "duration"],
     "object_name": ["объект", "наименование объекта"],
     "object_type": ["тип объекта"],
-    "commissioning_date": ["ввод", "дата ввода"],
+    "commissioning_date": ["дата ввода", "ввод"],
     "capacity_oil": ["мощн", "нефть"],
     "capacity_gas": ["мощн", "газ"],
     "capacity_liquid": ["мощн", "жидк"],
     "capacity_water": ["мощн", "вода"],
     "connection_well": ["скв", "скваж"],
     "parent_object": ["родител", "parent"],
-    "fund_type": ["вид фонда", "тип фонда", "fund type", "base", "new wells", "внс"],
+}
+
+_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
+    "wells": ("well", "liquid_rate"),
+    "gtm": ("well", "planned_work", "start_date"),
+    "infrastructure": ("object_name", "object_type"),
+    "external_krs_schedule": ("brigade", "well", "start_date", "end_date", "planned_work"),
 }
 
 
-def _is_ambiguous_match(key: str, normalized_column_name: str) -> bool:
-    if key in {"gas_increment", "gas_rate"} and "qж/qг" in normalized_column_name:
-        return True
-    if key == "gtm_type" and "дата" in normalized_column_name and "гтм" in normalized_column_name:
-        return True
-    return False
+def _warning(report: ImportValidationReport, message: str, row_number: int | None = None, field_name: str | None = None) -> None:
+    report.warnings.append(
+        ValidationIssue(level="warning", message=message, row_number=row_number, field_name=field_name)
+    )
+
+
+def _stable_well_id(well_name: str, row_number: int) -> str:
+    normalized = normalize_text(well_name)
+    return f"well::{normalized or row_number}"
 
 
 def _normalize_fund_type(value: Any) -> str | None:
-    raw_value = stringify(value)
-    if not raw_value:
+    raw = stringify(value)
+    if not raw:
         return None
-    normalized_value = normalize_text(raw_value)
-    if "new wells" in normalized_value or "внс" in normalized_value or "нов" in normalized_value:
+    normalized = normalize_text(raw)
+    if "new wells" in normalized or "внс" in normalized or "нов" in normalized:
         return "New wells"
-    if "base" in normalized_value or "баз" in normalized_value:
+    if "base" in normalized or "баз" in normalized:
         return "Base"
-    return raw_value
+    return raw
+
+
+def _is_ambiguous(key: str, normalized_column: str) -> bool:
+    if key in {"gas_increment", "gas_rate"} and "qж/qг" in normalized_column:
+        return True
+    if key == "gtm_type" and "дата" in normalized_column and "гтм" in normalized_column:
+        return True
+    return False
 
 
 def resolve_columns(df: pd.DataFrame, provided: NormalizeColumns | None, source_kind: str) -> NormalizeColumns:
     provided = provided or NormalizeColumns()
     columns = [str(column) for column in df.columns]
-    normalized = {column: normalize_text(column) for column in columns}
+    normalized_columns = {column: normalize_text(column) for column in columns}
     resolved: dict[str, str | None] = {}
-
-    required_map = {
-        "wells": ["well", "oil_rate", "liquid_rate"],
-        "gtm": ["well", "planned_work"],
-        "infrastructure": ["object_name", "object_type"],
-        "external_krs_schedule": ["brigade", "well", "start_date", "end_date", "planned_work"],
-    }
 
     for key, hints in _HINTS.items():
         explicit = getattr(provided, key)
@@ -86,28 +97,36 @@ def resolve_columns(df: pd.DataFrame, provided: NormalizeColumns | None, source_
             resolved[key] = explicit
             continue
 
-        match = next((column for column in columns if any(hint in normalized[column] for hint in hints)), None)
-        if match and _is_ambiguous_match(key, normalized[match]):
-            match = None
+        match = next(
+            (
+                column
+                for column in columns
+                if any(hint in normalized_columns[column] for hint in hints) and not _is_ambiguous(key, normalized_columns[column])
+            ),
+            None,
+        )
         resolved[key] = match
 
-    missing = [key for key in required_map.get(source_kind, []) if not resolved.get(key)]
+    missing = [field for field in _REQUIRED_FIELDS.get(source_kind, ()) if not resolved.get(field)]
     if missing:
-        raise ValueError(f"Не удалось автоматически определить обязательные колонки: {', '.join(missing)}")
+        raise ValueError(f"Не удалось определить обязательные колонки: {', '.join(missing)}")
     return NormalizeColumns(**resolved)
 
 
 def normalize_wells(df: pd.DataFrame, columns: NormalizeColumns, report: ImportValidationReport) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
+
     for index, row in df.iterrows():
+        row_number = index + 2
         well_name = stringify(row.get(columns.well))
         if not well_name:
             continue
+
         items.append(
             {
-                "well_id": f"well-{index + 2}",
+                "well_id": _stable_well_id(well_name, row_number),
                 "well_name": well_name,
-                "area": stringify(row.get(columns.area)),
+                "area": stringify(row.get(columns.area)) or None,
                 "lu_id": stringify(row.get(columns.lu)) or None,
                 "sloy_id": stringify(row.get(columns.sloy)) or None,
                 "well_pad_id": stringify(row.get(columns.well_pad)) or None,
@@ -125,46 +144,55 @@ def normalize_wells(df: pd.DataFrame, columns: NormalizeColumns, report: ImportV
                 "current_cumulative_liquid": None,
                 "niz": coerce_float(row.get(columns.niz)),
                 "reserves_group": None,
-                "metadata": {"source_row_number": index + 2},
+                "metadata": {"source_row_number": row_number},
             }
         )
+
     report.row_count = len(items)
     return items
 
 
 def normalize_gtm(df: pd.DataFrame, columns: NormalizeColumns, report: ImportValidationReport) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
+
     for index, row in df.iterrows():
+        row_number = index + 2
         well_name = stringify(row.get(columns.well))
         planned_work = stringify(row.get(columns.planned_work))
         if not well_name and not planned_work:
             continue
+
+        candidate_start = coerce_date(row.get(columns.start_date))
+        candidate_end = coerce_date(row.get(columns.end_date)) or candidate_start
+        duration_days = int(coerce_float(row.get(columns.duration_days)) or 0) or None
+
         items.append(
             {
-                "gtm_id": f"gtm-{index + 2}",
-                "well_id": f"well-ref-{normalize_text(well_name) or index + 2}",
+                "gtm_id": f"gtm::{row_number}",
+                "well_id": _stable_well_id(well_name, row_number),
                 "well_name": well_name,
-                "area": stringify(row.get(columns.area)),
+                "area": stringify(row.get(columns.area)) or None,
                 "lu_id": stringify(row.get(columns.lu)) or None,
                 "sloy_id": stringify(row.get(columns.sloy)) or None,
                 "well_pad_id": stringify(row.get(columns.well_pad)) or None,
                 "infrastructure_object_id": None,
                 "brigade": stringify(row.get(columns.brigade)) or None,
                 "gtm_type": stringify(row.get(columns.gtm_type)) or "unknown",
-                "planned_work": planned_work,
-                "candidate_start_date": coerce_date(row.get(columns.start_date)),
-                "candidate_end_date": coerce_date(row.get(columns.end_date)),
-                "duration_days": int(coerce_float(row.get(columns.duration_days)) or 0) or None,
+                "planned_work": planned_work or "unknown",
+                "candidate_start_date": candidate_start,
+                "candidate_end_date": candidate_end,
+                "duration_days": duration_days,
                 "expected_oil_increment": coerce_float(row.get(columns.increment)),
                 "expected_gas_increment": coerce_float(row.get(columns.gas_increment)),
                 "expected_liquid_increment": coerce_float(row.get(columns.liquid_increment)),
                 "expected_watercut_change": None,
                 "expected_gor_change": coerce_float(row.get(columns.gor_change)),
                 "priority": None,
-                "source_row_number": index + 2,
-                "metadata": None,
+                "source_row_number": row_number,
+                "metadata": {"source_row_number": row_number},
             }
         )
+
     report.row_count = len(items)
     return items
 
@@ -174,10 +202,12 @@ def normalize_infrastructure(df: pd.DataFrame, columns: NormalizeColumns, report
     connections: list[dict[str, Any]] = []
 
     for index, row in df.iterrows():
+        row_number = index + 2
         object_name = stringify(row.get(columns.object_name))
         if not object_name:
             continue
-        object_id = f"infra-{index + 2}"
+
+        object_id = f"infra::{row_number}"
         objects.append(
             {
                 "object_id": object_id,
@@ -189,20 +219,21 @@ def normalize_infrastructure(df: pd.DataFrame, columns: NormalizeColumns, report
                 "capacity_liquid": coerce_float(row.get(columns.capacity_liquid)),
                 "capacity_water": coerce_float(row.get(columns.capacity_water)),
                 "parent_object_id": stringify(row.get(columns.parent_object)) or None,
-                "metadata": {"source_row_number": index + 2},
+                "metadata": {"source_row_number": row_number},
             }
         )
-        well_name = stringify(row.get(columns.connection_well))
-        if well_name:
+
+        connection_well = stringify(row.get(columns.connection_well))
+        if connection_well:
             connections.append(
                 {
-                    "connection_id": f"conn-{index + 2}",
-                    "well_id": f"well-ref-{normalize_text(well_name)}",
+                    "connection_id": f"conn::{row_number}",
+                    "well_id": _stable_well_id(connection_well, row_number),
                     "object_id": object_id,
                     "start_date": None,
                     "end_date": None,
                     "priority": None,
-                    "metadata": None,
+                    "metadata": {"source_row_number": row_number},
                 }
             )
 
@@ -214,6 +245,7 @@ def normalize_external_krs_schedule(df: pd.DataFrame, columns: NormalizeColumns,
     items: list[dict[str, Any]] = []
 
     for index, row in df.iterrows():
+        row_number = index + 2
         brigade = stringify(row.get(columns.brigade))
         well_name = stringify(row.get(columns.well))
         start_date = coerce_date(row.get(columns.start_date))
@@ -222,15 +254,10 @@ def normalize_external_krs_schedule(df: pd.DataFrame, columns: NormalizeColumns,
 
         if not any([brigade, well_name, start_date, end_date, planned_work]):
             continue
+
         if not brigade or not well_name or not start_date or not end_date:
             report.skipped_rows += 1
-            report.warnings.append(
-                ValidationIssue(
-                    level="warning",
-                    message="Строка внешнего графика КРС пропущена из-за отсутствия обязательных полей.",
-                    row_number=index + 2,
-                )
-            )
+            _warning(report, "Строка внешнего графика КРС пропущена: отсутствуют обязательные поля.", row_number=row_number)
             continue
 
         if end_date < start_date:
@@ -242,10 +269,10 @@ def normalize_external_krs_schedule(df: pd.DataFrame, columns: NormalizeColumns,
 
         items.append(
             {
-                "schedule_item_id": f"external-krs-{index + 2}",
+                "schedule_item_id": f"external-krs::{row_number}",
                 "scenario_id": None,
                 "gtm_id": None,
-                "well_id": f"well-ref-{normalize_text(well_name) or index + 2}",
+                "well_id": _stable_well_id(well_name, row_number),
                 "well_name": well_name,
                 "brigade": brigade,
                 "area": stringify(row.get(columns.area)) or None,
@@ -262,7 +289,7 @@ def normalize_external_krs_schedule(df: pd.DataFrame, columns: NormalizeColumns,
                 "expected_gas_increment": coerce_float(row.get(columns.gas_increment)),
                 "expected_gor_change": coerce_float(row.get(columns.gor_change)),
                 "status": "imported",
-                "metadata": {"source_row_number": index + 2},
+                "metadata": {"source_row_number": row_number},
             }
         )
 
@@ -287,12 +314,12 @@ def normalize_external_krs_schedule(df: pd.DataFrame, columns: NormalizeColumns,
 
 def validate_hierarchy(items: list[dict[str, Any]], report: ImportValidationReport) -> None:
     for item in items:
+        row_number = None
+        metadata = item.get("metadata")
+        if isinstance(metadata, dict):
+            row_number = metadata.get("source_row_number")
+
         if item.get("sloy_id") and not item.get("lu_id"):
-            report.warnings.append(
-                ValidationIssue(
-                    level="warning",
-                    message="Указан SLOY без LU; иерархия может быть неполной.",
-                    row_number=item.get("metadata", {}).get("source_row_number"),
-                    field_name="sloy_id",
-                )
-            )
+            _warning(report, "Указан SLOY без LU.", row_number=row_number, field_name="sloy_id")
+        if item.get("well_pad_id") and not item.get("lu_id"):
+            _warning(report, "Указан WellPad без LU.", row_number=row_number, field_name="well_pad_id")

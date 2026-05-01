@@ -122,9 +122,11 @@ def build_schedule_item_from_imported_row(row: dict[str, object]) -> ScheduleIte
     planned_work = stringify(row.get("planned_work"))
     normalized_work = normalize_text(planned_work)
 
-    duration_days = int(row.get("duration_days") or 0)
-    if duration_days <= 0 and start_date and end_date:
+    duration_days = 0
+    if start_date and end_date:
         duration_days = (pd.Timestamp(end_date) - pd.Timestamp(start_date)).days + 1
+    else:
+        duration_days = int(row.get("duration_days") or 0)
 
     source_row_number = 0
     metadata = row.get("metadata")
