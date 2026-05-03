@@ -48,6 +48,13 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _well_key(payload: dict[str, Any]) -> str:
+    well_id = str(payload.get("well_id") or "").strip()
+    if well_id:
+        return well_id
+    return str(payload.get("well_name") or "").strip()
+
+
 def _normalize_watercut(value: float) -> float:
     if value > 1:
         value = value / 100.0
@@ -206,10 +213,11 @@ class ForecastService:
         )
 
         prepared_gtm_payload = self._apply_planner_revision(self.gtm_payload, self.planner_revision_items)
+        prepared_wells_payload = self._build_forecast_wells(prepared_gtm_payload, warnings)
 
         events_by_well: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for event in prepared_gtm_payload:
-            well_id = str(event.get("well_id") or "").strip()
+            well_id = _well_key(event)
             if well_id:
                 events_by_well[well_id].append(event)
         for event_list in events_by_well.values():
@@ -218,8 +226,8 @@ class ForecastService:
         daily_aggregate: dict[str, dict[str, float]] = {}
         well_results: list[WellForecastResult] = []
 
-        for well in self.wells_payload:
-            well_result = self._calculate_well(well, events_by_well.get(str(well.get("well_id") or ""), []), context)
+        for well in prepared_wells_payload:
+            well_result = self._calculate_well(well, events_by_well.get(_well_key(well), []), context)
             well_results.append(well_result)
             for point in well_result.points:
                 bucket = daily_aggregate.setdefault(
@@ -358,13 +366,69 @@ class ForecastService:
             return [value]
         return []
 
+    def _build_forecast_wells(
+        self,
+        gtm_payload: list[dict[str, Any]],
+        warnings: list[str],
+    ) -> list[dict[str, Any]]:
+        prepared_wells: list[dict[str, Any]] = []
+        seen_keys: set[str] = set()
+
+        for well in self.wells_payload:
+            well_copy = dict(well)
+            key = _well_key(well_copy)
+            if not key or key in seen_keys:
+                continue
+            seen_keys.add(key)
+            prepared_wells.append(well_copy)
+
+        synthesized_count = 0
+        for event in gtm_payload:
+            key = _well_key(event)
+            if not key or key in seen_keys:
+                continue
+
+            seen_keys.add(key)
+            synthesized_count += 1
+            prepared_wells.append(
+                {
+                    "well_id": str(event.get("well_id") or key).strip(),
+                    "well_name": str(event.get("well_name") or key).strip(),
+                    "area": event.get("area"),
+                    "lu_id": event.get("lu_id"),
+                    "sloy_id": event.get("sloy_id"),
+                    "well_pad_id": event.get("well_pad_id"),
+                    "fund_type": "New wells",
+                    "current_oil_rate": 0.0,
+                    "current_liquid_rate": 0.0,
+                    "current_gas_rate": 0.0,
+                    "current_watercut": 0.0,
+                    "current_gor": 0.0,
+                    "current_cumulative_oil": 0.0,
+                    "current_cumulative_gas": 0.0,
+                    "niz": 0.0,
+                    "metadata": {
+                        "synthetic_well_state": True,
+                        "synthetic_source": "gtm_only",
+                    },
+                }
+            )
+
+        if synthesized_count:
+            warnings.append(
+                f"В wells dataset отсутствовали {synthesized_count} скважин из GTM. "
+                "Они были синтезированы как New wells для расчета Module B."
+            )
+
+        return prepared_wells
+
     def _calculate_well(
         self,
         well: dict[str, Any],
         events: list[dict[str, Any]],
         context: ForecastContext,
     ) -> WellForecastResult:
-        well_id = str(well.get("well_id") or "")
+        well_id = _well_key(well)
         well_name = str(well.get("well_name") or well_id)
         fund_type = str(well.get("fund_type") or "Base")
         lu_id = well.get("lu_id")

@@ -5,6 +5,13 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8010/api
 const PLANNER_CHART_HEIGHT = 180
 const PRODUCTION_CHART_HEIGHT = 260
 const PRODUCTION_CHART_WIDTH = 1280
+const PRODUCTION_CHART_TOP_PADDING = 18
+const PRODUCTION_CHART_BOTTOM_PADDING = 28
+const PRODUCTION_TIME_MODES = [
+  { key: 'day', label: 'День' },
+  { key: 'month', label: 'Месяц' },
+  { key: 'year', label: 'Год' },
+]
 const DEFAULT_PLANNER_COLUMNS = {
   brigade: 'Бригада',
   area: 'Участок',
@@ -126,6 +133,13 @@ const monthStartIso = (value) => {
   return formatIsoDate(date)
 }
 
+const yearStartIso = (value) => {
+  const date = parseIsoDate(value)
+  if (!date) return value
+  date.setUTCMonth(0, 1)
+  return formatIsoDate(date)
+}
+
 const formatDateCell = (value) => {
   const parsed = parseIsoDate(value)
   return parsed ? new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(parsed) : '—'
@@ -144,6 +158,21 @@ const formatMonthLong = (value) => {
 const formatDayNumber = (value) => {
   const parsed = parseIsoDate(value)
   return parsed ? new Intl.DateTimeFormat('ru-RU', { day: '2-digit' }).format(parsed) : ''
+}
+
+const bucketKeyForProductionMode = (value, mode) => {
+  if (mode === 'month') return monthStartIso(value)
+  if (mode === 'year') return yearStartIso(value)
+  return String(value || '')
+}
+
+const formatProductionBucketLabel = (value, mode) => {
+  if (mode === 'month') return formatMonthLong(value)
+  if (mode === 'year') {
+    const parsed = parseIsoDate(value)
+    return parsed ? String(parsed.getUTCFullYear()) : '—'
+  }
+  return formatDateCell(value)
 }
 
 const formatCompactNumber = (value) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Number(value || 0))
@@ -199,6 +228,27 @@ const buildAreaPath = (series, topKey, bottomKey, maxValue) => {
   return `M ${top.join(' L ')} L ${bottom.join(' L ')} Z`
 }
 const buildWellNodeKey = (well) => `well:${well.lu_id || 'Без LU'}:${well.sloy_id || 'Без SLOY'}:${well.well_pad_id || 'Без куста'}:${well.well_id}`
+const formatScenarioWindow = (scenario) => {
+  if (!scenario?.forecast_start_date && !scenario?.forecast_end_date) return '—'
+  return `${formatDateCell(scenario?.forecast_start_date)} — ${formatDateCell(scenario?.forecast_end_date)}`
+}
+const scenarioSourceTypeLabel = (sourceType) => {
+  if (sourceType === 'planner_manual_edit') return 'Planner revision'
+  if (sourceType === 'optimized_krs') return 'Оптимизированный КРС'
+  return 'Исходный сценарий'
+}
+const scenarioOriginLabel = (scenario) => {
+  if (scenario?.source_type === 'planner_manual_edit') return 'Создан на основе planner revision'
+  if (scenario?.metadata?.scenario_source_mode === 'existing_krs' || scenario?.context?.external_krs_schedule_dataset) {
+    return 'Создан на основе внешнего графика КРС'
+  }
+  return 'Создан пользователем'
+}
+const scenarioHasPlannerVersion = (scenario) => Boolean(
+  scenario?.source_type === 'planner_manual_edit'
+  || scenario?.metadata?.planner_revision_id
+  || scenario?.metadata?.planner_version_id,
+)
 
 const request = async (path, options = {}) => {
   const response = await fetch(`${API_BASE}${path}`, options)
@@ -321,6 +371,7 @@ const scenarioSourceMode = ref('new_krs')
 const scenarioDetail = ref(null)
 const expandedProductionKeys = ref([])
 const selectedProductionKeys = ref([])
+const productionTimeMode = ref('month')
 
 const plannerDatasetSelectionKey = ref('')
 const plannerDatasetReference = ref(null)
@@ -352,6 +403,7 @@ const selectedDatasetDetail = computed(() => datasetDetails[datasetDetailKey.val
 const activeReservoirConfig = computed(() => reservoirConfigs.value.find((item) => item.config_id === activeReservoirConfigId.value) || reservoirConfigs.value[0] || null)
 const groupedScenarios = computed(() => [...scenarios.value].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')))
 const selectedScenarioSummary = computed(() => groupedScenarios.value.find((item) => item.scenario_id === selectedScenarioId.value) || null)
+const selectedManualInputSetSummary = computed(() => manualInputSets.value.find((item) => item.reference.manual_input_set_id === selectedManualInputSetId.value) || null)
 const scenarioContextStatus = computed(() => ({
   wells: Boolean(selectedDatasets.wells),
   gtm: Boolean(selectedDatasets.gtm),
@@ -730,17 +782,18 @@ const productionSeries = computed(() => {
   const dateMap = new Map()
   selectedLeafWells.value.forEach((well) => {
     well.points.forEach((point) => {
-      if (!dateMap.has(point.date)) {
-        dateMap.set(point.date, { date: point.date, baseDaily: 0, gtmDaily: 0, vnsDaily: 0 })
+      const bucketDate = bucketKeyForProductionMode(point.date, productionTimeMode.value)
+      if (!dateMap.has(bucketDate)) {
+        dateMap.set(bucketDate, { date: bucketDate, basePeriod: 0, gtmPeriod: 0, vnsPeriod: 0 })
       }
-      const bucket = dateMap.get(point.date)
+      const bucket = dateMap.get(bucketDate)
       const oilRate = Number(point.oil_rate || 0)
       const oilIncrement = Number(point.oil_increment || 0)
       if (String(well.fund_type || '').toLowerCase() === 'new wells') {
-        bucket.vnsDaily += oilRate
+        bucket.vnsPeriod += oilRate
       } else {
-        bucket.gtmDaily += oilIncrement
-        bucket.baseDaily += Math.max(oilRate - oilIncrement, 0)
+        bucket.gtmPeriod += oilIncrement
+        bucket.basePeriod += Math.max(oilRate - oilIncrement, 0)
       }
     })
   })
@@ -749,27 +802,82 @@ const productionSeries = computed(() => {
   let gtmCum = 0
   let vnsCum = 0
   return ordered.map((point) => {
-    baseCum += point.baseDaily
-    gtmCum += point.gtmDaily
-    vnsCum += point.vnsDaily
+    baseCum += point.basePeriod
+    gtmCum += point.gtmPeriod
+    vnsCum += point.vnsPeriod
+    const totalPeriod = point.basePeriod + point.gtmPeriod + point.vnsPeriod
     return {
       ...point,
-      zero: 0,
+      label: formatProductionBucketLabel(point.date, productionTimeMode.value),
       baseCum,
       gtmCum,
       vnsCum,
-      gtmTop: baseCum + gtmCum,
+      totalPeriod,
       totalCum: baseCum + gtmCum + vnsCum,
     }
   })
 })
-const productionMax = computed(() => Math.max(...productionSeries.value.map((point) => point.totalCum), 1))
-const productionBasePath = computed(() => buildAreaPath(productionSeries.value, 'baseCum', 'zero', productionMax.value))
-const productionGtmPath = computed(() => buildAreaPath(productionSeries.value.map((point) => ({ ...point, zero: point.baseCum })), 'gtmTop', 'zero', productionMax.value))
-const productionVnsPath = computed(() => buildAreaPath(productionSeries.value.map((point) => ({ ...point, zero: point.gtmTop })), 'totalCum', 'zero', productionMax.value))
-const productionLabelPoints = computed(() => {
+const productionChartTitle = computed(() => ({
+  day: 'Посуточная добыча нефти',
+  month: 'Добыча нефти по месяцам',
+  year: 'Годовая добыча нефти',
+}[productionTimeMode.value] || 'Добыча нефти'))
+const productionChartSubtitle = computed(() => ({
+  day: 'Столбцы показывают добычу за сутки. Накопленная добыча отображается линией поверх категорий БАЗА, ГТМ и ВНС.',
+  month: 'Столбцы показывают добычу, агрегированную по календарным месяцам. Накопленная добыча отображается линией поверх категорий БАЗА, ГТМ и ВНС.',
+  year: 'Столбцы показывают добычу, агрегированную по календарным годам. Накопленная добыча отображается линией поверх категорий БАЗА, ГТМ и ВНС.',
+}[productionTimeMode.value] || ''))
+const productionBarMax = computed(() => Math.max(...productionSeries.value.map((point) => point.totalPeriod), 1))
+const productionCumMax = computed(() => Math.max(...productionSeries.value.map((point) => point.totalCum), 1))
+const productionChartBars = computed(() => {
   if (!productionSeries.value.length) return []
-  const source = productionSeries.value
+  const plotHeight = PRODUCTION_CHART_HEIGHT - PRODUCTION_CHART_TOP_PADDING - PRODUCTION_CHART_BOTTOM_PADDING
+  const bandWidth = PRODUCTION_CHART_WIDTH / productionSeries.value.length
+  const barWidth = Math.max(10, Math.min(36, bandWidth * 0.62))
+  const baselineY = PRODUCTION_CHART_TOP_PADDING + plotHeight
+
+  const scaledHeight = (value) => {
+    if (value <= 0 || productionBarMax.value <= 0) return 0
+    return Math.max((value / productionBarMax.value) * plotHeight, 1.5)
+  }
+
+  return productionSeries.value.map((point, index) => {
+    const x = index * bandWidth + (bandWidth - barWidth) / 2
+    const centerX = x + barWidth / 2
+    const baseHeight = scaledHeight(point.basePeriod)
+    const gtmHeight = scaledHeight(point.gtmPeriod)
+    const vnsHeight = scaledHeight(point.vnsPeriod)
+    const baseY = baselineY - baseHeight
+    const gtmY = baseY - gtmHeight
+    const vnsY = gtmY - vnsHeight
+
+    return {
+      ...point,
+      x,
+      width: barWidth,
+      centerX,
+      baseHeight,
+      gtmHeight,
+      vnsHeight,
+      baseY,
+      gtmY,
+      vnsY,
+    }
+  })
+})
+const productionCumulativePolyline = computed(() => {
+  if (!productionChartBars.value.length || productionCumMax.value <= 0) return ''
+  const plotHeight = PRODUCTION_CHART_HEIGHT - PRODUCTION_CHART_TOP_PADDING - PRODUCTION_CHART_BOTTOM_PADDING
+  return productionChartBars.value
+    .map((point) => {
+      const y = PRODUCTION_CHART_TOP_PADDING + plotHeight - (point.totalCum / productionCumMax.value) * plotHeight
+      return `${point.centerX},${y}`
+    })
+    .join(' ')
+})
+const productionLabelPoints = computed(() => {
+  if (!productionChartBars.value.length) return []
+  const source = productionChartBars.value
   return source.filter((point, index) => index === 0 || index === source.length - 1 || index === Math.floor(source.length / 2))
 })
 const selectedProductionSummary = computed(() => selectedLeafWells.value.reduce((acc, well) => {
@@ -779,9 +887,10 @@ const selectedProductionSummary = computed(() => selectedLeafWells.value.reduce(
   return acc
 }, { totalOil: 0, totalLiquid: 0, totalGas: 0 }))
 const productionChartLegend = computed(() => ([
-  { label: 'БАЗА', color: 'rgba(47, 128, 255, 0.78)', value: productionSeries.value.at(-1)?.baseCum || 0 },
-  { label: 'ГТМ', color: 'rgba(76, 195, 154, 0.78)', value: productionSeries.value.at(-1)?.gtmCum || 0 },
-  { label: 'ВНС', color: 'rgba(230, 124, 37, 0.8)', value: productionSeries.value.at(-1)?.vnsCum || 0 },
+  { label: 'БАЗА', color: 'rgba(47, 128, 255, 0.78)', kind: 'bar', value: productionSeries.value.at(-1)?.baseCum || 0 },
+  { label: 'ГТМ', color: 'rgba(76, 195, 154, 0.78)', kind: 'bar', value: productionSeries.value.at(-1)?.gtmCum || 0 },
+  { label: 'ВНС', color: 'rgba(230, 124, 37, 0.8)', kind: 'bar', value: productionSeries.value.at(-1)?.vnsCum || 0 },
+  { label: 'Накопленная', color: '#132233', kind: 'line', value: productionSeries.value.at(-1)?.totalCum || 0 },
 ]))
 
 const resetNormalizeColumns = () => {
@@ -1624,7 +1733,7 @@ onMounted(async () => {
             <div class="stat-card"><span>Wells</span><strong>{{ scenarioContextStatus.wells ? (selectedDatasets.wells?.name || 'OK') : 'Не задан' }}</strong></div>
             <div class="stat-card"><span>GTM</span><strong>{{ scenarioContextStatus.gtm ? (selectedDatasets.gtm?.name || 'OK') : 'Не задан' }}</strong></div>
             <div class="stat-card"><span>Infrastructure</span><strong>{{ scenarioContextStatus.infrastructure ? (selectedDatasets.infrastructure?.name || 'OK') : 'Опционально' }}</strong></div>
-            <div class="stat-card"><span>ManualInputSet</span><strong>{{ scenarioContextStatus.manual_input ? (manualInputName || 'OK') : 'Не задан' }}</strong></div>
+            <div class="stat-card"><span>ManualInputSet</span><strong>{{ scenarioContextStatus.manual_input ? (selectedManualInputSetSummary?.reference.name || 'OK') : 'Не задан' }}</strong></div>
           </div>
           <div class="workflow-tree">
             <div
@@ -1639,6 +1748,52 @@ onMounted(async () => {
                 <span>{{ step.description }}</span>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="toolbar between align-start">
+            <div>
+              <h2>Список сценариев</h2>
+              <p class="subtitle">Главный вход в сценарный workflow. Здесь отображаются атрибуты сценария, привязанные datasets, ManualInputSet и происхождение сценария.</p>
+            </div>
+            <button class="button ghost" :disabled="loading" @click="loadScenarios">Обновить список</button>
+          </div>
+          <div v-if="!groupedScenarios.length" class="empty-inline">Сценарии еще не созданы.</div>
+          <div v-else class="scenario-list">
+            <button
+              v-for="item in groupedScenarios"
+              :key="item.scenario_id"
+              type="button"
+              class="scenario-card"
+              :class="{ active: selectedScenarioId === item.scenario_id }"
+              @click="selectedScenarioId = item.scenario_id"
+            >
+              <div class="scenario-card-head">
+                <div>
+                  <strong>{{ item.name }}</strong>
+                  <span class="scenario-card-id">{{ item.scenario_id }}</span>
+                </div>
+                <span class="scenario-badge">{{ scenarioSourceTypeLabel(item.source_type) }}</span>
+              </div>
+              <div class="scenario-card-grid">
+                <div><span>Статус</span><strong>{{ item.status }}</strong></div>
+                <div><span>Период</span><strong>{{ formatScenarioWindow(item) }}</strong></div>
+                <div><span>Parent</span><strong>{{ item.parent_scenario_id || '—' }}</strong></div>
+                <div><span>Planner</span><strong>{{ scenarioHasPlannerVersion(item) ? 'Есть' : 'Нет' }}</strong></div>
+              </div>
+              <div class="scenario-card-links">
+                <span>Wells: {{ item.context?.wells_dataset?.name || '—' }}</span>
+                <span>GTM: {{ item.context?.gtm_dataset?.name || '—' }}</span>
+                <span>Infrastructure: {{ item.context?.infrastructure_dataset?.name || '—' }}</span>
+                <span>KRS: {{ item.context?.external_krs_schedule_dataset?.name || '—' }}</span>
+                <span>ManualInputSet: {{ item.context?.manual_input_set?.name || '—' }}</span>
+              </div>
+              <div class="scenario-card-footer">
+                <span>{{ scenarioOriginLabel(item) }}</span>
+                <span v-if="item.production_summary">Нефть: {{ formatCompactNumber(item.production_summary.total_oil) }}</span>
+              </div>
+            </button>
           </div>
         </div>
 
@@ -2262,22 +2417,42 @@ onMounted(async () => {
           <div class="panel production-panel">
             <div class="toolbar between">
               <div>
-                <h2>Накопительная добыча нефти</h2>
-                <p class="subtitle">Категории `БАЗА`, `ГТМ`, `ВНС` агрегируются по выбранным leaf-скважинам.</p>
+                <h2>{{ productionChartTitle }}</h2>
+                <p class="subtitle">{{ productionChartSubtitle }}</p>
               </div>
-              <div class="legend">
-                <span v-for="item in productionChartLegend" :key="item.label" class="legend-item"><i class="legend-dot" :style="{ background: item.color }"></i>{{ item.label }} {{ formatCompactNumber(item.value) }}</span>
+              <div class="toolbar-actions">
+                <div class="mode-toggle">
+                  <button
+                    v-for="mode in PRODUCTION_TIME_MODES"
+                    :key="mode.key"
+                    type="button"
+                    class="mode-toggle-button"
+                    :class="{ active: productionTimeMode === mode.key }"
+                    @click="productionTimeMode = mode.key"
+                  >
+                    {{ mode.label }}
+                  </button>
+                </div>
+                <div class="legend">
+                  <span v-for="item in productionChartLegend" :key="item.label" class="legend-item">
+                    <i :class="item.kind === 'line' ? 'legend-line' : 'legend-dot'" :style="{ background: item.kind === 'line' ? 'transparent' : item.color, borderColor: item.color }"></i>
+                    {{ item.label }} {{ formatCompactNumber(item.value) }}
+                  </span>
+                </div>
               </div>
             </div>
             <div class="production-chart-wrap">
               <svg v-if="productionSeries.length" class="production-chart" :viewBox="`0 0 ${PRODUCTION_CHART_WIDTH} ${PRODUCTION_CHART_HEIGHT}`" preserveAspectRatio="none">
-                <path :d="productionBasePath" class="production-area base" />
-                <path :d="productionGtmPath" class="production-area gtm" />
-                <path :d="productionVnsPath" class="production-area vns" />
+                <g v-for="bar in productionChartBars" :key="bar.date">
+                  <rect v-if="bar.baseHeight > 0" :x="bar.x" :y="bar.baseY" :width="bar.width" :height="bar.baseHeight" class="production-bar base" />
+                  <rect v-if="bar.gtmHeight > 0" :x="bar.x" :y="bar.gtmY" :width="bar.width" :height="bar.gtmHeight" class="production-bar gtm" />
+                  <rect v-if="bar.vnsHeight > 0" :x="bar.x" :y="bar.vnsY" :width="bar.width" :height="bar.vnsHeight" class="production-bar vns" />
+                </g>
+                <polyline v-if="productionCumulativePolyline" :points="productionCumulativePolyline" class="production-line" />
               </svg>
               <div v-else class="empty-inline">Нет данных по выбранной группе.</div>
               <div class="production-labels">
-                <span v-for="item in productionLabelPoints" :key="item.date">{{ formatDateCell(item.date) }} · {{ formatCompactNumber(item.totalCum) }}</span>
+                <span v-for="item in productionLabelPoints" :key="item.date">{{ item.label }} · {{ formatCompactNumber(item.totalPeriod) }} / накопл. {{ formatCompactNumber(item.totalCum) }}</span>
               </div>
             </div>
           </div>
@@ -3011,6 +3186,106 @@ textarea:disabled {
   background: linear-gradient(180deg, #eef5ff, #f9fbff);
 }
 
+.scenario-list {
+  display: grid;
+  gap: 10px;
+}
+
+.scenario-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 14px;
+  border: 1px solid rgba(35, 50, 68, 0.08);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fff, #f7fbff);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  appearance: none;
+}
+
+.scenario-card.active {
+  border-color: rgba(47, 128, 255, 0.24);
+  background: linear-gradient(180deg, #eef5ff, #f9fbff);
+}
+
+.scenario-card-head,
+.scenario-card-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.scenario-card-head strong {
+  display: block;
+  font-size: 16px;
+  color: #1c2736;
+}
+
+.scenario-card-id,
+.scenario-card-links span,
+.scenario-card-footer span {
+  color: #627286;
+  font-size: 13px;
+}
+
+.scenario-card-id {
+  display: block;
+  margin-top: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+.scenario-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #edf4ff;
+  color: #18314e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.scenario-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.scenario-card-grid > div {
+  padding: 10px 12px;
+  border: 1px solid rgba(35, 50, 68, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.scenario-card-grid span {
+  display: block;
+  color: #7a8ca1;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.scenario-card-grid strong {
+  display: block;
+  margin-top: 6px;
+  color: #1c2736;
+  font-size: 14px;
+}
+
+.scenario-card-links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+}
+
 .dataset-card-head,
 .dataset-card-meta,
 .dataset-card-actions {
@@ -3160,6 +3435,40 @@ th {
   justify-content: flex-end;
 }
 
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 999px;
+  background: #eef4fb;
+}
+
+.mode-toggle-button {
+  border: 0;
+  background: transparent;
+  color: #5b6d82;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mode-toggle-button.active {
+  background: #ffffff;
+  color: #1d2f42;
+  box-shadow: 0 6px 18px rgba(38, 60, 86, 0.12);
+}
+
 .legend-item {
   display: inline-flex;
   align-items: center;
@@ -3169,14 +3478,21 @@ th {
 }
 
 .legend-dot,
-.legend-swatch {
+.legend-swatch,
+.legend-line {
   display: inline-block;
-  border-radius: 999px;
 }
 
 .legend-dot {
   width: 12px;
   height: 12px;
+  border-radius: 999px;
+}
+
+.legend-line {
+  width: 16px;
+  height: 0;
+  border-top: 3px solid #132233;
 }
 
 .legend-swatch {
@@ -3211,16 +3527,24 @@ th {
   height: 260px;
 }
 
-.production-area.base {
+.production-bar.base {
   fill: rgba(47, 128, 255, 0.78);
 }
 
-.production-area.gtm {
+.production-bar.gtm {
   fill: rgba(76, 195, 154, 0.78);
 }
 
-.production-area.vns {
+.production-bar.vns {
   fill: rgba(230, 124, 37, 0.8);
+}
+
+.production-line {
+  fill: none;
+  stroke: #132233;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .production-labels {
@@ -3606,7 +3930,9 @@ th {
   .detail-summary,
   .info-cards,
   .stats-grid,
-  .decline-split {
+  .decline-split,
+  .scenario-card-grid,
+  .scenario-card-links {
     grid-template-columns: 1fr;
   }
 }
