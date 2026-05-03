@@ -134,6 +134,29 @@ class ScenarioRepository:
     def get_scenario(self, scenario_id: str) -> ScenarioModel | None:
         return self.session.get(ScenarioModel, scenario_id)
 
+    def find_child_scenario(
+        self,
+        *,
+        parent_scenario_id: str,
+        name: str | None = None,
+        metadata_key: str | None = None,
+        metadata_value: Any | None = None,
+    ) -> ScenarioModel | None:
+        stmt = (
+            select(ScenarioModel)
+            .where(ScenarioModel.parent_scenario_id == parent_scenario_id)
+            .order_by(ScenarioModel.created_at.desc())
+        )
+        for scenario in self.session.scalars(stmt):
+            if name is not None and scenario.name != name:
+                continue
+            if metadata_key is not None:
+                metadata = scenario.metadata_json or {}
+                if metadata.get(metadata_key) != metadata_value:
+                    continue
+            return scenario
+        return None
+
     def get_latest_result(self, scenario_id: str) -> tuple[ScenarioModel, ScenarioResultModel] | None:
         scenario = self.get_scenario(scenario_id)
         if scenario is None:

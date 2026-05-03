@@ -5,8 +5,10 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8010/api
 const PLANNER_CHART_HEIGHT = 180
 const PRODUCTION_CHART_HEIGHT = 260
 const PRODUCTION_CHART_WIDTH = 1280
+const PRODUCTION_CHART_LEFT_PADDING = 72
+const PRODUCTION_CHART_RIGHT_PADDING = 72
 const PRODUCTION_CHART_TOP_PADDING = 18
-const PRODUCTION_CHART_BOTTOM_PADDING = 28
+const PRODUCTION_CHART_BOTTOM_PADDING = 54
 const PRODUCTION_TIME_MODES = [
   { key: 'day', label: 'День' },
   { key: 'month', label: 'Месяц' },
@@ -158,6 +160,14 @@ const formatMonthLong = (value) => {
 const formatDayNumber = (value) => {
   const parsed = parseIsoDate(value)
   return parsed ? new Intl.DateTimeFormat('ru-RU', { day: '2-digit' }).format(parsed) : ''
+}
+const formatShortDayTick = (value) => {
+  const parsed = parseIsoDate(value)
+  return parsed ? new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit' }).format(parsed) : ''
+}
+const formatShortMonthTick = (value) => {
+  const parsed = parseIsoDate(value)
+  return parsed ? new Intl.DateTimeFormat('ru-RU', { month: 'short', year: '2-digit' }).format(parsed).replace('.', '') : ''
 }
 
 const bucketKeyForProductionMode = (value, mode) => {
@@ -369,9 +379,11 @@ const optimizerForm = reactive({
 const selectedScenarioId = ref('')
 const scenarioSourceMode = ref('new_krs')
 const scenarioDetail = ref(null)
+const pureBaseScenarioDetail = ref(null)
 const expandedProductionKeys = ref([])
 const selectedProductionKeys = ref([])
 const productionTimeMode = ref('month')
+const hoveredProductionBucketDate = ref('')
 
 const plannerDatasetSelectionKey = ref('')
 const plannerDatasetReference = ref(null)
@@ -770,34 +782,72 @@ const productionTree = computed(() => {
   flatten(totalNode)
   return { rows, nodeMap, totalNode }
 })
-const selectedLeafWells = computed(() => {
-  const allWells = Array.isArray(scenarioDetail.value?.wells) ? scenarioDetail.value.wells : []
-  const selectedKeys = selectedProductionKeys.value.length
+const activeScenarioWells = computed(() => Array.isArray(scenarioDetail.value?.wells) ? scenarioDetail.value.wells : [])
+const activeScenarioRole = computed(() => scenarioDetail.value?.scenario?.metadata?.scenario_role || '')
+const baseScenarioWells = computed(() => {
+  if (activeScenarioRole.value === 'pure_base') {
+    return activeScenarioWells.value
+  }
+  return Array.isArray(pureBaseScenarioDetail.value?.wells) ? pureBaseScenarioDetail.value.wells : []
+})
+const selectedLeafWellKeys = computed(() => (
+  selectedProductionKeys.value.length
     ? new Set(selectedProductionKeys.value.flatMap((key) => productionTree.value.nodeMap.get(key)?.leafKeys || []))
     : new Set(productionTree.value.totalNode.leafKeys)
-  return allWells.filter((well) => selectedKeys.has(buildWellNodeKey(well)))
-})
+))
+const selectedLeafWells = computed(() => activeScenarioWells.value.filter((well) => selectedLeafWellKeys.value.has(buildWellNodeKey(well))))
+const selectedBaseLeafWells = computed(() => baseScenarioWells.value.filter((well) => selectedLeafWellKeys.value.has(buildWellNodeKey(well))))
 const productionSeries = computed(() => {
-  if (!selectedLeafWells.value.length) return []
+  if (!selectedLeafWells.value.length && !selectedBaseLeafWells.value.length) return []
   const dateMap = new Map()
+  const ensureBucket = (bucketDate) => {
+    if (!dateMap.has(bucketDate)) {
+      dateMap.set(bucketDate, {
+        date: bucketDate,
+        basePeriod: 0,
+        activeBasePeriod: 0,
+        gtmPeriod: 0,
+        vnsPeriod: 0,
+      })
+    }
+    return dateMap.get(bucketDate)
+  }
+
+  selectedBaseLeafWells.value.forEach((well) => {
+    well.points.forEach((point) => {
+      const bucket = ensureBucket(bucketKeyForProductionMode(point.date, productionTimeMode.value))
+      bucket.basePeriod += Number(point.oil_rate || 0)
+    })
+  })
+
   selectedLeafWells.value.forEach((well) => {
     well.points.forEach((point) => {
-      const bucketDate = bucketKeyForProductionMode(point.date, productionTimeMode.value)
-      if (!dateMap.has(bucketDate)) {
-        dateMap.set(bucketDate, { date: bucketDate, basePeriod: 0, gtmPeriod: 0, vnsPeriod: 0 })
-      }
-      const bucket = dateMap.get(bucketDate)
+      const bucket = ensureBucket(bucketKeyForProductionMode(point.date, productionTimeMode.value))
       const oilRate = Number(point.oil_rate || 0)
-      const oilIncrement = Number(point.oil_increment || 0)
       if (String(well.fund_type || '').toLowerCase() === 'new wells') {
         bucket.vnsPeriod += oilRate
+      } else if (activeScenarioRole.value === 'pure_base') {
+        bucket.basePeriod += oilRate
       } else {
-        bucket.gtmPeriod += oilIncrement
-        bucket.basePeriod += Math.max(oilRate - oilIncrement, 0)
+        bucket.activeBasePeriod += oilRate
       }
     })
   })
-  const ordered = [...dateMap.values()].sort((a, b) => a.date.localeCompare(b.date))
+
+  const hasLinkedPureBase = activeScenarioRole.value === 'pure_base' || selectedBaseLeafWells.value.length > 0
+  const ordered = [...dateMap.values()]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((point) => {
+      const basePeriod = hasLinkedPureBase ? point.basePeriod : point.activeBasePeriod
+      return {
+        ...point,
+        basePeriod,
+        gtmPeriod: activeScenarioRole.value === 'pure_base' || !hasLinkedPureBase
+          ? 0
+          : Math.max(point.activeBasePeriod - point.basePeriod, 0),
+      }
+    })
+
   let baseCum = 0
   let gtmCum = 0
   let vnsCum = 0
@@ -829,10 +879,12 @@ const productionChartSubtitle = computed(() => ({
 }[productionTimeMode.value] || ''))
 const productionBarMax = computed(() => Math.max(...productionSeries.value.map((point) => point.totalPeriod), 1))
 const productionCumMax = computed(() => Math.max(...productionSeries.value.map((point) => point.totalCum), 1))
+const productionPlotHeight = computed(() => PRODUCTION_CHART_HEIGHT - PRODUCTION_CHART_TOP_PADDING - PRODUCTION_CHART_BOTTOM_PADDING)
+const productionPlotWidth = computed(() => PRODUCTION_CHART_WIDTH - PRODUCTION_CHART_LEFT_PADDING - PRODUCTION_CHART_RIGHT_PADDING)
 const productionChartBars = computed(() => {
   if (!productionSeries.value.length) return []
-  const plotHeight = PRODUCTION_CHART_HEIGHT - PRODUCTION_CHART_TOP_PADDING - PRODUCTION_CHART_BOTTOM_PADDING
-  const bandWidth = PRODUCTION_CHART_WIDTH / productionSeries.value.length
+  const plotHeight = productionPlotHeight.value
+  const bandWidth = productionPlotWidth.value / productionSeries.value.length
   const barWidth = Math.max(10, Math.min(36, bandWidth * 0.62))
   const baselineY = PRODUCTION_CHART_TOP_PADDING + plotHeight
 
@@ -842,7 +894,8 @@ const productionChartBars = computed(() => {
   }
 
   return productionSeries.value.map((point, index) => {
-    const x = index * bandWidth + (bandWidth - barWidth) / 2
+    const bandX = PRODUCTION_CHART_LEFT_PADDING + index * bandWidth
+    const x = bandX + (bandWidth - barWidth) / 2
     const centerX = x + barWidth / 2
     const baseHeight = scaledHeight(point.basePeriod)
     const gtmHeight = scaledHeight(point.gtmPeriod)
@@ -853,9 +906,12 @@ const productionChartBars = computed(() => {
 
     return {
       ...point,
+      bandX,
+      bandWidth,
       x,
       width: barWidth,
       centerX,
+      baselineY,
       baseHeight,
       gtmHeight,
       vnsHeight,
@@ -867,7 +923,7 @@ const productionChartBars = computed(() => {
 })
 const productionCumulativePolyline = computed(() => {
   if (!productionChartBars.value.length || productionCumMax.value <= 0) return ''
-  const plotHeight = PRODUCTION_CHART_HEIGHT - PRODUCTION_CHART_TOP_PADDING - PRODUCTION_CHART_BOTTOM_PADDING
+  const plotHeight = productionPlotHeight.value
   return productionChartBars.value
     .map((point) => {
       const y = PRODUCTION_CHART_TOP_PADDING + plotHeight - (point.totalCum / productionCumMax.value) * plotHeight
@@ -875,10 +931,54 @@ const productionCumulativePolyline = computed(() => {
     })
     .join(' ')
 })
-const productionLabelPoints = computed(() => {
-  if (!productionChartBars.value.length) return []
-  const source = productionChartBars.value
-  return source.filter((point, index) => index === 0 || index === source.length - 1 || index === Math.floor(source.length / 2))
+const productionAxisTicks = computed(() => {
+  const tickCount = 5
+  return Array.from({ length: tickCount }, (_, index) => {
+    const ratio = index / (tickCount - 1)
+    const value = productionBarMax.value * (1 - ratio)
+    const y = PRODUCTION_CHART_TOP_PADDING + ratio * productionPlotHeight.value
+    return { value, y }
+  })
+})
+const productionCumulativeTicks = computed(() => {
+  const tickCount = 5
+  return Array.from({ length: tickCount }, (_, index) => {
+    const ratio = index / (tickCount - 1)
+    const value = productionCumMax.value * (1 - ratio)
+    const y = PRODUCTION_CHART_TOP_PADDING + ratio * productionPlotHeight.value
+    return { value, y }
+  })
+})
+const productionDateTicks = computed(() => {
+  const bars = productionChartBars.value
+  if (!bars.length) return []
+  if (productionTimeMode.value === 'day') {
+    return bars
+      .filter((point, index) => {
+        const parsed = parseIsoDate(point.date)
+        if (!parsed) return index === 0 || index === bars.length - 1
+        const dayOfMonth = parsed.getUTCDate()
+        return index === 0 || index === bars.length - 1 || dayOfMonth === 1 || ((dayOfMonth - 1) % 7 === 0)
+      })
+      .map((point) => ({ x: point.centerX, label: formatShortDayTick(point.date) }))
+  }
+  if (productionTimeMode.value === 'month') {
+    const step = bars.length > 18 ? 2 : 1
+    return bars
+      .filter((_, index) => index % step === 0 || index === bars.length - 1)
+      .map((point) => ({ x: point.centerX, label: formatShortMonthTick(point.date) }))
+  }
+  return bars.map((point) => ({
+    x: point.centerX,
+    label: String(parseIsoDate(point.date)?.getUTCFullYear() || ''),
+  }))
+})
+const productionLabelPoints = computed(() => [])
+const hoveredProductionBucket = computed(() => productionChartBars.value.find((point) => point.date === hoveredProductionBucketDate.value) || null)
+const productionTooltipStyle = computed(() => {
+  if (!hoveredProductionBucket.value) return {}
+  const ratio = hoveredProductionBucket.value.centerX / PRODUCTION_CHART_WIDTH
+  return { left: `calc(${(ratio * 100).toFixed(3)}% - 76px)` }
 })
 const selectedProductionSummary = computed(() => selectedLeafWells.value.reduce((acc, well) => {
   acc.totalOil += Number(well.total_oil || 0)
@@ -1438,16 +1538,25 @@ const loadScenarioDetail = async (scenarioId) => {
   try {
     const response = await request(`/scenarios/${scenarioId}`)
     scenarioDetail.value = await response.json()
+    pureBaseScenarioDetail.value = null
     optimizerForm.scenario_name = scenarioDetail.value.scenario?.name || optimizerForm.scenario_name
     optimizerForm.forecast_start_date = scenarioDetail.value.scenario?.forecast_start_date || optimizerForm.forecast_start_date
     optimizerForm.forecast_end_date = scenarioDetail.value.scenario?.forecast_end_date || optimizerForm.forecast_end_date
     scenarioSourceMode.value = scenarioDetail.value.scenario?.metadata?.scenario_source_mode || (scenarioDetail.value.context?.external_krs_schedule_dataset ? 'existing_krs' : 'new_krs')
+    const pureBaseScenarioId = scenarioDetail.value.source_payload?.pure_base_scenario_id || scenarioDetail.value.scenario?.metadata?.pure_base_scenario_id || ''
+    if (scenarioDetail.value.scenario?.metadata?.scenario_role !== 'pure_base' && pureBaseScenarioId) {
+      const pureBaseResponse = await request(`/scenarios/${pureBaseScenarioId}`)
+      pureBaseScenarioDetail.value = await pureBaseResponse.json()
+    } else if (scenarioDetail.value.scenario?.metadata?.scenario_role === 'pure_base') {
+      pureBaseScenarioDetail.value = scenarioDetail.value
+    }
     if (scenarioDetail.value.context) {
       await applyScenarioContext(scenarioDetail.value.context)
     }
     const luKeys = [...new Set((scenarioDetail.value.wells || []).map((item) => item.lu_id || 'Без LU'))].map((item) => `lu:${item}`)
     expandedProductionKeys.value = ['total', ...luKeys]
     selectedProductionKeys.value = []
+    hoveredProductionBucketDate.value = ''
   } catch (error) {
     showMessage(error.message, 'error')
   } finally {
@@ -1466,9 +1575,11 @@ const toggleProductionExpand = (key) => {
 const toggleProductionSelection = (key) => {
   if (selectedProductionKeys.value.includes(key)) {
     selectedProductionKeys.value = selectedProductionKeys.value.filter((item) => item !== key)
+    hoveredProductionBucketDate.value = ''
     return
   }
   selectedProductionKeys.value = [...selectedProductionKeys.value, key]
+  hoveredProductionBucketDate.value = ''
 }
 
 const openImportedSchedule = async (reference) => {
@@ -1620,6 +1731,10 @@ const exportPlannerVersion = async () => {
 watch(selectedScenarioId, async (scenarioId) => {
   if (!scenarioId) return
   await loadScenarioDetail(scenarioId)
+})
+
+watch(productionTimeMode, () => {
+  hoveredProductionBucketDate.value = ''
 })
 
 watch([fullScheduleBounds], ([bounds]) => {
@@ -2442,8 +2557,103 @@ onMounted(async () => {
               </div>
             </div>
             <div class="production-chart-wrap">
+              <div
+                v-if="hoveredProductionBucket"
+                class="production-tooltip"
+                :style="productionTooltipStyle"
+              >
+                <strong>{{ formatProductionBucketLabel(hoveredProductionBucket.date, productionTimeMode) }}</strong>
+                <span>БАЗА {{ formatCompactNumber(hoveredProductionBucket.basePeriod) }}</span>
+                <span>ГТМ {{ formatCompactNumber(hoveredProductionBucket.gtmPeriod) }}</span>
+                <span>ВНС {{ formatCompactNumber(hoveredProductionBucket.vnsPeriod) }}</span>
+                <span>Накопленная {{ formatCompactNumber(hoveredProductionBucket.totalCum) }}</span>
+              </div>
               <svg v-if="productionSeries.length" class="production-chart" :viewBox="`0 0 ${PRODUCTION_CHART_WIDTH} ${PRODUCTION_CHART_HEIGHT}`" preserveAspectRatio="none">
+                <g class="production-grid">
+                  <line
+                    v-for="tick in productionAxisTicks"
+                    :key="`grid-${tick.y}`"
+                    :x1="PRODUCTION_CHART_LEFT_PADDING"
+                    :x2="PRODUCTION_CHART_WIDTH - PRODUCTION_CHART_RIGHT_PADDING"
+                    :y1="tick.y"
+                    :y2="tick.y"
+                    class="production-grid-line"
+                  />
+                  <line
+                    :x1="PRODUCTION_CHART_LEFT_PADDING"
+                    :x2="PRODUCTION_CHART_LEFT_PADDING"
+                    :y1="PRODUCTION_CHART_TOP_PADDING"
+                    :y2="PRODUCTION_CHART_HEIGHT - PRODUCTION_CHART_BOTTOM_PADDING"
+                    class="production-axis-line"
+                  />
+                  <line
+                    :x1="PRODUCTION_CHART_WIDTH - PRODUCTION_CHART_RIGHT_PADDING"
+                    :x2="PRODUCTION_CHART_WIDTH - PRODUCTION_CHART_RIGHT_PADDING"
+                    :y1="PRODUCTION_CHART_TOP_PADDING"
+                    :y2="PRODUCTION_CHART_HEIGHT - PRODUCTION_CHART_BOTTOM_PADDING"
+                    class="production-axis-line secondary"
+                  />
+                  <line
+                    :x1="PRODUCTION_CHART_LEFT_PADDING"
+                    :x2="PRODUCTION_CHART_WIDTH - PRODUCTION_CHART_RIGHT_PADDING"
+                    :y1="PRODUCTION_CHART_HEIGHT - PRODUCTION_CHART_BOTTOM_PADDING"
+                    :y2="PRODUCTION_CHART_HEIGHT - PRODUCTION_CHART_BOTTOM_PADDING"
+                    class="production-axis-line"
+                  />
+                  <text
+                    v-for="tick in productionAxisTicks"
+                    :key="`left-${tick.y}`"
+                    :x="PRODUCTION_CHART_LEFT_PADDING - 10"
+                    :y="tick.y + 4"
+                    class="production-axis-label left"
+                  >
+                    {{ formatCompactNumber(tick.value) }}
+                  </text>
+                  <text
+                    v-for="tick in productionCumulativeTicks"
+                    :key="`right-${tick.y}`"
+                    :x="PRODUCTION_CHART_WIDTH - PRODUCTION_CHART_RIGHT_PADDING + 10"
+                    :y="tick.y + 4"
+                    class="production-axis-label right"
+                  >
+                    {{ formatCompactNumber(tick.value) }}
+                  </text>
+                  <text
+                    v-for="tick in productionDateTicks"
+                    :key="`x-${tick.x}-${tick.label}`"
+                    :x="tick.x"
+                    :y="PRODUCTION_CHART_HEIGHT - 14"
+                    class="production-axis-label bottom"
+                  >
+                    {{ tick.label }}
+                  </text>
+                  <text
+                    :x="18"
+                    :y="PRODUCTION_CHART_HEIGHT / 2"
+                    class="production-axis-title"
+                    transform="rotate(-90 18 130)"
+                  >
+                    Добыча за период, т
+                  </text>
+                  <text
+                    :x="PRODUCTION_CHART_WIDTH - 16"
+                    :y="PRODUCTION_CHART_HEIGHT / 2"
+                    class="production-axis-title right"
+                    transform="rotate(90 1264 130)"
+                  >
+                    Накопленная добыча, т
+                  </text>
+                </g>
                 <g v-for="bar in productionChartBars" :key="bar.date">
+                  <rect
+                    :x="bar.bandX"
+                    :y="PRODUCTION_CHART_TOP_PADDING"
+                    :width="bar.bandWidth"
+                    :height="productionPlotHeight"
+                    class="production-hit-area"
+                    @mouseenter="hoveredProductionBucketDate = bar.date"
+                    @mouseleave="hoveredProductionBucketDate = ''"
+                  />
                   <rect v-if="bar.baseHeight > 0" :x="bar.x" :y="bar.baseY" :width="bar.width" :height="bar.baseHeight" class="production-bar base" />
                   <rect v-if="bar.gtmHeight > 0" :x="bar.x" :y="bar.gtmY" :width="bar.width" :height="bar.gtmHeight" class="production-bar gtm" />
                   <rect v-if="bar.vnsHeight > 0" :x="bar.x" :y="bar.vnsY" :width="bar.width" :height="bar.vnsHeight" class="production-bar vns" />
@@ -2451,7 +2661,7 @@ onMounted(async () => {
                 <polyline v-if="productionCumulativePolyline" :points="productionCumulativePolyline" class="production-line" />
               </svg>
               <div v-else class="empty-inline">Нет данных по выбранной группе.</div>
-              <div class="production-labels">
+              <div v-if="false" class="production-labels">
                 <span v-for="item in productionLabelPoints" :key="item.date">{{ item.label }} · {{ formatCompactNumber(item.totalPeriod) }} / накопл. {{ formatCompactNumber(item.totalCum) }}</span>
               </div>
             </div>
@@ -3516,6 +3726,7 @@ th {
 }
 
 .production-chart-wrap {
+  position: relative;
   overflow-x: auto;
   display: flex;
   flex-direction: column;
@@ -3525,6 +3736,74 @@ th {
 .production-chart {
   min-width: 100%;
   height: 260px;
+}
+
+.production-tooltip {
+  position: absolute;
+  top: 10px;
+  z-index: 4;
+  display: grid;
+  gap: 4px;
+  min-width: 152px;
+  padding: 10px 12px;
+  border: 1px solid rgba(19, 34, 51, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 24px rgba(24, 39, 56, 0.12);
+  pointer-events: none;
+}
+
+.production-tooltip strong {
+  color: #1c2736;
+  font-size: 13px;
+}
+
+.production-tooltip span {
+  color: #5d6f84;
+  font-size: 12px;
+}
+
+.production-grid-line {
+  stroke: rgba(35, 50, 68, 0.08);
+  stroke-width: 1;
+}
+
+.production-axis-line {
+  stroke: rgba(35, 50, 68, 0.18);
+  stroke-width: 1.2;
+}
+
+.production-axis-line.secondary {
+  stroke: rgba(19, 34, 51, 0.14);
+}
+
+.production-axis-label {
+  fill: #66778b;
+  font-size: 11px;
+}
+
+.production-axis-label.left {
+  text-anchor: end;
+}
+
+.production-axis-label.right {
+  text-anchor: start;
+}
+
+.production-axis-label.bottom {
+  text-anchor: middle;
+}
+
+.production-axis-title {
+  fill: #5d6f84;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.production-hit-area {
+  fill: transparent;
 }
 
 .production-bar.base {

@@ -27,6 +27,8 @@ from app.services.forecast_service import ForecastService
 router = APIRouter(prefix="/api/scenarios", tags=["scenarios"])
 
 _SCENARIO_CONTEXT_KEY = "scenario_context"
+_PURE_BASE_SCENARIO_NAME = "чистая База"
+_PURE_BASE_SCENARIO_ROLE = "pure_base"
 
 
 def get_db():
@@ -53,6 +55,10 @@ def _extract_context(metadata: dict[str, Any] | None) -> dict[str, Any]:
         return {}
     context = metadata.get(_SCENARIO_CONTEXT_KEY)
     return context if isinstance(context, dict) else {}
+
+
+def _is_pure_base_metadata(metadata: dict[str, Any] | None) -> bool:
+    return isinstance(metadata, dict) and metadata.get("scenario_role") == _PURE_BASE_SCENARIO_ROLE
 
 
 def _merge_metadata(
@@ -150,6 +156,89 @@ def _resolve_manual_input_payload(db: Session, reference: ManualInputReference) 
     return dict(item.payload_json or {})
 
 
+def _ensure_pure_base_scenario(
+    db: Session,
+    *,
+    source_scenario,
+    context: dict[str, Any],
+):
+    repo = ScenarioRepository(db)
+    existing = repo.find_child_scenario(
+        parent_scenario_id=source_scenario.scenario_id,
+        name=_PURE_BASE_SCENARIO_NAME,
+        metadata_key="scenario_role",
+        metadata_value=_PURE_BASE_SCENARIO_ROLE,
+    )
+    metadata = _merge_metadata(
+        existing_metadata=existing.metadata_json if existing else source_scenario.metadata_json,
+        context=context,
+        patch_metadata={
+            "scenario_role": _PURE_BASE_SCENARIO_ROLE,
+            "source_scenario_id": source_scenario.scenario_id,
+            "source_scenario_name": source_scenario.name,
+        },
+    )
+    if existing is not None:
+        return repo.update_scenario(
+            existing.scenario_id,
+            name=_PURE_BASE_SCENARIO_NAME,
+            source_type=source_scenario.source_type,
+            forecast_start_date=source_scenario.forecast_start_date,
+            forecast_end_date=source_scenario.forecast_end_date,
+            metadata=metadata,
+            status="draft",
+        )
+    return repo.create_scenario(
+        name=_PURE_BASE_SCENARIO_NAME,
+        source_type=source_scenario.source_type,
+        parent_scenario_id=source_scenario.scenario_id,
+        forecast_start_date=source_scenario.forecast_start_date,
+        forecast_end_date=source_scenario.forecast_end_date,
+        metadata=metadata,
+        status="draft",
+    )
+
+
+def _run_forecast_calculation(
+    *,
+    scenario,
+    context: ScenarioContextResponse,
+    wells_payload: list[dict[str, Any]],
+    gtm_payload: list[dict[str, Any]],
+    manual_input_payload: dict[str, Any],
+    planner_revision_items: list[dict[str, Any]] | None = None,
+    force_without_gtm: bool = False,
+):
+    service = ForecastService(
+        wells_reference=context.wells_dataset,
+        wells_payload=wells_payload,
+        gtm_reference=context.gtm_dataset,
+        gtm_payload=[] if force_without_gtm else gtm_payload,
+        manual_input_reference=context.manual_input_set,
+        manual_input_payload=manual_input_payload,
+        planner_revision_items=[] if force_without_gtm else planner_revision_items,
+    )
+    return service.calculate(
+        ForecastCalculateRequest(
+            name=scenario.name,
+            wells={
+                "dataset_id": context.wells_dataset.dataset_id,
+                "dataset_version_id": context.wells_dataset.dataset_version_id,
+            },
+            gtm={
+                "dataset_id": context.gtm_dataset.dataset_id,
+                "dataset_version_id": context.gtm_dataset.dataset_version_id,
+            },
+            manual_input_set_id=context.manual_input_set.manual_input_set_id,
+            forecast_start_date=scenario.forecast_start_date,
+            forecast_end_date=scenario.forecast_end_date,
+            source_type=scenario.source_type,
+            parent_scenario_id=scenario.parent_scenario_id,
+            metadata=scenario.metadata_json,
+        )
+    )
+
+
 def _build_context_from_request(
     db: Session,
     *,
@@ -193,34 +282,70 @@ def _calculate_for_scenario(
     gtm_payload = _resolve_payload_from_reference(db, context.gtm_dataset, expected_type="gtm")
     manual_input_payload = _resolve_manual_input_payload(db, context.manual_input_set)
 
-    service = ForecastService(
-        wells_reference=context.wells_dataset,
-        wells_payload=wells_payload,
-        gtm_reference=context.gtm_dataset,
-        gtm_payload=gtm_payload,
-        manual_input_reference=context.manual_input_set,
-        manual_input_payload=manual_input_payload,
-        planner_revision_items=planner_revision_items,
-    )
-    result = service.calculate(
-        ForecastCalculateRequest(
-            name=scenario.name,
-            wells={
-                "dataset_id": context.wells_dataset.dataset_id,
-                "dataset_version_id": context.wells_dataset.dataset_version_id,
-            },
-            gtm={
-                "dataset_id": context.gtm_dataset.dataset_id,
-                "dataset_version_id": context.gtm_dataset.dataset_version_id,
-            },
-            manual_input_set_id=context.manual_input_set.manual_input_set_id,
-            forecast_start_date=scenario.forecast_start_date,
-            forecast_end_date=scenario.forecast_end_date,
-            source_type=scenario.source_type,
-            parent_scenario_id=scenario.parent_scenario_id,
-            metadata=scenario.metadata_json,
+    pure_base_scenario_id: str | None = None
+    is_pure_base = _is_pure_base_metadata(scenario.metadata_json)
+
+    if is_pure_base:
+        result = _run_forecast_calculation(
+            scenario=scenario,
+            context=context,
+            wells_payload=wells_payload,
+            gtm_payload=gtm_payload,
+            manual_input_payload=manual_input_payload,
+            force_without_gtm=True,
         )
-    )
+    else:
+        if gtm_payload:
+            pure_base_scenario = _ensure_pure_base_scenario(
+                db,
+                source_scenario=scenario,
+                context=context.model_dump(),
+            )
+            pure_base_scenario_id = pure_base_scenario.scenario_id
+            pure_base_result = _run_forecast_calculation(
+                scenario=pure_base_scenario,
+                context=context,
+                wells_payload=wells_payload,
+                gtm_payload=gtm_payload,
+                manual_input_payload=manual_input_payload,
+                force_without_gtm=True,
+            )
+            repo.attach_result(
+                scenario_id=pure_base_scenario.scenario_id,
+                production_summary=pure_base_result.production_summary.model_dump(),
+                production_points=[item.model_dump() for item in pure_base_result.production_points],
+                well_results=[item.model_dump() for item in pure_base_result.wells],
+                source_payload={
+                    "scenario_context": context.model_dump(),
+                    "planner_revision_applied": False,
+                    "gtm_applied": False,
+                    "scenario_role": _PURE_BASE_SCENARIO_ROLE,
+                    "source_scenario_id": scenario.scenario_id,
+                },
+                metadata=pure_base_scenario.metadata_json,
+            )
+
+        scenario_metadata = dict(scenario.metadata_json or {})
+        scenario_metadata.pop("pure_base_scenario_id", None)
+        if pure_base_scenario_id:
+            scenario_metadata["pure_base_scenario_id"] = pure_base_scenario_id
+        scenario = repo.update_scenario(
+            scenario.scenario_id,
+            metadata=_merge_metadata(
+                existing_metadata=scenario_metadata,
+                context=context.model_dump(),
+                patch_metadata=None,
+            ),
+        ) or scenario
+
+        result = _run_forecast_calculation(
+            scenario=scenario,
+            context=context,
+            wells_payload=wells_payload,
+            gtm_payload=gtm_payload,
+            manual_input_payload=manual_input_payload,
+            planner_revision_items=planner_revision_items,
+        )
     repo.attach_result(
         scenario_id=scenario_id,
         production_summary=result.production_summary.model_dump(),
@@ -229,6 +354,8 @@ def _calculate_for_scenario(
         source_payload={
             "scenario_context": context.model_dump(),
             "planner_revision_applied": bool(planner_revision_items),
+            "gtm_applied": bool(gtm_payload) and not is_pure_base,
+            "pure_base_scenario_id": pure_base_scenario_id,
         },
         metadata=scenario.metadata_json,
     )

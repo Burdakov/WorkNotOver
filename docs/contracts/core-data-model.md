@@ -204,12 +204,10 @@
 
 - `well_id: str`
 - `well_name: str`
-- `area: str | None`
 - `lu_id: str | None`
 - `sloy_id: str | None`
 - `well_pad_id: str | None`
 - `infrastructure_object_id: str | None`
-- `brigade: str | None`
 - `fund_type: str | None`
 - `status: str | None`
 - `current_oil_rate: float | None`
@@ -253,12 +251,10 @@
 - `gtm_id: str`
 - `well_id: str`
 - `well_name: str`
-- `area: str | None`
 - `lu_id: str | None`
 - `sloy_id: str | None`
 - `well_pad_id: str | None`
 - `infrastructure_object_id: str | None`
-- `brigade: str | None`
 - `gtm_type: str`
 - `planned_work: str`
 - `candidate_start_date: str | None`
@@ -521,7 +517,7 @@
 ### Поля
 
 - `config_id: str`
-- `Net Back: float  | None`
+- `items: list[EconomicsConfigItem]`
 - `oil_price: float | None`
 - `gas_price: float | None`
 - `liquid_handling_cost: float | None`
@@ -531,6 +527,17 @@
 - `gtm_costs_by_type: dict[str, float] | None`
 - `tax_config: dict[str, object] | None`
 - `notes: str | None`
+
+### Related Entity: EconomicsConfigItem
+
+- `lu_id: str`
+- `net_back: float | None`
+
+### Инварианты
+
+- `EconomicsConfig` может содержать общие экономические параметры сценария и LU-специфичные значения `net_back`;
+- список `items` используется как каноническая форма ввода `Net Back` по участкам недр;
+- для одной пары `lu_id` внутри одного `EconomicsConfig` не должно существовать более одной активной записи.
 
 ---
 
@@ -804,9 +811,18 @@
 - `parent_scenario_id: str | None`
 - `forecast_start_date: str | None`
 - `forecast_end_date: str | None`
+- `input_bindings: ScenarioInputBindings`
 - `created_at: str`
 - `status: str`
 - `metadata: dict[str, object] | None`
+
+### Related Entity: ScenarioInputBindings
+
+- `wells_dataset: DatasetReference | None`
+- `gtm_dataset: DatasetReference | None`
+- `infrastructure_dataset: DatasetReference | None`
+- `external_krs_schedule_dataset: DatasetReference | None`
+- `manual_input_set: ManualInputReference | None`
 
 ### Source Types
 
@@ -816,9 +832,18 @@
 
 ### Инварианты
 
-- сценарии неизменяемы после создания;
+- `Scenario` является центральной сущностью `Scenario-first` workflow и всегда должен иметь собственные `input_bindings`, даже если часть входов еще не задана;
+- сценарий может находиться в статусе `draft`, пока пользователь привязывает datasets и manual inputs;
+- сценарий не должен считаться неизменяемым, пока он находится в статусе `draft`;
+- после запуска расчета или создания производной версии сценария ревизия сценария должна рассматриваться как неизменяемая;
 - если `forecast_start_date` и `forecast_end_date` не заданы явно пользователем, система должна назначать default horizon от даты запуска сценария до `31 декабря` следующего календарного года;
-- производные сценарии ссылаются на родителя, если это применимо.
+- производные сценарии ссылаются на родителя, если это применимо;
+- для `source_type = planner_manual_edit` ссылка на родительский сценарий обязательна;
+- если сценарий рассчитывается с GTM-входом, система может автоматически формировать связанный производный сценарий без GTM с именем `чистая База`;
+- для такого производного сценария `parent_scenario_id` указывает на исходный расчетный сценарий, а `metadata.scenario_role` должно иметь значение `pure_base`;
+- исходный сценарий с GTM может хранить в `metadata.pure_base_scenario_id` ссылку на автоматически сформированный связанный сценарий `чистая База`;
+- если сценарий собран по ветке `Загрузить существующий график КРС`, в `input_bindings.external_krs_schedule_dataset` должна присутствовать ссылка на dataset типа `external_krs_schedule`;
+- `input_bindings` описывают канонические привязки сценария к данным, а не временное состояние локального UI.
 
 ---
 
@@ -830,11 +855,18 @@
 
 - `revision_id: str`
 - `planner_version_id: str | None`
+- `version_name: str`
 - `parent_scenario_id: str`
 - `items: list[KrsScheduleItem]`
 - `edited_at: str`
 - `editor: str | None`
 - `metadata: dict[str, object] | None`
+
+### Инварианты
+
+- `parent_scenario_id` всегда указывает на сценарий, в контексте которого была создана revision;
+- `version_name` обязателен для отображения planner-side версии в `Module G`;
+- `PlannerScheduleRevision` является source of truth для ручной календарной правки, а не локальный UI-state `Module G`.
 
 ---
 
@@ -845,9 +877,16 @@
 ### Поля
 
 - `parent_scenario_id: str`
-- `schedule: KrsScheduleScenario`
+- `planner_revision_id: str | None`
+- `schedule: KrsScheduleScenario | None`
 - `recalculation_mode: str`
 - `metadata: dict[str, object] | None`
+
+### Инварианты
+
+- `RecalculationScenarioInput` может ссылаться либо на `planner_revision_id`, либо напрямую содержать `schedule`, если это оговорено в runtime flow;
+- в каноническом planner-side workflow `Module B` читает revision по `planner_revision_id` из `Module F`, а `Module G` лишь оркестрирует запуск пересчета;
+- хотя бы одно из полей `planner_revision_id` или `schedule` должно быть задано.
 
 ---
 
