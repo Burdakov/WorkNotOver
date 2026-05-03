@@ -439,6 +439,58 @@ select:disabled {
   margin-top: 14px;
 }
 
+.workflow-tree {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.workflow-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(35, 50, 68, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.workflow-item.ready {
+  border-color: rgba(31, 138, 112, 0.25);
+  background: linear-gradient(180deg, rgba(244, 253, 249, 0.96), rgba(255, 255, 255, 0.96));
+}
+
+.workflow-badge {
+  min-width: 42px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: #ecf1f6;
+  color: #496074;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.workflow-item.ready .workflow-badge {
+  background: #dff5ec;
+  color: #0f6d56;
+}
+
+.workflow-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.workflow-copy strong {
+  font-size: 14px;
+  color: #223244;
+}
+
+.workflow-copy span {
+  font-size: 12px;
+  color: #617488;
+}
+
 .info-cards {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

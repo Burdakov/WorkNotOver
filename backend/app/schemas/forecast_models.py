@@ -24,6 +24,64 @@ class ForecastCalculateRequest(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
+class ScenarioInputBindings(BaseModel):
+    wells: ForecastDatasetSelection | None = None
+    gtm: ForecastDatasetSelection | None = None
+    infrastructure: ForecastDatasetSelection | None = None
+    external_krs_schedule: ForecastDatasetSelection | None = None
+    manual_input_set_id: str | None = None
+
+
+class ScenarioUpsertRequest(BaseModel):
+    name: str
+    source_type: str = "uploaded_gtm"
+    parent_scenario_id: str | None = None
+    forecast_start_date: str | None = None
+    forecast_end_date: str | None = None
+    inputs: ScenarioInputBindings = Field(default_factory=ScenarioInputBindings)
+    metadata: dict[str, Any] | None = None
+
+
+class ScenarioContextResponse(BaseModel):
+    wells_dataset: DatasetReference | None = None
+    gtm_dataset: DatasetReference | None = None
+    infrastructure_dataset: DatasetReference | None = None
+    external_krs_schedule_dataset: DatasetReference | None = None
+    manual_input_set: ManualInputReference | None = None
+
+
+class ScenarioDetailResponse(BaseModel):
+    scenario: "ScenarioModelResponse"
+    context: ScenarioContextResponse
+    production_summary: dict[str, Any] | None = None
+    production_points: list[dict[str, Any]] = Field(default_factory=list)
+    wells: list[dict[str, Any]] = Field(default_factory=list)
+    source_payload: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+    result_created_at: str | None = None
+
+
+class ScenarioListItemResponse(BaseModel):
+    scenario_id: str
+    name: str
+    source_type: str
+    parent_scenario_id: str | None = None
+    forecast_start_date: str | None = None
+    forecast_end_date: str | None = None
+    created_at: str
+    status: str
+    metadata: dict[str, Any] | None = None
+    context: ScenarioContextResponse
+    latest_result_created_at: str | None = None
+    production_summary: dict[str, Any] | None = None
+
+
+class ScenarioRecalculateFromRevisionRequest(BaseModel):
+    revision_id: str
+    name: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
 class ProductionPoint(BaseModel):
     date: str
     oil_rate: float = 0.0
@@ -81,3 +139,6 @@ class ForecastCalculateResponse(BaseModel):
     production_points: list[ProductionPoint] = Field(default_factory=list)
     wells: list[WellForecastResult] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+ScenarioDetailResponse.model_rebuild()

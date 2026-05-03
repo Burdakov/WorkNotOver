@@ -74,3 +74,24 @@ class ImportedScheduleOpenResponse(BaseModel):
 
 class GenericRowPayload(BaseModel):
     data: dict[str, Any]
+
+
+class PlannerRevisionCreateRequest(BaseModel):
+    parent_scenario_id: str
+    version_name: str
+    items: list[ScheduleItem]
+    planner_version_id: str | None = None
+    editor: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class PlannerRevisionResponse(BaseModel):
+    revision_id: str
+    parent_scenario_id: str
+    version_name: str
+    planner_version_id: str | None = None
+    edited_at: str
+    editor: str | None = None
+    item_count: int = 0
+    metadata: dict[str, Any] | None = None
+    items: list[ScheduleItem]

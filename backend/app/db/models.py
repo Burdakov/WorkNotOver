@@ -107,3 +107,16 @@ class ScenarioResultModel(Base):
     metadata_json: Mapped[dict[str, object] | None] = mapped_column(JSON(), nullable=True)
 
     scenario: Mapped[ScenarioModel] = relationship(back_populates="results")
+
+
+class PlannerScheduleRevisionModel(Base):
+    __tablename__ = "planner_schedule_revisions"
+
+    revision_id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
+    planner_version_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    parent_scenario_id: Mapped[str] = mapped_column(String(64), index=True)
+    version_name: Mapped[str] = mapped_column(String(255))
+    edited_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow)
+    editor: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    items_json: Mapped[list[dict[str, object]]] = mapped_column(JSON())
+    metadata_json: Mapped[dict[str, object] | None] = mapped_column(JSON(), nullable=True)

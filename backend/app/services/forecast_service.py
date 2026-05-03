@@ -174,6 +174,7 @@ class ForecastService:
         gtm_payload: list[dict[str, Any]],
         manual_input_reference: ManualInputReference,
         manual_input_payload: dict[str, Any],
+        planner_revision_items: list[dict[str, Any]] | None = None,
     ) -> None:
         self.wells_reference = wells_reference
         self.wells_payload = wells_payload
@@ -181,6 +182,7 @@ class ForecastService:
         self.gtm_payload = gtm_payload
         self.manual_input_reference = manual_input_reference
         self.manual_input_payload = manual_input_payload
+        self.planner_revision_items = planner_revision_items or []
 
     def calculate(self, payload: ForecastCalculateRequest) -> ForecastCalculateResponse:
         start_day = _parse_iso_date(payload.forecast_start_date) or date.today()
@@ -203,8 +205,10 @@ class ForecastService:
             warnings=warnings,
         )
 
+        prepared_gtm_payload = self._apply_planner_revision(self.gtm_payload, self.planner_revision_items)
+
         events_by_well: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for event in self.gtm_payload:
+        for event in prepared_gtm_payload:
             well_id = str(event.get("well_id") or "").strip()
             if well_id:
                 events_by_well[well_id].append(event)
@@ -308,6 +312,39 @@ class ForecastService:
             wells=well_results,
             warnings=warnings,
         )
+
+    def _apply_planner_revision(
+        self,
+        gtm_payload: list[dict[str, Any]],
+        revision_items: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not revision_items:
+            return [dict(item) for item in gtm_payload]
+
+        revision_lookup: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+        for item in revision_items:
+            well_name = str(item.get("well") or item.get("well_name") or "").strip()
+            planned_work = str(item.get("planned_work") or "").strip()
+            if well_name and planned_work:
+                revision_lookup[(well_name, planned_work)].append(item)
+
+        revised_events: list[dict[str, Any]] = []
+        for event in gtm_payload:
+            revised = dict(event)
+            key = (str(event.get("well_name") or "").strip(), str(event.get("planned_work") or "").strip())
+            planned_items = revision_lookup.get(key) or []
+            if planned_items:
+                planner_item = planned_items.pop(0)
+                start_date = str(planner_item.get("start_date") or planner_item.get("planned_start_date") or "") or revised.get("candidate_start_date")
+                end_date = str(planner_item.get("end_date") or planner_item.get("planned_end_date") or "") or revised.get("candidate_end_date")
+                revised["candidate_start_date"] = start_date
+                revised["candidate_end_date"] = end_date
+                revised["duration_days"] = int(_coerce_float(planner_item.get("duration_days"), _coerce_float(revised.get("duration_days"))))
+                revised.setdefault("metadata", {})
+                if isinstance(revised["metadata"], dict):
+                    revised["metadata"]["planner_revision_event_id"] = planner_item.get("event_id")
+            revised_events.append(revised)
+        return revised_events
 
     def _extract_config_list(self, plural_key: str, legacy_key: str) -> list[dict[str, Any]]:
         value = self.manual_input_payload.get(plural_key)

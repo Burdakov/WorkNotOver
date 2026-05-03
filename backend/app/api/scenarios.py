@@ -1,0 +1,351 @@
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from app.db.session import SessionLocal
+from app.repositories.dataset_repository import DatasetRepository
+from app.repositories.manual_input_repository import ManualInputRepository
+from app.repositories.planner_revision_repository import PlannerRevisionRepository
+from app.repositories.scenario_repository import ScenarioRepository
+from app.schemas.common import DatasetReference, ManualInputReference
+from app.schemas.forecast_models import (
+    ForecastCalculateRequest,
+    ScenarioContextResponse,
+    ScenarioDetailResponse,
+    ScenarioInputBindings,
+    ScenarioListItemResponse,
+    ScenarioModelResponse,
+    ScenarioRecalculateFromRevisionRequest,
+    ScenarioUpsertRequest,
+)
+from app.schemas.schedule_models import ScheduleItem
+from app.services.forecast_service import ForecastService
+
+router = APIRouter(prefix="/api/scenarios", tags=["scenarios"])
+
+_SCENARIO_CONTEXT_KEY = "scenario_context"
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def _context_to_response(context: dict[str, Any] | None) -> ScenarioContextResponse:
+    context = context or {}
+    return ScenarioContextResponse(
+        wells_dataset=DatasetReference(**context["wells_dataset"]) if context.get("wells_dataset") else None,
+        gtm_dataset=DatasetReference(**context["gtm_dataset"]) if context.get("gtm_dataset") else None,
+        infrastructure_dataset=DatasetReference(**context["infrastructure_dataset"]) if context.get("infrastructure_dataset") else None,
+        external_krs_schedule_dataset=DatasetReference(**context["external_krs_schedule_dataset"]) if context.get("external_krs_schedule_dataset") else None,
+        manual_input_set=ManualInputReference(**context["manual_input_set"]) if context.get("manual_input_set") else None,
+    )
+
+
+def _extract_context(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(metadata, dict):
+        return {}
+    context = metadata.get(_SCENARIO_CONTEXT_KEY)
+    return context if isinstance(context, dict) else {}
+
+
+def _merge_metadata(
+    *,
+    existing_metadata: dict[str, Any] | None,
+    context: dict[str, Any],
+    patch_metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    merged = dict(existing_metadata or {})
+    if patch_metadata:
+        merged.update(patch_metadata)
+    merged[_SCENARIO_CONTEXT_KEY] = context
+    return merged
+
+
+def _resolve_dataset_reference(
+    db: Session,
+    selection,
+    *,
+    expected_type: str,
+) -> DatasetReference:
+    resolved = DatasetRepository(db).get_dataset_version(selection.dataset_id, selection.dataset_version_id)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail=f"Dataset '{expected_type}' не найден.")
+    dataset, version = resolved
+    if dataset.dataset_type != expected_type:
+        raise HTTPException(status_code=400, detail=f"Ожидался dataset типа '{expected_type}', получен '{dataset.dataset_type}'.")
+    return DatasetReference(
+        dataset_id=dataset.dataset_id,
+        dataset_version_id=version.dataset_version_id,
+        dataset_type=dataset.dataset_type,
+        name=dataset.name,
+        row_count=version.row_count,
+        created_at=dataset.created_at.isoformat(),
+        metadata=dataset.metadata_json,
+    )
+
+
+def _resolve_manual_input_reference(db: Session, manual_input_set_id: str) -> ManualInputReference:
+    item = ManualInputRepository(db).get_payload(manual_input_set_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="ManualInputSet не найден.")
+    return ManualInputReference(
+        manual_input_set_id=item.manual_input_set_id,
+        name=item.name,
+        created_at=item.created_at.isoformat(),
+        metadata=item.metadata_json,
+    )
+
+
+def _scenario_response(scenario) -> ScenarioModelResponse:
+    return ScenarioModelResponse(
+        scenario_id=scenario.scenario_id,
+        name=scenario.name,
+        source_type=scenario.source_type,
+        parent_scenario_id=scenario.parent_scenario_id,
+        forecast_start_date=scenario.forecast_start_date,
+        forecast_end_date=scenario.forecast_end_date,
+        created_at=scenario.created_at.isoformat(),
+        status=scenario.status,
+        metadata=scenario.metadata_json,
+    )
+
+
+def _scenario_detail_payload(scenario, result) -> ScenarioDetailResponse:
+    return ScenarioDetailResponse(
+        scenario=_scenario_response(scenario),
+        context=_context_to_response(_extract_context(scenario.metadata_json)),
+        production_summary=result.production_summary_json if result else None,
+        production_points=result.production_points_json if result and result.production_points_json else [],
+        wells=result.well_results_json if result and result.well_results_json else [],
+        source_payload=result.source_payload_json if result else None,
+        metadata=result.metadata_json if result else scenario.metadata_json,
+        result_created_at=result.created_at.isoformat() if result else None,
+    )
+
+
+def _resolve_payload_from_reference(db: Session, reference: DatasetReference, *, expected_type: str) -> list[dict[str, Any]]:
+    resolved = DatasetRepository(db).get_dataset_version(reference.dataset_id, reference.dataset_version_id)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail=f"Dataset '{expected_type}' не найден.")
+    dataset, version = resolved
+    if dataset.dataset_type != expected_type:
+        raise HTTPException(status_code=400, detail=f"Ожидался dataset типа '{expected_type}', получен '{dataset.dataset_type}'.")
+    payload = version.normalized_payload_json
+    if not isinstance(payload, list):
+        raise HTTPException(status_code=400, detail=f"Normalized payload dataset '{expected_type}' должен быть списком.")
+    return payload
+
+
+def _resolve_manual_input_payload(db: Session, reference: ManualInputReference) -> dict[str, Any]:
+    item = ManualInputRepository(db).get_payload(reference.manual_input_set_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="ManualInputSet не найден.")
+    return dict(item.payload_json or {})
+
+
+def _build_context_from_request(
+    db: Session,
+    *,
+    bindings: ScenarioInputBindings,
+    existing_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    context = dict(existing_context or {})
+    if bindings.wells is not None:
+        context["wells_dataset"] = _resolve_dataset_reference(db, bindings.wells, expected_type="wells").model_dump()
+    if bindings.gtm is not None:
+        context["gtm_dataset"] = _resolve_dataset_reference(db, bindings.gtm, expected_type="gtm").model_dump()
+    if bindings.infrastructure is not None:
+        context["infrastructure_dataset"] = _resolve_dataset_reference(db, bindings.infrastructure, expected_type="infrastructure").model_dump()
+    if bindings.external_krs_schedule is not None:
+        context["external_krs_schedule_dataset"] = _resolve_dataset_reference(
+            db,
+            bindings.external_krs_schedule,
+            expected_type="external_krs_schedule",
+        ).model_dump()
+    if bindings.manual_input_set_id is not None:
+        context["manual_input_set"] = _resolve_manual_input_reference(db, bindings.manual_input_set_id).model_dump()
+    return context
+
+
+def _calculate_for_scenario(
+    db: Session,
+    *,
+    scenario_id: str,
+    planner_revision_items: list[dict[str, Any]] | None = None,
+) -> ScenarioDetailResponse:
+    repo = ScenarioRepository(db)
+    scenario = repo.get_scenario(scenario_id)
+    if scenario is None:
+        raise HTTPException(status_code=404, detail="Сценарий не найден.")
+
+    context = _context_to_response(_extract_context(scenario.metadata_json))
+    if context.wells_dataset is None or context.gtm_dataset is None or context.manual_input_set is None:
+        raise HTTPException(status_code=400, detail="Для расчета сценария должны быть привязаны wells, gtm и ManualInputSet.")
+
+    wells_payload = _resolve_payload_from_reference(db, context.wells_dataset, expected_type="wells")
+    gtm_payload = _resolve_payload_from_reference(db, context.gtm_dataset, expected_type="gtm")
+    manual_input_payload = _resolve_manual_input_payload(db, context.manual_input_set)
+
+    service = ForecastService(
+        wells_reference=context.wells_dataset,
+        wells_payload=wells_payload,
+        gtm_reference=context.gtm_dataset,
+        gtm_payload=gtm_payload,
+        manual_input_reference=context.manual_input_set,
+        manual_input_payload=manual_input_payload,
+        planner_revision_items=planner_revision_items,
+    )
+    result = service.calculate(
+        ForecastCalculateRequest(
+            name=scenario.name,
+            wells={
+                "dataset_id": context.wells_dataset.dataset_id,
+                "dataset_version_id": context.wells_dataset.dataset_version_id,
+            },
+            gtm={
+                "dataset_id": context.gtm_dataset.dataset_id,
+                "dataset_version_id": context.gtm_dataset.dataset_version_id,
+            },
+            manual_input_set_id=context.manual_input_set.manual_input_set_id,
+            forecast_start_date=scenario.forecast_start_date,
+            forecast_end_date=scenario.forecast_end_date,
+            source_type=scenario.source_type,
+            parent_scenario_id=scenario.parent_scenario_id,
+            metadata=scenario.metadata_json,
+        )
+    )
+    repo.attach_result(
+        scenario_id=scenario_id,
+        production_summary=result.production_summary.model_dump(),
+        production_points=[item.model_dump() for item in result.production_points],
+        well_results=[item.model_dump() for item in result.wells],
+        source_payload={
+            "scenario_context": context.model_dump(),
+            "planner_revision_applied": bool(planner_revision_items),
+        },
+        metadata=scenario.metadata_json,
+    )
+    resolved = repo.get_scenario_with_latest_result(scenario_id)
+    if resolved is None:
+        raise HTTPException(status_code=500, detail="Не удалось прочитать рассчитанный сценарий.")
+    return _scenario_detail_payload(*resolved)
+
+
+@router.get("", response_model=list[ScenarioListItemResponse])
+def list_scenarios(db: Session = Depends(get_db)) -> list[ScenarioListItemResponse]:
+    items = []
+    for scenario, result in ScenarioRepository(db).list_scenarios():
+        items.append(
+            ScenarioListItemResponse(
+                scenario_id=scenario.scenario_id,
+                name=scenario.name,
+                source_type=scenario.source_type,
+                parent_scenario_id=scenario.parent_scenario_id,
+                forecast_start_date=scenario.forecast_start_date,
+                forecast_end_date=scenario.forecast_end_date,
+                created_at=scenario.created_at.isoformat(),
+                status=scenario.status,
+                metadata=scenario.metadata_json,
+                context=_context_to_response(_extract_context(scenario.metadata_json)),
+                latest_result_created_at=result.created_at.isoformat() if result else None,
+                production_summary=result.production_summary_json if result else None,
+            )
+        )
+    return items
+
+
+@router.post("", response_model=ScenarioModelResponse)
+def create_scenario(payload: ScenarioUpsertRequest, db: Session = Depends(get_db)) -> ScenarioModelResponse:
+    context = _build_context_from_request(db, bindings=payload.inputs, existing_context=None)
+    metadata = _merge_metadata(existing_metadata=None, context=context, patch_metadata=payload.metadata)
+    scenario = ScenarioRepository(db).create_scenario(
+        name=payload.name,
+        source_type=payload.source_type,
+        parent_scenario_id=payload.parent_scenario_id,
+        forecast_start_date=payload.forecast_start_date,
+        forecast_end_date=payload.forecast_end_date,
+        metadata=metadata,
+        status="draft",
+    )
+    return _scenario_response(scenario)
+
+
+@router.put("/{scenario_id}", response_model=ScenarioModelResponse)
+def update_scenario(scenario_id: str, payload: ScenarioUpsertRequest, db: Session = Depends(get_db)) -> ScenarioModelResponse:
+    repo = ScenarioRepository(db)
+    scenario = repo.get_scenario(scenario_id)
+    if scenario is None:
+        raise HTTPException(status_code=404, detail="Сценарий не найден.")
+    context = _build_context_from_request(db, bindings=payload.inputs, existing_context=_extract_context(scenario.metadata_json))
+    metadata = _merge_metadata(existing_metadata=scenario.metadata_json, context=context, patch_metadata=payload.metadata)
+    updated = repo.update_scenario(
+        scenario_id,
+        name=payload.name,
+        source_type=payload.source_type,
+        forecast_start_date=payload.forecast_start_date,
+        forecast_end_date=payload.forecast_end_date,
+        metadata=metadata,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Сценарий не найден.")
+    return _scenario_response(updated)
+
+
+@router.get("/{scenario_id}", response_model=ScenarioDetailResponse)
+def get_scenario(scenario_id: str, db: Session = Depends(get_db)) -> ScenarioDetailResponse:
+    resolved = ScenarioRepository(db).get_scenario_with_latest_result(scenario_id)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="Сценарий не найден.")
+    return _scenario_detail_payload(*resolved)
+
+
+@router.post("/{scenario_id}/calculate", response_model=ScenarioDetailResponse)
+def calculate_scenario(scenario_id: str, db: Session = Depends(get_db)) -> ScenarioDetailResponse:
+    return _calculate_for_scenario(db, scenario_id=scenario_id)
+
+
+@router.post("/{scenario_id}/from-planner-revision", response_model=ScenarioDetailResponse)
+def create_scenario_from_planner_revision(
+    scenario_id: str,
+    payload: ScenarioRecalculateFromRevisionRequest,
+    db: Session = Depends(get_db),
+) -> ScenarioDetailResponse:
+    repo = ScenarioRepository(db)
+    parent = repo.get_scenario(scenario_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="Родительский сценарий не найден.")
+
+    revision = PlannerRevisionRepository(db).get(payload.revision_id)
+    if revision is None:
+        raise HTTPException(status_code=404, detail="Planner revision не найден.")
+    if revision.parent_scenario_id != scenario_id:
+        raise HTTPException(status_code=400, detail="Planner revision не принадлежит активному сценарию.")
+
+    parent_context = _extract_context(parent.metadata_json)
+    child_metadata = _merge_metadata(
+        existing_metadata=parent.metadata_json,
+        context=parent_context,
+        patch_metadata={
+            **(payload.metadata or {}),
+            "planner_revision_id": revision.revision_id,
+            "planner_version_id": revision.planner_version_id,
+            "planner_version_name": revision.version_name,
+        },
+    )
+    child = repo.create_scenario(
+        name=payload.name or f"{parent.name} / {revision.version_name}",
+        source_type="planner_manual_edit",
+        parent_scenario_id=parent.scenario_id,
+        forecast_start_date=parent.forecast_start_date,
+        forecast_end_date=parent.forecast_end_date,
+        metadata=child_metadata,
+        status="draft",
+    )
+    return _calculate_for_scenario(db, scenario_id=child.scenario_id, planner_revision_items=revision.items_json)
