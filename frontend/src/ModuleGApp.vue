@@ -14,6 +14,11 @@ const PRODUCTION_TIME_MODES = [
   { key: 'month', label: 'Месяц' },
   { key: 'year', label: 'Год' },
 ]
+const PRODUCTION_METRICS = [
+  { key: 'oil', label: 'Нефть', unit: 'т' },
+  { key: 'liquid', label: 'Жидкость', unit: 'т' },
+  { key: 'gas', label: 'Газ', unit: 'м3' },
+]
 const DEFAULT_PLANNER_COLUMNS = {
   brigade: 'Бригада',
   area: 'Участок',
@@ -86,6 +91,47 @@ const MAPPING_LABELS = {
   capacity_water: 'Мощность по воде',
   connection_well: 'Связанная скважина',
   parent_object: 'Родительский объект',
+}
+const FRONTEND_MAPPING_HINTS = {
+  well: ['скв', 'скваж', 'well'],
+  area: ['участок', 'area'],
+  lu: ['участок недр', 'лу', 'lu'],
+  sloy: ['слой', 'пласт', 'sloy'],
+  well_pad: ['куст', 'wellpad', 'well_pad'],
+  brigade: ['бригада', 'brigade'],
+  fund_type: ['вид фонда', 'тип фонда', 'fund type'],
+  start_date: ['дата начала', 'начало', 'start'],
+  end_date: ['заверш', 'оконч', 'конец', 'end'],
+  planned_work: ['планируемый объем работ', 'планируемый объём работ', 'объем работ', 'объём работ', 'мероприят'],
+  increment: ['qн', 'прирост нефти', 'дебит нефти', 'oil increment'],
+  liquid_increment: ['прирост жидкости', 'прирост жидк', 'liquid increment', 'qж'],
+  gas_increment: ['прирост газа', 'дебит газа', 'gas increment', 'qг'],
+  gor_change: ['газовый фактор', 'gor', 'изменение gor'],
+  oil_rate: ['дебит нефти', 'oil rate', 'qн'],
+  gas_rate: ['дебит газа', 'gas rate', 'qг'],
+  liquid_rate: ['дебит жидкости', 'liquid rate', 'qж'],
+  watercut: ['обводнен', 'watercut'],
+  gor: ['газовый фактор', 'gor', 'гф'],
+  cumulative_oil: ['накоп', 'добыча нефти'],
+  cumulative_gas: ['накоп', 'добыча газа'],
+  niz: ['низ', 'извлекаемых запасов'],
+  gtm_type: ['тип гтм', 'gtm type', 'гтм'],
+  duration_days: ['длитель', 'продолжительность', 'duration'],
+  object_name: ['объект', 'наименование объекта'],
+  object_type: ['тип объекта'],
+  commissioning_date: ['дата ввода', 'ввод'],
+  capacity_oil: ['мощн', 'нефть'],
+  capacity_gas: ['мощн', 'газ'],
+  capacity_liquid: ['мощн', 'жидк'],
+  capacity_water: ['мощн', 'вода'],
+  connection_well: ['связанная скважина', 'скв'],
+  parent_object: ['родител', 'parent'],
+}
+const REQUIRED_MAPPING_FIELDS = {
+  wells: ['well', 'liquid_rate'],
+  gtm: ['well', 'planned_work', 'start_date'],
+  infrastructure: ['object_name', 'object_type'],
+  external_krs_schedule: ['brigade', 'well', 'start_date', 'end_date', 'planned_work'],
 }
 
 const parseIsoDate = (value) => {
@@ -185,6 +231,21 @@ const formatProductionBucketLabel = (value, mode) => {
   return formatDateCell(value)
 }
 
+const productionMetricField = (metric) => ({
+  oil: 'oil_rate',
+  liquid: 'liquid_rate',
+  gas: 'gas_rate',
+}[metric] || 'oil_rate')
+
+const productionMetricTotalField = (metric) => ({
+  oil: 'total_oil',
+  liquid: 'total_liquid',
+  gas: 'total_gas',
+}[metric] || 'total_oil')
+
+const getProductionPointMetricValue = (point, metric) => Number(point?.[productionMetricField(metric)] || 0)
+const getProductionWellMetricTotal = (well, metric) => Number(well?.[productionMetricTotalField(metric)] || 0)
+
 const formatCompactNumber = (value) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Number(value || 0))
 const formatIncrement = (value) => (value && value > 0 ? Number(value).toFixed(1) : '0')
 const wellPrefix = (value) => String(value || '').trim().slice(0, 2).toUpperCase() || 'NA'
@@ -216,9 +277,17 @@ const createReservoirConfig = () => ({
   new_wells_decline_rows: buildDeclineRows('new'),
 })
 const createEconomicsRow = () => ({ id: uniqueId('economics'), lu_id: '', net_back: '' })
+const createEconomicsCostRow = () => ({ id: uniqueId('economics-cost'), gtm_type: '', cost: '' })
 const createFailureRow = () => ({ id: uniqueId('failure'), scope_type: 'LU', lu_id: '', sloy_id: '', coefficient: '' })
 const createDurationRow = () => ({ id: uniqueId('duration'), gtm_type: '', duration_days: '' })
 const createBrigadeRow = () => ({ id: uniqueId('brigade'), lu_id: '', month_date: monthStartIso(isoToday()), brigade_count: '' })
+const hasFilledValue = (value) => value !== '' && value !== null && value !== undefined
+const hasFilledText = (value) => String(value ?? '').trim() !== ''
+const resolveTouchedStatus = (entries, isTouched, isValid) => {
+  const touchedEntries = entries.filter((entry) => isTouched(entry))
+  if (!touchedEntries.length) return 'empty'
+  return touchedEntries.every((entry) => isValid(entry)) ? 'ready' : 'partial'
+}
 const buildAreaPath = (series, topKey, bottomKey, maxValue) => {
   if (!series.length || maxValue <= 0) return ''
   const width = PRODUCTION_CHART_WIDTH
@@ -259,6 +328,11 @@ const scenarioHasPlannerVersion = (scenario) => Boolean(
   || scenario?.metadata?.planner_revision_id
   || scenario?.metadata?.planner_version_id,
 )
+const normalizeHeaderText = (value) => String(value || '')
+  .toLowerCase()
+  .replaceAll('ё', 'е')
+  .replace(/[^a-zа-я0-9]+/gi, ' ')
+  .trim()
 
 const request = async (path, options = {}) => {
   const response = await fetch(`${API_BASE}${path}`, options)
@@ -276,7 +350,7 @@ const request = async (path, options = {}) => {
 }
 
 const sidebarCollapsed = ref(false)
-const currentSection = ref('inputs')
+const currentSection = ref('scenarios')
 const currentInputsTab = ref('upload')
 const loading = ref(false)
 const message = ref('')
@@ -301,6 +375,8 @@ const targetDatasetId = ref('')
 const lastNormalizedDatasetReference = ref(null)
 const datasetDetails = reactive({})
 const datasetDetailKey = ref('')
+const uploadInputRef = ref(null)
+const showMappingModal = ref(false)
 
 const selectedDatasets = reactive({
   wells: null,
@@ -356,6 +432,7 @@ const selectedManualInputSetId = ref('')
 const reservoirConfigs = ref([createReservoirConfig()])
 const activeReservoirConfigId = ref(reservoirConfigs.value[0].config_id)
 const economicsRows = ref([createEconomicsRow()])
+const economicsCostRows = ref([createEconomicsCostRow()])
 const economicsNotes = ref('')
 const brigadeCapacityRows = ref([])
 const brigadeCapacitySeedLu = ref('')
@@ -375,6 +452,13 @@ const optimizerForm = reactive({
   heuristic_mode: 'basic',
   notes: '',
 })
+const activeCanvasNode = ref('scenario')
+const infrastructureMetric = ref('liquid')
+const selectedInfrastructureRowKey = ref('infra:total')
+const krsInspectorTab = ref('brigades')
+const expandedWellsKeys = ref([])
+const expandedGtmKeys = ref([])
+const expandedInfrastructureKeys = ref([])
 
 const selectedScenarioId = ref('')
 const scenarioSourceMode = ref('new_krs')
@@ -383,11 +467,14 @@ const pureBaseScenarioDetail = ref(null)
 const expandedProductionKeys = ref([])
 const selectedProductionKeys = ref([])
 const productionTimeMode = ref('month')
+const productionMetric = ref('oil')
 const hoveredProductionBucketDate = ref('')
 
 const plannerDatasetSelectionKey = ref('')
 const plannerDatasetReference = ref(null)
 const plannerVersionName = ref('')
+const plannerRevisions = ref([])
+const selectedPlannerRevisionId = ref('')
 const versions = ref([])
 const activeVersionId = ref('base')
 const plannerColumns = reactive({ ...DEFAULT_PLANNER_COLUMNS })
@@ -402,6 +489,7 @@ const selectedWorkTypes = ref([])
 
 const sourceDatasetOptions = computed(() => datasets.value.filter((item) => item.dataset_reference.dataset_type === selectedUploadSourceKind.value))
 const availableColumns = computed(() => inputFile.value?.columns_info || [])
+const availableColumnNames = computed(() => availableColumns.value.map((column) => column.name))
 const previewColumns = computed(() => Object.keys(inputFile.value?.preview?.[0] || {}))
 const datasetTypes = computed(() => {
   const groups = { wells: [], gtm: [], infrastructure: [], external_krs_schedule: [] }
@@ -412,16 +500,121 @@ const datasetTypes = computed(() => {
   return groups
 })
 const selectedDatasetDetail = computed(() => datasetDetails[datasetDetailKey.value] || null)
+const requiredMappingFields = computed(() => new Set(REQUIRED_MAPPING_FIELDS[selectedUploadSourceKind.value] || []))
+const mappingFieldsOrdered = computed(() => {
+  const fields = SOURCE_KIND_META[selectedUploadSourceKind.value]?.fields || []
+  return [...fields].sort((left, right) => {
+    const leftRequired = requiredMappingFields.value.has(left)
+    const rightRequired = requiredMappingFields.value.has(right)
+    if (leftRequired === rightRequired) return 0
+    return leftRequired ? -1 : 1
+  })
+})
+const mappingSuggestionRows = computed(() => mappingFieldsOrdered.value.map((fieldName) => ({
+  fieldName,
+  label: MAPPING_LABELS[fieldName],
+  required: requiredMappingFields.value.has(fieldName),
+  selectedColumn: normalizeColumns[fieldName],
+})))
 const activeReservoirConfig = computed(() => reservoirConfigs.value.find((item) => item.config_id === activeReservoirConfigId.value) || reservoirConfigs.value[0] || null)
+const isPureBaseScenarioRecord = (scenario) => scenario?.metadata?.scenario_role === 'pure_base'
 const groupedScenarios = computed(() => [...scenarios.value].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')))
-const selectedScenarioSummary = computed(() => groupedScenarios.value.find((item) => item.scenario_id === selectedScenarioId.value) || null)
+const userVisibleScenarios = computed(() => groupedScenarios.value.filter((item) => !isPureBaseScenarioRecord(item)))
+const selectedScenarioSummary = computed(() => userVisibleScenarios.value.find((item) => item.scenario_id === selectedScenarioId.value) || null)
 const selectedManualInputSetSummary = computed(() => manualInputSets.value.find((item) => item.reference.manual_input_set_id === selectedManualInputSetId.value) || null)
+const isPlannerDerivedScenario = computed(() => Boolean(
+  selectedScenarioSummary.value?.source_type === 'planner_manual_edit'
+  || selectedScenarioSummary.value?.metadata?.planner_revision_id
+))
+const plannerRevisionSourceScenarioId = computed(() => selectedScenarioSummary.value?.parent_scenario_id || selectedScenarioId.value || '')
+const scenarioFlowMode = computed(() => {
+  if (scenarioSourceMode.value === 'planner') return 'planner'
+  if (isPlannerDerivedScenario.value) return 'planner'
+  return scenarioSourceMode.value === 'existing_krs' ? 'external' : 'generated'
+})
+const scenarioFlowModeLabel = computed(() => {
+  if (scenarioFlowMode.value === 'planner') return 'Полученный из Planner'
+  if (scenarioFlowMode.value === 'external') return 'Внешний график'
+  return 'Сформировать график'
+})
+const sourceFlowReady = computed(() => ({
+  external: Boolean(selectedDatasets.external_krs_schedule),
+  generated: scenarioFlowMode.value === 'generated',
+  planner: isPlannerDerivedScenario.value || plannerRevisions.value.length > 0,
+}))
+const selectedPlannerRevision = computed(() => (
+  plannerRevisions.value.find((item) => item.revision_id === selectedPlannerRevisionId.value) || null
+))
+const derivedScenarioForSelectedRevision = computed(() => {
+  if (!selectedPlannerRevisionId.value) return null
+  return userVisibleScenarios.value.find((item) => item.metadata?.planner_revision_id === selectedPlannerRevisionId.value) || null
+})
+const plannerDerivedScenarioMap = computed(() => Object.fromEntries(
+  userVisibleScenarios.value
+    .filter((item) => item.metadata?.planner_revision_id)
+    .map((item) => [item.metadata.planner_revision_id, item]),
+))
 const scenarioContextStatus = computed(() => ({
   wells: Boolean(selectedDatasets.wells),
   gtm: Boolean(selectedDatasets.gtm),
   infrastructure: Boolean(selectedDatasets.infrastructure),
   manual_input: Boolean(selectedManualInputSetId.value),
-  external_krs_schedule: scenarioSourceMode.value === 'existing_krs' ? Boolean(selectedDatasets.external_krs_schedule) : true,
+  external_krs_schedule: scenarioFlowMode.value === 'external' ? Boolean(selectedDatasets.external_krs_schedule) : true,
+}))
+const reservoirInputStatus = computed(() => resolveTouchedStatus(
+  reservoirConfigs.value,
+  (config) => Boolean(
+    hasFilledText(config.lu_id)
+    || hasFilledText(config.sloy_id)
+    || (config.displacement_rows || []).some((row) => hasFilledValue(row.NIZ))
+  ),
+  (config) => Boolean(
+    (hasFilledText(config.lu_id) || hasFilledText(config.sloy_id))
+    && (config.displacement_rows || []).some((row) => hasFilledValue(row.NIZ))
+  ),
+))
+const economicsInputStatus = computed(() => {
+  const rowStatus = resolveTouchedStatus(
+    economicsRows.value,
+    (row) => hasFilledText(row.lu_id) || hasFilledValue(row.net_back),
+    (row) => hasFilledText(row.lu_id) && hasFilledValue(row.net_back),
+  )
+  const costStatus = resolveTouchedStatus(
+    economicsCostRows.value,
+    (row) => hasFilledText(row.gtm_type) || hasFilledValue(row.cost),
+    (row) => hasFilledText(row.gtm_type) && hasFilledValue(row.cost),
+  )
+  if (rowStatus === 'partial' || costStatus === 'partial') return 'partial'
+  if (rowStatus === 'ready' || costStatus === 'ready') return 'ready'
+  return 'empty'
+})
+const krsInputStatus = computed(() => {
+  const brigadeStatus = resolveTouchedStatus(
+    brigadeCapacityRows.value,
+    (row) => hasFilledText(row.lu_id) || hasFilledValue(row.brigade_count),
+    (row) => hasFilledText(row.lu_id) && hasFilledText(row.month_date) && hasFilledValue(row.brigade_count),
+  )
+  const failureStatus = resolveTouchedStatus(
+    failureRows.value,
+    (row) => hasFilledValue(row.coefficient) || hasFilledText(row.lu_id) || hasFilledText(row.sloy_id),
+    (row) => hasFilledValue(row.coefficient) && (row.scope_type === 'SLOY' ? hasFilledText(row.sloy_id) : hasFilledText(row.lu_id)),
+  )
+  const durationStatus = resolveTouchedStatus(
+    durationRows.value,
+    (row) => hasFilledText(row.gtm_type) || hasFilledValue(row.duration_days),
+    (row) => hasFilledText(row.gtm_type) && hasFilledValue(row.duration_days),
+  )
+  if (brigadeStatus === 'partial' || failureStatus === 'partial' || durationStatus === 'partial') return 'partial'
+  if (brigadeStatus === 'ready' || failureStatus === 'ready' || durationStatus === 'ready') return 'ready'
+  return 'empty'
+})
+const inputNodeStatuses = computed(() => ({
+  wells: scenarioContextStatus.value.wells ? 'ready' : 'empty',
+  gtm: scenarioContextStatus.value.gtm ? 'ready' : 'empty',
+  infrastructure: scenarioContextStatus.value.infrastructure ? 'ready' : 'empty',
+  reservoir: reservoirInputStatus.value,
+  economics: economicsInputStatus.value,
+  krs: krsInputStatus.value,
 }))
 const canCalculateScenario = computed(() => Boolean(
   selectedScenarioId.value
@@ -430,20 +623,46 @@ const canCalculateScenario = computed(() => Boolean(
   && scenarioContextStatus.value.manual_input
   && scenarioContextStatus.value.external_krs_schedule,
 ))
-const workflowSteps = computed(() => {
+const scenarioReadiness = computed(() => {
   const selectedScenario = selectedScenarioSummary.value
   const hasScenario = Boolean(selectedScenarioId.value)
-  const hasSource = scenarioSourceMode.value === 'existing_krs'
+  const hasSource = scenarioFlowMode.value === 'external'
     ? Boolean(selectedDatasets.external_krs_schedule)
-    : true
+    : scenarioFlowMode.value === 'planner'
+      ? (isPlannerDerivedScenario.value || plannerRevisions.value.length > 0)
+      : true
   const hasInputs = Boolean(
     selectedDatasets.wells
     && selectedDatasets.gtm
     && selectedManualInputSetId.value
-    && (scenarioSourceMode.value === 'new_krs' || selectedDatasets.external_krs_schedule),
+    && (scenarioFlowMode.value !== 'external' || selectedDatasets.external_krs_schedule),
   )
   const hasResult = Boolean(scenarioDetail.value?.production_summary)
-  const isPlannerDerived = selectedScenario?.source_type === 'planner_manual_edit'
+  const isPlannerDerived = isPlannerDerivedScenario.value
+  const hasPlannerVersion = Boolean(activeVersion.value)
+  const hasDerivedScenario = isPlannerDerived || userVisibleScenarios.value.some((item) => (
+    item.parent_scenario_id === selectedScenarioId.value && item.source_type === 'planner_manual_edit'
+  ))
+  return {
+    hasScenario,
+    hasSource,
+    hasInputs,
+    hasResult,
+    isPlannerDerived,
+    hasPlannerVersion,
+    hasDerivedScenario,
+  }
+})
+const workflowSteps = computed(() => {
+  const selectedScenario = selectedScenarioSummary.value
+  const {
+    hasScenario,
+    hasSource,
+    hasInputs,
+    hasResult,
+    isPlannerDerived,
+    hasPlannerVersion,
+  } = scenarioReadiness.value
   return [
     {
       key: 'scenario',
@@ -454,14 +673,16 @@ const workflowSteps = computed(() => {
     {
       key: 'krs-source',
       label: '2. Источник графика КРС',
-      description: scenarioSourceMode.value === 'existing_krs'
-        ? (selectedDatasets.external_krs_schedule?.name || 'Нужно привязать imported KRS dataset.')
-        : 'График будет сформирован в расчетно-планировочном контуре.',
+      description: scenarioFlowMode.value === 'planner'
+        ? 'Источник графика получен из Planner revision.'
+        : scenarioFlowMode.value === 'external'
+          ? (selectedDatasets.external_krs_schedule?.name || 'Нужно привязать imported KRS dataset.')
+          : 'График будет сформирован в расчетно-оптимизационном контуре.',
       ready: hasSource,
     },
     {
       key: 'inputs',
-      label: '3. Исходные данные',
+      label: '3. Входы сценария',
       description: hasInputs ? 'Wells, GTM и ManualInputSet привязаны.' : 'Нужно привязать Wells, GTM и ManualInputSet.',
       ready: hasInputs,
     },
@@ -477,19 +698,19 @@ const workflowSteps = computed(() => {
       description: isPlannerDerived
         ? 'Текущий сценарий создан автоматически из Planner revision.'
         : (activeVersion.value ? 'В Planner есть активная версия графика.' : 'Planner version пока не опубликована в сценарный поток.'),
-      ready: isPlannerDerived || Boolean(activeVersion.value),
+      ready: isPlannerDerived || hasPlannerVersion,
     },
   ]
 })
 const pageTitle = computed(() => {
   if (currentSection.value === 'planner') return 'Планировщик КРС'
   if (currentSection.value === 'production') return 'Добыча'
-  return 'Исходные данные'
+  return 'Сценарии'
 })
 const pageSubtitle = computed(() => {
   if (currentSection.value === 'planner') return 'Отдельный модуль Planner. Открывает импортированные графики КРС, ведет версии и выгружает измененный план.'
   if (currentSection.value === 'production') return 'Просмотр сохраненных сценариев Module B с накопительной диаграммой нефти и иерархической фильтрацией по LU, SLOY, кусту и скважине.'
-  return 'Сценарный контур Module G: загрузка datasets, ручные вводные, расчетный горизонт и запуск Module B.'
+  return 'Scenario-first workspace: сценарный контекст, входные datasets, manual inputs, запуск Module B и подготовка ядра Module D.'
 })
 const activeVersion = computed(() => versions.value.find((version) => version.id === activeVersionId.value) || versions.value[0] || null)
 const activeItems = computed(() => activeVersion.value?.items || [])
@@ -705,8 +926,321 @@ const sloyOptions = computed(() => {
   return [...values].sort((a, b) => a.localeCompare(b, 'ru'))
 })
 
+const datasetRowsFromReference = (reference) => {
+  if (!reference) return []
+  const payload = datasetDetails[datasetReferenceKey(reference)]?.normalized_payload
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload?.items)) return payload.items
+  if (Array.isArray(payload?.schedule?.items)) return payload.schedule.items
+  return []
+}
+
+const pickRowValue = (row, keys) => {
+  for (const key of keys) {
+    const value = row?.[key]
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      return String(value)
+    }
+  }
+  return ''
+}
+
+const pickNumberValue = (row, keys) => {
+  for (const key of keys) {
+    const value = row?.[key]
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      const parsed = Number(value)
+      if (!Number.isNaN(parsed)) return parsed
+    }
+  }
+  return 0
+}
+
+const buildVisibleHierarchyRows = (rows, expandedKeys) => {
+  const rowMap = new Map(rows.map((row) => [row.key, row]))
+  const expanded = new Set(expandedKeys)
+  return rows.filter((row) => {
+    let parentKey = row.parentKey
+    while (parentKey) {
+      if (!expanded.has(parentKey)) return false
+      parentKey = rowMap.get(parentKey)?.parentKey
+    }
+    return true
+  })
+}
+
+const buildGroupedHierarchyRows = (rows, metricBuilder) => {
+  const totals = metricBuilder()
+  const luMap = new Map()
+  rows.forEach((row) => {
+    const luId = pickRowValue(row, ['lu_id', 'lu']) || 'Без LU'
+    const padId = pickRowValue(row, ['well_pad_id', 'well_pad']) || 'Без куста'
+    const wellId = pickRowValue(row, ['well_id', 'well', 'connection_well']) || 'Без скважины'
+    if (!luMap.has(luId)) {
+      luMap.set(luId, { key: `lu:${luId}`, depth: 1, label: luId, metrics: metricBuilder(), children: new Map() })
+    }
+    const luNode = luMap.get(luId)
+    if (!luNode.children.has(padId)) {
+      luNode.children.set(padId, { key: `pad:${luId}:${padId}`, depth: 2, label: padId, metrics: metricBuilder(), children: new Map() })
+    }
+    const padNode = luNode.children.get(padId)
+    if (!padNode.children.has(wellId)) {
+      padNode.children.set(wellId, { key: `well:${luId}:${padId}:${wellId}`, depth: 3, label: wellId, metrics: metricBuilder(), children: null })
+    }
+    const wellNode = padNode.children.get(wellId)
+    const rowMetrics = metricBuilder(row)
+    Object.keys(rowMetrics).forEach((key) => {
+      totals[key] += rowMetrics[key]
+      luNode.metrics[key] += rowMetrics[key]
+      padNode.metrics[key] += rowMetrics[key]
+      wellNode.metrics[key] += rowMetrics[key]
+    })
+  })
+  const result = [{ key: 'total', depth: 0, label: 'Итого', metrics: totals, nodeType: 'total', parentKey: null, children: [] }]
+  ;[...luMap.values()]
+    .sort((left, right) => left.label.localeCompare(right.label, 'ru'))
+    .forEach((luNode) => {
+      const padKeys = [...luNode.children.values()].map((padNode) => padNode.key)
+      result.push({ key: luNode.key, depth: luNode.depth, label: luNode.label, metrics: luNode.metrics, nodeType: 'lu', parentKey: 'total', children: padKeys })
+      ;[...luNode.children.values()]
+        .sort((left, right) => left.label.localeCompare(right.label, 'ru'))
+        .forEach((padNode) => {
+          const wellKeys = [...padNode.children.values()].map((wellNode) => wellNode.key)
+          result.push({ key: padNode.key, depth: padNode.depth, label: padNode.label, metrics: padNode.metrics, nodeType: 'pad', parentKey: luNode.key, children: wellKeys })
+          ;[...padNode.children.values()]
+            .sort((left, right) => left.label.localeCompare(right.label, 'ru'))
+            .forEach((wellNode) => {
+              result.push({ key: wellNode.key, depth: wellNode.depth, label: wellNode.label, metrics: wellNode.metrics, nodeType: 'well', parentKey: padNode.key, children: [] })
+            })
+        })
+    })
+  result[0].children = result.filter((row) => row.parentKey === 'total').map((row) => row.key)
+  return result
+}
+
+const wellsDatasetRows = computed(() => datasetRowsFromReference(selectedDatasets.wells))
+const gtmDatasetRows = computed(() => datasetRowsFromReference(selectedDatasets.gtm))
+const infrastructureDatasetRows = computed(() => datasetRowsFromReference(selectedDatasets.infrastructure))
+
+const wellsHierarchyRows = computed(() => buildGroupedHierarchyRows(
+  wellsDatasetRows.value,
+  (row) => row
+    ? { count: 1, oil: pickNumberValue(row, ['current_oil_rate', 'oil_rate']), liquid: pickNumberValue(row, ['current_liquid_rate', 'liquid_rate']), gas: pickNumberValue(row, ['current_gas_rate', 'gas_rate']) }
+    : { count: 0, oil: 0, liquid: 0, gas: 0 },
+))
+const visibleWellsHierarchyRows = computed(() => buildVisibleHierarchyRows(wellsHierarchyRows.value, expandedWellsKeys.value))
+
+const gtmHierarchyRows = computed(() => buildGroupedHierarchyRows(
+  gtmDatasetRows.value,
+  (row) => row
+    ? {
+      count: 1,
+      oil: pickNumberValue(row, ['oil_increment', 'expected_oil_increment', 'increment']),
+      liquid: pickNumberValue(row, ['liquid_increment', 'expected_liquid_increment']),
+      gas: pickNumberValue(row, ['gas_increment', 'expected_gas_increment']),
+    }
+    : { count: 0, oil: 0, liquid: 0, gas: 0 },
+))
+const visibleGtmHierarchyRows = computed(() => buildVisibleHierarchyRows(gtmHierarchyRows.value, expandedGtmKeys.value))
+
+const reservoirChartPoints = computed(() => {
+  const config = activeReservoirConfig.value
+  if (!config) return []
+  return config.displacement_rows
+    .filter((row) => row.NIZ !== '' && row.NIZ !== null && row.NIZ !== undefined)
+    .map((row) => ({ watercut: Number(row.watercut), NIZ: Number(row.NIZ) }))
+    .filter((row) => !Number.isNaN(row.NIZ))
+})
+
+const reservoirChartMax = computed(() => Math.max(...reservoirChartPoints.value.map((item) => item.NIZ), 1))
+const reservoirChartPath = computed(() => {
+  if (!reservoirChartPoints.value.length) return ''
+  return reservoirChartPoints.value
+    .map((item, index) => {
+      const x = reservoirChartPoints.value.length === 1 ? 8 : 8 + (index / (reservoirChartPoints.value.length - 1)) * 224
+      const y = 92 - (item.NIZ / reservoirChartMax.value) * 76
+      return `${index === 0 ? 'M' : 'L'} ${x} ${y}`
+    })
+    .join(' ')
+})
+
+const buildMiniSeriesPath = (points, valueKey, width = 224, height = 96, leftPad = 8, bottomPad = 12) => {
+  if (!points.length) return ''
+  const maxValue = Math.max(...points.map((point) => Number(point[valueKey] || 0)), 1)
+  return points
+    .map((point, index) => {
+      const x = points.length === 1 ? leftPad : leftPad + (index / (points.length - 1)) * (width - leftPad * 2)
+      const y = height - bottomPad - ((Number(point[valueKey] || 0) / maxValue) * (height - bottomPad - 8))
+      return `${index === 0 ? 'M' : 'L'} ${x} ${y}`
+    })
+    .join(' ')
+}
+
+const baseDeclineChartPoints = computed(() => (activeReservoirConfig.value?.base_decline_rows || []).map((row) => ({
+  month_index: row.month_index,
+  liquid_decline_factor: Number(row.liquid_decline_factor || 0),
+})))
+const newWellsDeclineChartPoints = computed(() => (activeReservoirConfig.value?.new_wells_decline_rows || []).map((row) => ({
+  month_index: row.month_index,
+  liquid_decline_factor: Number(row.liquid_decline_factor || 0),
+})))
+const baseDeclineChartPath = computed(() => buildMiniSeriesPath(baseDeclineChartPoints.value, 'liquid_decline_factor'))
+const newWellsDeclineChartPath = computed(() => buildMiniSeriesPath(newWellsDeclineChartPoints.value, 'liquid_decline_factor'))
+
+const infrastructureTreeRows = computed(() => {
+  const objects = new Map()
+  const metricFromRow = (row) => ({
+    oil: pickNumberValue(row, ['capacity_oil']),
+    liquid: pickNumberValue(row, ['capacity_liquid']),
+    gas: pickNumberValue(row, ['capacity_gas']),
+  })
+  infrastructureDatasetRows.value.forEach((row) => {
+    const objectName = pickRowValue(row, ['object_name'])
+    if (!objectName) return
+    if (!objects.has(objectName)) {
+      objects.set(objectName, {
+        key: `object:${objectName}`,
+        name: objectName,
+        type: pickRowValue(row, ['object_type']) || 'Объект',
+        parent: pickRowValue(row, ['parent_object']),
+        metrics: metricFromRow(row),
+        children: [],
+        pads: new Map(),
+      })
+    }
+    const node = objects.get(objectName)
+    const padId = pickRowValue(row, ['well_pad_id', 'well_pad'])
+    const wellId = pickRowValue(row, ['connection_well', 'well_id', 'well'])
+    if (padId) {
+      if (!node.pads.has(padId)) {
+        node.pads.set(padId, { key: `pad:${objectName}:${padId}`, name: padId, wells: new Set(), metrics: { oil: 0, liquid: 0, gas: 0 } })
+      }
+      const pad = node.pads.get(padId)
+      if (wellId) pad.wells.add(wellId)
+    }
+  })
+
+  const rootsByType = new Map()
+  objects.forEach((node) => {
+    if (node.parent && objects.has(node.parent)) {
+      objects.get(node.parent).children.push(node)
+      return
+    }
+    if (!rootsByType.has(node.type)) rootsByType.set(node.type, [])
+    rootsByType.get(node.type).push(node)
+  })
+
+  const total = { oil: 0, liquid: 0, gas: 0 }
+  const visit = (node, depth) => {
+    const childMetrics = { ...node.metrics }
+    const childRows = []
+    node.children
+      .sort((left, right) => left.name.localeCompare(right.name, 'ru'))
+      .forEach((child) => {
+        const { metrics, rows } = visit(child, depth + 1)
+        childMetrics.oil += metrics.oil
+        childMetrics.liquid += metrics.liquid
+        childMetrics.gas += metrics.gas
+        childRows.push(...rows)
+      })
+    const rows = [{
+      key: node.key,
+      depth,
+      label: node.name,
+      nodeType: 'object',
+      parentKey: node.parent ? `object:${node.parent}` : `type:${node.type}`,
+      children: node.children.map((child) => child.key),
+      metrics: childMetrics,
+    }]
+    rows.push(...childRows)
+    ;[...node.pads.values()]
+      .sort((left, right) => left.name.localeCompare(right.name, 'ru'))
+      .forEach((pad) => {
+        rows[0].children.push(pad.key)
+        rows.push({ key: pad.key, depth: depth + 1, label: pad.name, nodeType: 'pad', parentKey: node.key, children: [], metrics: childMetrics })
+        ;[...pad.wells.values()].sort((left, right) => left.localeCompare(right, 'ru')).forEach((well) => {
+          const wellKey = `${pad.key}:${well}`
+          rows.find((row) => row.key === pad.key)?.children.push(wellKey)
+          rows.push({ key: wellKey, depth: depth + 2, label: well, nodeType: 'well', parentKey: pad.key, children: [], metrics: childMetrics })
+        })
+      })
+    return { metrics: childMetrics, rows }
+  }
+
+  const rows = [{ key: 'infra:total', depth: 0, label: 'Итого', nodeType: 'total', parentKey: null, children: [], metrics: total }]
+  rootsByType.forEach((nodes, type) => {
+    const typeMetrics = { oil: 0, liquid: 0, gas: 0 }
+    const typeRows = []
+    nodes
+      .sort((left, right) => left.name.localeCompare(right.name, 'ru'))
+      .forEach((node) => {
+        const { metrics, rows: objectRows } = visit(node, 2)
+        typeMetrics.oil += metrics.oil
+        typeMetrics.liquid += metrics.liquid
+        typeMetrics.gas += metrics.gas
+        typeRows.push(...objectRows)
+    })
+    total.oil += typeMetrics.oil
+    total.liquid += typeMetrics.liquid
+    total.gas += typeMetrics.gas
+    const typeKey = `type:${type}`
+    rows[0].children.push(typeKey)
+    rows.push({ key: typeKey, depth: 1, label: type, nodeType: 'type', parentKey: 'infra:total', children: nodes.map((node) => node.key), metrics: typeMetrics })
+    rows.push(...typeRows)
+  })
+  rows[0] = { key: 'infra:total', depth: 0, label: 'Итого', nodeType: 'total', parentKey: null, children: rows[0].children, metrics: total }
+  return rows
+})
+const visibleInfrastructureTreeRows = computed(() => buildVisibleHierarchyRows(infrastructureTreeRows.value, expandedInfrastructureKeys.value))
+
+const selectedInfrastructureRow = computed(() => (
+  infrastructureTreeRows.value.find((row) => row.key === selectedInfrastructureRowKey.value)
+  || infrastructureTreeRows.value[0]
+  || null
+))
+
+const nodeInspectorTitle = computed(() => {
+  switch (activeCanvasNode.value) {
+    case 'scenario': return scenarioFlowMode.value === 'external' ? 'Внешний график КРС' : 'Сценарий'
+    case 'wells': return 'Wells'
+    case 'gtm': return 'ГТМ'
+    case 'infrastructure': return 'Infrastructure'
+    case 'reservoir': return 'Характеристика вытеснения'
+    case 'economics': return 'Экономика'
+    case 'krs': return 'KRS ограничения'
+    case 'optimizer': return 'Параметры оптимизатора'
+    case 'forecast': return 'Forecast'
+    default: return 'Сценарий'
+  }
+})
+
 const productionTree = computed(() => {
   const wells = Array.isArray(scenarioDetail.value?.wells) ? scenarioDetail.value.wells : []
+  const bucketOrder = []
+  const bucketSet = new Set()
+  const ensureBucketOrder = (bucketDate) => {
+    if (!bucketSet.has(bucketDate)) {
+      bucketSet.add(bucketDate)
+      bucketOrder.push(bucketDate)
+    }
+  }
+  const createTreeNode = (payload) => ({
+    ...payload,
+    totalOil: 0,
+    totalLiquid: 0,
+    totalGas: 0,
+    bucketValues: new Map(),
+  })
+  const addBucketMetric = (node, bucketDate, point) => {
+    ensureBucketOrder(bucketDate)
+    if (!node.bucketValues.has(bucketDate)) {
+      node.bucketValues.set(bucketDate, { oil: 0, liquid: 0, gas: 0 })
+    }
+    const bucket = node.bucketValues.get(bucketDate)
+    bucket.oil += getProductionPointMetricValue(point, 'oil')
+    bucket.liquid += getProductionPointMetricValue(point, 'liquid')
+    bucket.gas += getProductionPointMetricValue(point, 'gas')
+  }
   const totalNode = {
     key: 'total',
     nodeType: 'total',
@@ -719,6 +1253,7 @@ const productionTree = computed(() => {
     wellCount: 0,
     leafKeys: [],
     children: [],
+    bucketValues: new Map(),
   }
   const luMap = new Map()
   wells.forEach((well) => {
@@ -728,33 +1263,37 @@ const productionTree = computed(() => {
     const wellKey = buildWellNodeKey(well)
     let luNode = luMap.get(luId)
     if (!luNode) {
-      luNode = { key: `lu:${luId}`, nodeType: 'lu', depth: 1, label: luId, fundType: null, totalOil: 0, totalLiquid: 0, totalGas: 0, wellCount: 0, leafKeys: [], children: [] }
+      luNode = createTreeNode({ key: `lu:${luId}`, nodeType: 'lu', depth: 1, label: luId, fundType: null, wellCount: 0, leafKeys: [], children: [] })
       luMap.set(luId, luNode)
       totalNode.children.push(luNode)
     }
     let sloyNode = luNode.children.find((item) => item.label === sloyId)
     if (!sloyNode) {
-      sloyNode = { key: `sloy:${luId}:${sloyId}`, nodeType: 'sloy', depth: 2, label: sloyId, fundType: null, totalOil: 0, totalLiquid: 0, totalGas: 0, wellCount: 0, leafKeys: [], children: [] }
+      sloyNode = createTreeNode({ key: `sloy:${luId}:${sloyId}`, nodeType: 'sloy', depth: 2, label: sloyId, fundType: null, wellCount: 0, leafKeys: [], children: [] })
       luNode.children.push(sloyNode)
     }
     let padNode = sloyNode.children.find((item) => item.label === padId)
     if (!padNode) {
-      padNode = { key: `pad:${luId}:${sloyId}:${padId}`, nodeType: 'pad', depth: 3, label: padId, fundType: null, totalOil: 0, totalLiquid: 0, totalGas: 0, wellCount: 0, leafKeys: [], children: [] }
+      padNode = createTreeNode({ key: `pad:${luId}:${sloyId}:${padId}`, nodeType: 'pad', depth: 3, label: padId, fundType: null, wellCount: 0, leafKeys: [], children: [] })
       sloyNode.children.push(padNode)
     }
-    const leafNode = {
+    const leafNode = createTreeNode({
       key: wellKey,
       nodeType: 'well',
       depth: 4,
       label: well.well_name || well.well_id,
       fundType: well.fund_type || null,
-      totalOil: Number(well.total_oil || 0),
-      totalLiquid: Number(well.total_liquid || 0),
-      totalGas: Number(well.total_gas || 0),
       wellCount: 1,
       leafKeys: [wellKey],
       children: [],
-    }
+    })
+    leafNode.totalOil = getProductionWellMetricTotal(well, 'oil')
+    leafNode.totalLiquid = getProductionWellMetricTotal(well, 'liquid')
+    leafNode.totalGas = getProductionWellMetricTotal(well, 'gas')
+    well.points.forEach((point) => {
+      const bucketDate = bucketKeyForProductionMode(point.date, productionTimeMode.value)
+      ;[totalNode, luNode, sloyNode, padNode, leafNode].forEach((node) => addBucketMetric(node, bucketDate, point))
+    })
     padNode.children.push(leafNode)
     ;[totalNode, luNode, sloyNode, padNode].forEach((node) => {
       node.totalOil += leafNode.totalOil
@@ -780,7 +1319,8 @@ const productionTree = computed(() => {
       .forEach(flatten)
   }
   flatten(totalNode)
-  return { rows, nodeMap, totalNode }
+  bucketOrder.sort((left, right) => left.localeCompare(right))
+  return { rows, nodeMap, totalNode, bucketOrder }
 })
 const activeScenarioWells = computed(() => Array.isArray(scenarioDetail.value?.wells) ? scenarioDetail.value.wells : [])
 const activeScenarioRole = computed(() => scenarioDetail.value?.scenario?.metadata?.scenario_role || '')
@@ -816,20 +1356,20 @@ const productionSeries = computed(() => {
   selectedBaseLeafWells.value.forEach((well) => {
     well.points.forEach((point) => {
       const bucket = ensureBucket(bucketKeyForProductionMode(point.date, productionTimeMode.value))
-      bucket.basePeriod += Number(point.oil_rate || 0)
+      bucket.basePeriod += getProductionPointMetricValue(point, productionMetric.value)
     })
   })
 
   selectedLeafWells.value.forEach((well) => {
     well.points.forEach((point) => {
       const bucket = ensureBucket(bucketKeyForProductionMode(point.date, productionTimeMode.value))
-      const oilRate = Number(point.oil_rate || 0)
+      const pointMetric = getProductionPointMetricValue(point, productionMetric.value)
       if (String(well.fund_type || '').toLowerCase() === 'new wells') {
-        bucket.vnsPeriod += oilRate
+        bucket.vnsPeriod += pointMetric
       } else if (activeScenarioRole.value === 'pure_base') {
-        bucket.basePeriod += oilRate
+        bucket.basePeriod += pointMetric
       } else {
-        bucket.activeBasePeriod += oilRate
+        bucket.activeBasePeriod += pointMetric
       }
     })
   })
@@ -867,11 +1407,30 @@ const productionSeries = computed(() => {
     }
   })
 })
+const productionTableColumns = computed(() => productionTree.value.bucketOrder.map((date) => ({
+  key: date,
+  date,
+  label: productionTimeMode.value === 'day'
+    ? formatShortDayTick(date)
+    : productionTimeMode.value === 'month'
+      ? formatShortMonthTick(date)
+      : String(parseIsoDate(date)?.getUTCFullYear() || ''),
+  fullLabel: formatProductionBucketLabel(date, productionTimeMode.value),
+})))
+const productionTableRows = computed(() => productionTree.value.rows.map((row) => ({
+  ...row,
+  metricTotal: productionMetric.value === 'oil'
+    ? row.totalOil
+    : productionMetric.value === 'liquid'
+      ? row.totalLiquid
+      : row.totalGas,
+  bucketSeries: productionTableColumns.value.map((column) => row.bucketValues.get(column.date)?.[productionMetric.value] || 0),
+})))
 const productionChartTitle = computed(() => ({
-  day: 'Посуточная добыча нефти',
-  month: 'Добыча нефти по месяцам',
-  year: 'Годовая добыча нефти',
-}[productionTimeMode.value] || 'Добыча нефти'))
+  day: `Посуточная добыча ${PRODUCTION_METRICS.find((item) => item.key === productionMetric.value)?.label.toLowerCase() || 'нефти'}`,
+  month: `Добыча ${PRODUCTION_METRICS.find((item) => item.key === productionMetric.value)?.label.toLowerCase() || 'нефти'} по месяцам`,
+  year: `Годовая добыча ${PRODUCTION_METRICS.find((item) => item.key === productionMetric.value)?.label.toLowerCase() || 'нефти'}`,
+}[productionTimeMode.value] || 'Добыча'))
 const productionChartSubtitle = computed(() => ({
   day: 'Столбцы показывают добычу за сутки. Накопленная добыча отображается линией поверх категорий БАЗА, ГТМ и ВНС.',
   month: 'Столбцы показывают добычу, агрегированную по календарным месяцам. Накопленная добыча отображается линией поверх категорий БАЗА, ГТМ и ВНС.',
@@ -997,6 +1556,32 @@ const resetNormalizeColumns = () => {
   Object.keys(normalizeColumns).forEach((key) => { normalizeColumns[key] = '' })
 }
 
+const suggestColumnForField = (fieldName) => {
+  const hints = FRONTEND_MAPPING_HINTS[fieldName] || []
+  if (!hints.length) return ''
+  const match = availableColumnNames.value.find((columnName) => {
+    const normalized = normalizeHeaderText(columnName)
+    return hints.some((hint) => normalized.includes(normalizeHeaderText(hint)))
+  })
+  return match || ''
+}
+
+const prefillSuggestedMappings = ({ overwrite = false } = {}) => {
+  for (const fieldName of SOURCE_KIND_META[selectedUploadSourceKind.value]?.fields || []) {
+    if (!overwrite && normalizeColumns[fieldName]) continue
+    normalizeColumns[fieldName] = suggestColumnForField(fieldName)
+  }
+}
+
+const openMappingModalForCurrentFile = ({ overwrite = false } = {}) => {
+  if (!inputFile.value?.columns_info?.length) {
+    showMessage('Сначала выберите или загрузите Excel.', 'error')
+    return
+  }
+  prefillSuggestedMappings({ overwrite })
+  showMappingModal.value = true
+}
+
 const fetchDatasetDetail = async (reference) => {
   if (!reference) return null
   const key = datasetReferenceKey(reference)
@@ -1047,7 +1632,11 @@ const applyScenarioContext = async (context) => {
   if (context.manual_input_set?.manual_input_set_id) {
     selectedManualInputSetId.value = context.manual_input_set.manual_input_set_id
   }
-  scenarioSourceMode.value = context.external_krs_schedule_dataset ? 'existing_krs' : 'new_krs'
+  if (context.external_krs_schedule_dataset) {
+    scenarioSourceMode.value = 'existing_krs'
+  } else if (scenarioSourceMode.value !== 'planner') {
+    scenarioSourceMode.value = 'new_krs'
+  }
 }
 
 const buildScenarioRequestPayload = () => ({
@@ -1097,8 +1686,26 @@ const loadManualInputSets = async () => {
 const loadScenarios = async () => {
   const response = await request('/scenarios')
   scenarios.value = await response.json()
-  if (!selectedScenarioId.value && scenarios.value.length) {
-    selectedScenarioId.value = groupedScenarios.value[0].scenario_id
+  const selectedScenario = groupedScenarios.value.find((item) => item.scenario_id === selectedScenarioId.value) || null
+  if (selectedScenario && isPureBaseScenarioRecord(selectedScenario) && selectedScenario.parent_scenario_id) {
+    selectedScenarioId.value = selectedScenario.parent_scenario_id
+    return
+  }
+  if ((!selectedScenarioId.value || !userVisibleScenarios.value.some((item) => item.scenario_id === selectedScenarioId.value)) && userVisibleScenarios.value.length) {
+    selectedScenarioId.value = userVisibleScenarios.value[0].scenario_id
+  }
+}
+
+const loadPlannerRevisions = async (scenarioId) => {
+  if (!scenarioId) {
+    plannerRevisions.value = []
+    selectedPlannerRevisionId.value = ''
+    return
+  }
+  const response = await request(`/planner/revisions?parent_scenario_id=${encodeURIComponent(scenarioId)}`)
+  plannerRevisions.value = await response.json()
+  if (!plannerRevisions.value.some((item) => item.revision_id === selectedPlannerRevisionId.value)) {
+    selectedPlannerRevisionId.value = plannerRevisions.value[0]?.revision_id || ''
   }
 }
 
@@ -1120,6 +1727,14 @@ const createScenario = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const saveScenarioContextAction = async () => {
+  if (!selectedScenarioId.value) {
+    await createScenario()
+    return
+  }
+  await saveActiveScenarioContext()
 }
 
 const saveActiveScenarioContext = async ({ silent = false } = {}) => {
@@ -1160,6 +1775,7 @@ const openUploadedPreview = async (fileId, sheetName = null) => {
     if (!datasetName.value) {
       datasetName.value = `${selectedUploadSourceKind.value}:${inputFile.value.original_name}`
     }
+    prefillSuggestedMappings({ overwrite: true })
     showMessage('Файл открыт для нормализации.', 'success')
   } catch (error) {
     showMessage(error.message, 'error')
@@ -1181,6 +1797,8 @@ const uploadSourceFile = async (event) => {
     selectedUploadSheet.value = inputFile.value.selected_sheet
     datasetName.value = `${selectedUploadSourceKind.value}:${inputFile.value.original_name}`
     await loadUploadedFiles()
+    prefillSuggestedMappings({ overwrite: true })
+    showMappingModal.value = true
     showMessage('Excel загружен в Module A.', 'success')
   } catch (error) {
     showMessage(error.message, 'error')
@@ -1278,9 +1896,88 @@ const seedBrigadeCapacityRows = () => {
 }
 
 const addEconomicsRow = () => economicsRows.value.push(createEconomicsRow())
+const addEconomicsCostRow = () => economicsCostRows.value.push(createEconomicsCostRow())
 const addBrigadeRow = () => brigadeCapacityRows.value.push(createBrigadeRow())
 const addFailureRow = () => failureRows.value.push(createFailureRow())
 const addDurationRow = () => durationRows.value.push(createDurationRow())
+
+const syncExpandedHierarchy = (expandedRef, rows) => {
+  const expandableKeys = rows.filter((row) => row.children?.length).map((row) => row.key)
+  if (!expandableKeys.length) {
+    expandedRef.value = []
+    return
+  }
+  if (!expandedRef.value.length) {
+    expandedRef.value = [...expandableKeys]
+    return
+  }
+  const next = expandedRef.value.filter((key) => expandableKeys.includes(key))
+  if (!next.length) {
+    expandedRef.value = [...expandableKeys]
+    return
+  }
+  expandedRef.value = next
+}
+
+const toggleHierarchyExpand = (expandedRef, key) => {
+  if (expandedRef.value.includes(key)) {
+    expandedRef.value = expandedRef.value.filter((item) => item !== key)
+    return
+  }
+  expandedRef.value = [...expandedRef.value, key]
+}
+
+const toggleWellsExpand = (key) => toggleHierarchyExpand(expandedWellsKeys, key)
+const toggleGtmExpand = (key) => toggleHierarchyExpand(expandedGtmKeys, key)
+const toggleInfrastructureExpand = (key) => toggleHierarchyExpand(expandedInfrastructureKeys, key)
+const setScenarioFlowSource = (mode) => {
+  if (mode === 'external') {
+    activeCanvasNode.value = 'scenario'
+    scenarioSourceMode.value = 'existing_krs'
+    currentInputsTab.value = 'upload'
+    selectedUploadSourceKind.value = 'external_krs_schedule'
+    return
+  }
+  if (mode === 'generated') {
+    activeCanvasNode.value = 'wells'
+    scenarioSourceMode.value = 'new_krs'
+    currentInputsTab.value = 'upload'
+    selectedUploadSourceKind.value = 'wells'
+    return
+  }
+  activeCanvasNode.value = 'scenario'
+  scenarioSourceMode.value = 'planner'
+}
+
+const selectCanvasNode = async (nodeKey) => {
+  activeCanvasNode.value = nodeKey
+  if (nodeKey === 'scenario' && scenarioFlowMode.value === 'external') {
+    currentInputsTab.value = 'upload'
+    selectedUploadSourceKind.value = 'external_krs_schedule'
+    return
+  }
+  if (nodeKey === 'scenario' && scenarioFlowMode.value === 'planner') {
+    return
+  }
+  if (nodeKey === 'wells') {
+    currentInputsTab.value = 'upload'
+    selectedUploadSourceKind.value = 'wells'
+    if (selectedDatasets.wells) await openDatasetDetail(selectedDatasets.wells)
+    return
+  }
+  if (nodeKey === 'gtm') {
+    currentInputsTab.value = 'upload'
+    selectedUploadSourceKind.value = 'gtm'
+    if (selectedDatasets.gtm) await openDatasetDetail(selectedDatasets.gtm)
+    return
+  }
+  if (nodeKey === 'infrastructure') {
+    currentInputsTab.value = 'upload'
+    selectedUploadSourceKind.value = 'infrastructure'
+    if (selectedDatasets.infrastructure) await openDatasetDetail(selectedDatasets.infrastructure)
+    return
+  }
+}
 
 const buildManualInputPayload = () => ({
   displacement_config: reservoirConfigs.value.map((config) => ({
@@ -1344,6 +2041,11 @@ const buildManualInputPayload = () => ({
         lu_id: item.lu_id,
         net_back: item.net_back === '' ? null : Number(item.net_back),
       })),
+    gtm_costs_by_type: Object.fromEntries(
+      economicsCostRows.value
+        .filter((item) => item.gtm_type && item.cost !== '')
+        .map((item) => [item.gtm_type, Number(item.cost)]),
+    ),
     notes: economicsNotes.value || null,
   },
   optimizer_config: {
@@ -1416,6 +2118,14 @@ const applyManualInputPayload = (payload) => {
     lu_id: item.lu_id || '',
     net_back: item.net_back === null || item.net_back === undefined ? '' : String(item.net_back),
   })) : [createEconomicsRow()]
+  const economicsCosts = payload.economics_config?.gtm_costs_by_type || {}
+  economicsCostRows.value = Object.keys(economicsCosts).length
+    ? Object.entries(economicsCosts).map(([gtmType, cost]) => ({
+      id: uniqueId('economics-cost'),
+      gtm_type: gtmType,
+      cost: String(cost),
+    }))
+    : [createEconomicsCostRow()]
   economicsNotes.value = payload.economics_config?.notes || ''
 
   const brigadeItems = Array.isArray(payload.brigade_capacity_by_lu_config?.items) ? payload.brigade_capacity_by_lu_config.items : []
@@ -1538,6 +2248,10 @@ const loadScenarioDetail = async (scenarioId) => {
   try {
     const response = await request(`/scenarios/${scenarioId}`)
     scenarioDetail.value = await response.json()
+    if (scenarioDetail.value?.scenario?.metadata?.scenario_role === 'pure_base' && scenarioDetail.value?.scenario?.parent_scenario_id) {
+      selectedScenarioId.value = scenarioDetail.value.scenario.parent_scenario_id
+      return
+    }
     pureBaseScenarioDetail.value = null
     optimizerForm.scenario_name = scenarioDetail.value.scenario?.name || optimizerForm.scenario_name
     optimizerForm.forecast_start_date = scenarioDetail.value.scenario?.forecast_start_date || optimizerForm.forecast_start_date
@@ -1557,6 +2271,8 @@ const loadScenarioDetail = async (scenarioId) => {
     expandedProductionKeys.value = ['total', ...luKeys]
     selectedProductionKeys.value = []
     hoveredProductionBucketDate.value = ''
+    await loadPlannerRevisions(scenarioDetail.value.scenario?.parent_scenario_id || scenarioDetail.value.scenario?.scenario_id || '')
+    selectedPlannerRevisionId.value = scenarioDetail.value.scenario?.metadata?.planner_revision_id || selectedPlannerRevisionId.value
   } catch (error) {
     showMessage(error.message, 'error')
   } finally {
@@ -1580,6 +2296,23 @@ const toggleProductionSelection = (key) => {
   }
   selectedProductionKeys.value = [...selectedProductionKeys.value, key]
   hoveredProductionBucketDate.value = ''
+}
+
+const openPlannerFromScenario = async () => {
+  if (!selectedScenarioId.value) {
+    showMessage('Сначала создайте или выберите сценарий.', 'error')
+    return
+  }
+  if (scenarioSourceMode.value === 'existing_krs') {
+    if (!selectedDatasets.external_krs_schedule) {
+      showMessage('Для сценария с внешним графиком КРС сначала привяжите imported KRS dataset.', 'error')
+      return
+    }
+    await openImportedSchedule(selectedDatasets.external_krs_schedule)
+    return
+  }
+  currentSection.value = 'planner'
+  showMessage('Открыт модуль Planner для активного сценария.', 'info')
 }
 
 const openImportedSchedule = async (reference) => {
@@ -1679,6 +2412,39 @@ const publishPlannerVersion = async () => {
   }
 }
 
+const applyPlannerRevisionToScenario = async () => {
+  if (!plannerRevisionSourceScenarioId.value) {
+    showMessage('Сначала выберите базовый сценарий для planner revision.', 'error')
+    return
+  }
+  if (!selectedPlannerRevisionId.value) {
+    showMessage('Сначала выберите planner revision.', 'error')
+    return
+  }
+  loading.value = true
+  try {
+    const revision = selectedPlannerRevision.value
+    const response = await request(`/scenarios/${plannerRevisionSourceScenarioId.value}/from-planner-revision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        revision_id: selectedPlannerRevisionId.value,
+        name: `${selectedScenarioSummary.value?.name || optimizerForm.scenario_name || 'Сценарий'} / ${revision?.version_name || 'Planner revision'}`,
+      }),
+    })
+    const derivedScenario = await response.json()
+    await loadScenarios()
+    selectedScenarioId.value = derivedScenario.scenario.scenario_id
+    await loadScenarioDetail(derivedScenario.scenario.scenario_id)
+    currentSection.value = 'production'
+    showMessage('Planner revision применена, новая версия сценария создана.', 'success')
+  } catch (error) {
+    showMessage(error.message, 'error')
+  } finally {
+    loading.value = false
+  }
+}
+
 const movePlannerEvent = (eventId, brigade, startDate) => {
   if (!canEditVersion.value || !eventId || !startDate || !activeVersion.value) return
   activeVersion.value.items = activeVersion.value.items.map((item) => {
@@ -1755,8 +2521,24 @@ watch(selectedUploadSourceKind, () => {
   targetDatasetId.value = ''
   if (inputFile.value?.original_name) {
     datasetName.value = `${selectedUploadSourceKind.value}:${inputFile.value.original_name}`
+    prefillSuggestedMappings({ overwrite: true })
   }
 })
+
+watch(wellsHierarchyRows, (rows) => {
+  syncExpandedHierarchy(expandedWellsKeys, rows)
+}, { immediate: true })
+
+watch(gtmHierarchyRows, (rows) => {
+  syncExpandedHierarchy(expandedGtmKeys, rows)
+}, { immediate: true })
+
+watch(infrastructureTreeRows, (rows) => {
+  syncExpandedHierarchy(expandedInfrastructureKeys, rows)
+  if (rows.length && !rows.some((row) => row.key === selectedInfrastructureRowKey.value)) {
+    selectedInfrastructureRowKey.value = rows[0].key
+  }
+}, { immediate: true })
 
 onMounted(async () => {
   await Promise.all([loadUploadedFiles(), loadDatasets(), loadManualInputSets(), loadScenarios()])
@@ -1775,9 +2557,9 @@ onMounted(async () => {
       </div>
 
       <nav class="nav-list">
-        <button class="nav-item" :class="{ active: currentSection === 'inputs' }" @click="currentSection = 'inputs'">
+        <button class="nav-item" :class="{ active: currentSection === 'scenarios' }" @click="currentSection = 'scenarios'">
           <span class="nav-icon">⇪</span>
-          <span v-if="!sidebarCollapsed">Исходные данные</span>
+          <span v-if="!sidebarCollapsed">Сценарии</span>
         </button>
         <button class="nav-item" :class="{ active: currentSection === 'production' }" @click="currentSection = 'production'">
           <span class="nav-icon">◔</span>
@@ -1790,7 +2572,7 @@ onMounted(async () => {
       </nav>
 
       <div v-if="!sidebarCollapsed" class="sidebar-note">
-        `Исходные данные` работает поверх Module A и ManualInputSet. `Добыча` читает сохраненные outputs Module B. `Планировщик КРС` остается отдельным модулем Planner.
+        `Сценарии` собирает контекст сценария, загрузку datasets и manual inputs. `Добыча` читает сохраненные outputs Module B. `Планировщик КРС` остается отдельным модулем Planner.
       </div>
     </aside>
 
@@ -1805,365 +2587,481 @@ onMounted(async () => {
 
       <div v-if="message" class="message" :class="messageType">{{ message }}</div>
 
-      <section v-if="currentSection === 'inputs'" class="page-stack">
-        <div class="panel soft">
-          <div class="toolbar between align-start">
-            <div>
-              <h2>Активный сценарий</h2>
-              <p class="subtitle">Scenario-first workflow: сначала создайте или выберите сценарий, затем привяжите datasets и ManualInputSet, после этого запускайте расчет или Planner.</p>
-            </div>
-            <div class="toolbar actions-wrap">
+      <section v-if="currentSection === 'scenarios'" class="page-stack scenarios-page">
+        <div class="panel soft scenario-toolbar-panel">
+          <div class="scenario-compact-bar">
+            <label class="compact-field">
+              <span>Сценарий</span>
               <select v-model="selectedScenarioId" class="compact-dropdown">
                 <option value="">Новый сценарий</option>
-                <option v-for="item in groupedScenarios" :key="item.scenario_id" :value="item.scenario_id">
+                <option v-for="item in userVisibleScenarios" :key="item.scenario_id" :value="item.scenario_id">
                   {{ item.name }} · {{ item.source_type }}
                 </option>
               </select>
-              <button class="button" :disabled="loading" @click="createScenario">Создать сценарий</button>
-              <button class="button primary" :disabled="!selectedScenarioId || loading" @click="saveActiveScenarioContext()">Сохранить контекст</button>
+            </label>
+            <label class="compact-field period">
+              <span>Период</span>
+              <div class="compact-period">
+                <input v-model="optimizerForm.forecast_start_date" type="date" />
+                <span>—</span>
+                <input v-model="optimizerForm.forecast_end_date" type="date" />
+              </div>
+            </label>
+            <div class="compact-actions">
+              <button class="button primary" :disabled="loading" @click="saveScenarioContextAction">Сохранить контекст</button>
+              <button class="button primary" :disabled="loading" @click="calculateForecast">Рассчитать</button>
             </div>
           </div>
-          <div class="form-grid">
-            <label class="field">
-              <span>Имя сценария</span>
-              <input v-model="optimizerForm.scenario_name" type="text" placeholder="Название сценария" />
-            </label>
-            <label class="field">
-              <span>Источник графика КРС</span>
-              <select v-model="scenarioSourceMode">
-                <option value="new_krs">Новый график КРС</option>
-                <option value="existing_krs">Загрузить существующий график КРС</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Дата старта прогноза</span>
-              <input v-model="optimizerForm.forecast_start_date" type="date" />
-            </label>
-            <label class="field">
-              <span>Дата конца прогноза</span>
-              <input v-model="optimizerForm.forecast_end_date" type="date" />
-            </label>
-          </div>
-          <div class="stats-grid scenario-stats">
-            <div class="stat-card"><span>Wells</span><strong>{{ scenarioContextStatus.wells ? (selectedDatasets.wells?.name || 'OK') : 'Не задан' }}</strong></div>
-            <div class="stat-card"><span>GTM</span><strong>{{ scenarioContextStatus.gtm ? (selectedDatasets.gtm?.name || 'OK') : 'Не задан' }}</strong></div>
-            <div class="stat-card"><span>Infrastructure</span><strong>{{ scenarioContextStatus.infrastructure ? (selectedDatasets.infrastructure?.name || 'OK') : 'Опционально' }}</strong></div>
-            <div class="stat-card"><span>ManualInputSet</span><strong>{{ scenarioContextStatus.manual_input ? (selectedManualInputSetSummary?.reference.name || 'OK') : 'Не задан' }}</strong></div>
-          </div>
-          <div class="workflow-tree">
-            <div
-              v-for="step in workflowSteps"
-              :key="step.key"
-              class="workflow-item"
-              :class="{ ready: step.ready }"
-            >
-              <div class="workflow-badge">{{ step.ready ? 'OK' : '...' }}</div>
-              <div class="workflow-copy">
-                <strong>{{ step.label }}</strong>
-                <span>{{ step.description }}</span>
+        </div>
+
+        <div class="scenario-workspace">
+          <div class="panel soft scenario-canvas-panel">
+            <div class="toolbar between align-start">
+              <div>
+                <h2>Workflow canvas</h2>
+                <p class="subtitle">Кликайте по узлу. Нижний inspector показывает только данные выбранного блока. Центр бизнес-логики — `Module D: KRS Optimizer`.</p>
+              </div>
+            </div>
+
+            <div class="scenario-canvas branch-canvas">
+              <button type="button" class="canvas-node source-start" :class="{ ready: scenarioReadiness.hasSource, active: activeCanvasNode === 'scenario' }" @click="selectCanvasNode('scenario')">
+                <span class="canvas-node-kicker">Старт</span>
+                <strong>Источник графика</strong>
+                <small>{{ scenarioFlowModeLabel }}</small>
+              </button>
+
+              <div class="source-branch-connectors" aria-hidden="true">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+
+              <div class="source-actions workflow-source-actions">
+                <button type="button" class="source-action" :class="{ active: scenarioFlowMode === 'external', ready: sourceFlowReady.external }" @click="setScenarioFlowSource('external')">
+                  <div class="source-action-head">
+                    <strong>Внешний график</strong>
+                    <span v-if="sourceFlowReady.external" class="source-check">✓</span>
+                  </div>
+                  <span>{{ selectedDatasets.external_krs_schedule?.name || 'Нужно загрузить и привязать внешний график КРС.' }}</span>
+                </button>
+                <button type="button" class="source-action" :class="{ active: scenarioFlowMode === 'generated', ready: sourceFlowReady.generated }" @click="setScenarioFlowSource('generated')">
+                  <div class="source-action-head">
+                    <strong>Сформировать график</strong>
+                    <span v-if="sourceFlowReady.generated" class="source-check">✓</span>
+                  </div>
+                  <span>График строится через расчетный контур и `Module D: KRS Optimizer`.</span>
+                </button>
+                <button type="button" class="source-action" :class="{ active: scenarioFlowMode === 'planner', ready: sourceFlowReady.planner }" @click="setScenarioFlowSource('planner')">
+                  <div class="source-action-head">
+                    <strong>Полученный из Planner</strong>
+                    <span v-if="sourceFlowReady.planner" class="source-check">✓</span>
+                  </div>
+                  <span>{{ sourceFlowReady.planner ? 'Ниже можно выбрать опубликованную planner revision для применения.' : 'Для этого сценария ещё нет опубликованных planner revisions.' }}</span>
+                </button>
+              </div>
+
+              <div class="flow-down-arrow" aria-hidden="true">↓</div>
+
+              <div class="flow-main-row">
+                <div class="canvas-node inputs-group" :class="{ ready: scenarioReadiness.hasInputs, active: ['wells', 'gtm', 'reservoir', 'economics', 'krs', 'infrastructure'].includes(activeCanvasNode) }">
+                  <span class="canvas-node-kicker">Module A + Manual Inputs</span>
+                  <strong>Исходные данные</strong>
+                  <small>Загрузка datasets и настройка ручных вводных.</small>
+                  <div class="input-mini-grid">
+                    <button type="button" class="input-mini-node" :class="[inputNodeStatuses.wells, { active: activeCanvasNode === 'wells' }]" @click="selectCanvasNode('wells')">
+                      <span class="input-mini-label">Wells</span>
+                      <span v-if="inputNodeStatuses.wells !== 'empty'" class="input-mini-status">{{ inputNodeStatuses.wells === 'ready' ? '✓' : '−' }}</span>
+                    </button>
+                    <button type="button" class="input-mini-node" :class="[inputNodeStatuses.gtm, { active: activeCanvasNode === 'gtm' }]" @click="selectCanvasNode('gtm')">
+                      <span class="input-mini-label">ГТМ</span>
+                      <span v-if="inputNodeStatuses.gtm !== 'empty'" class="input-mini-status">{{ inputNodeStatuses.gtm === 'ready' ? '✓' : '−' }}</span>
+                    </button>
+                    <button type="button" class="input-mini-node" :class="[inputNodeStatuses.reservoir, { active: activeCanvasNode === 'reservoir' }]" @click="activeCanvasNode = 'reservoir'; currentInputsTab = 'reservoir'">
+                      <span class="input-mini-label">Вытеснение</span>
+                      <span v-if="inputNodeStatuses.reservoir !== 'empty'" class="input-mini-status">{{ inputNodeStatuses.reservoir === 'ready' ? '✓' : '−' }}</span>
+                    </button>
+                    <button type="button" class="input-mini-node" :class="[inputNodeStatuses.economics, { active: activeCanvasNode === 'economics' }]" @click="activeCanvasNode = 'economics'; currentInputsTab = 'economics'">
+                      <span class="input-mini-label">Экономика</span>
+                      <span v-if="inputNodeStatuses.economics !== 'empty'" class="input-mini-status">{{ inputNodeStatuses.economics === 'ready' ? '✓' : '−' }}</span>
+                    </button>
+                    <button type="button" class="input-mini-node" :class="[inputNodeStatuses.krs, { active: activeCanvasNode === 'krs' }]" @click="activeCanvasNode = 'krs'; currentInputsTab = 'brigades'">
+                      <span class="input-mini-label">KRS огр.</span>
+                      <span v-if="inputNodeStatuses.krs !== 'empty'" class="input-mini-status">{{ inputNodeStatuses.krs === 'ready' ? '✓' : '−' }}</span>
+                    </button>
+                    <button type="button" class="input-mini-node" :class="[inputNodeStatuses.infrastructure, { active: activeCanvasNode === 'infrastructure' }]" @click="selectCanvasNode('infrastructure')">
+                      <span class="input-mini-label">Infrastructure</span>
+                      <span v-if="inputNodeStatuses.infrastructure !== 'empty'" class="input-mini-status">{{ inputNodeStatuses.infrastructure === 'ready' ? '✓' : '−' }}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="flow-direct-branch" :class="{ inactive: scenarioFlowMode === 'generated' }">
+                  <div class="flow-arrow">→</div>
+
+                  <button type="button" class="canvas-node module-b" :class="{ ready: scenarioReadiness.hasResult, active: activeCanvasNode === 'forecast' }" @click="activeCanvasNode = 'forecast'">
+                    <span class="canvas-node-kicker">Module B</span>
+                    <strong>Forecast</strong>
+                    <small>{{ scenarioReadiness.hasResult ? 'Профиль рассчитан' : 'Ожидает расчета' }}</small>
+                  </button>
+
+                  <div class="flow-arrow">→</div>
+
+                  <div class="canvas-node module-c" :class="{ ready: scenarioReadiness.hasResult }">
+                    <span class="canvas-node-kicker">Module C</span>
+                    <strong>Economics</strong>
+                    <small>{{ scenarioReadiness.hasResult ? 'Экономика сценария готова' : 'После Forecast' }}</small>
+                  </div>
+                </div>
+              </div>
+
+              <div class="generated-flow-shell" :class="{ inactive: scenarioFlowMode !== 'generated' }">
+                <div class="generated-flow-note">
+                  <span class="merge-chip">Forecast</span>
+                  <span class="flow-arrow diagonal">↘</span>
+                  <span class="merge-chip target">в KRS Optimizer</span>
+                  <span class="flow-arrow diagonal">↗</span>
+                  <span class="merge-chip">Economics</span>
+                  <span class="flow-arrow diagonal">↘</span>
+                  <span class="merge-chip">Infra Check</span>
+                </div>
+
+                <div class="generated-flow-row">
+                  <button type="button" class="canvas-node module-d core" :class="{ ready: scenarioReadiness.hasInputs, active: activeCanvasNode === 'optimizer' }" @click="activeCanvasNode = 'optimizer'; currentInputsTab = 'optimizer'">
+                    <span class="canvas-node-kicker">Module D</span>
+                    <strong>KRS Optimizer</strong>
+                    <small>Формирует и оптимизирует график КРС.</small>
+                  </button>
+                  <span class="flow-arrow">→</span>
+                  <div class="canvas-node revision" :class="{ ready: scenarioReadiness.hasPlannerVersion }">
+                    <span class="canvas-node-kicker">Revision</span>
+                    <strong>Planner Revision</strong>
+                    <small>{{ scenarioReadiness.hasPlannerVersion ? 'Доступна ревизия' : 'Пока нет revision' }}</small>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel workbench-shell">
           <div class="toolbar between align-start">
             <div>
-              <h2>Список сценариев</h2>
-              <p class="subtitle">Главный вход в сценарный workflow. Здесь отображаются атрибуты сценария, привязанные datasets, ManualInputSet и происхождение сценария.</p>
+              <h2>{{ nodeInspectorTitle }}</h2>
+              <p class="subtitle">
+                <template v-if="activeCanvasNode === 'scenario' && scenarioFlowMode === 'external'">Для внешнего графика КРС нижний inspector показывает загрузку, preview и mapping колонок с автопредложением сопоставления.</template>
+                <template v-else-if="activeCanvasNode === 'scenario' && scenarioFlowMode === 'planner'">Нижний inspector показывает опубликованные planner revisions и позволяет выбрать, какую revision применить к активному сценарию.</template>
+                <template v-else-if="activeCanvasNode === 'scenario'">Источник графика уже выбран на диаграмме.</template>
+                <template v-else-if="activeCanvasNode === 'wells'">Версия wells dataset и сводная иерархия `LU -> куст -> скважина`.</template>
+                <template v-else-if="activeCanvasNode === 'gtm'">Версия GTM dataset и сводная иерархия `LU -> куст -> скважина` с приростами.</template>
+                <template v-else-if="activeCanvasNode === 'reservoir'">LU / SLOY, характеристика вытеснения и годовые темпы падения жидкости.</template>
+                <template v-else-if="activeCanvasNode === 'economics'">Net back по LU и стоимости мероприятий по типам ГТМ.</template>
+                <template v-else-if="activeCanvasNode === 'krs'">Ограничения КРС: бригады по месяцам, отказность и длительности.</template>
+                <template v-else-if="activeCanvasNode === 'infrastructure'">Иерархия infrastructure и срезы мощностей по жидкости, нефти и газу.</template>
+                <template v-else-if="activeCanvasNode === 'forecast'">Forecast не требует отдельных настроек optimizer. Здесь показывается только готовность сценария, а расчёт `Module B` запускается верхней кнопкой `Рассчитать`.</template>
+                <template v-else-if="activeCanvasNode === 'optimizer'">Настройки `Module D: KRS Optimizer`: политика ограничений, целевая функция и режим построения графика КРС.</template>
+                <template v-else>Параметры выбранного блока.</template>
+              </p>
             </div>
-            <button class="button ghost" :disabled="loading" @click="loadScenarios">Обновить список</button>
           </div>
-          <div v-if="!groupedScenarios.length" class="empty-inline">Сценарии еще не созданы.</div>
-          <div v-else class="scenario-list">
-            <button
-              v-for="item in groupedScenarios"
-              :key="item.scenario_id"
-              type="button"
-              class="scenario-card"
-              :class="{ active: selectedScenarioId === item.scenario_id }"
-              @click="selectedScenarioId = item.scenario_id"
-            >
-              <div class="scenario-card-head">
-                <div>
-                  <strong>{{ item.name }}</strong>
-                  <span class="scenario-card-id">{{ item.scenario_id }}</span>
-                </div>
-                <span class="scenario-badge">{{ scenarioSourceTypeLabel(item.source_type) }}</span>
+
+        <div v-if="activeCanvasNode === 'scenario' && scenarioFlowMode === 'planner'" class="page-stack">
+          <div class="panel soft">
+            <h2>Выбор planner revision</h2>
+            <p class="subtitle">Выберите revision графика КРС, которую нужно применить к текущему сценарию. На основе выбранной revision будет создана новая версия сценария.</p>
+            <div v-if="!plannerRevisionSourceScenarioId" class="empty-state">
+              <strong>Нет базового сценария</strong>
+              <span>Сначала выберите сценарий, для которого нужно применить planner revision.</span>
+            </div>
+            <div v-else-if="!plannerRevisions.length" class="empty-state">
+              <strong>Planner revisions не найдены</strong>
+              <span>Для этого сценария ещё не опубликованы версии из Planner.</span>
+            </div>
+            <div v-else class="page-stack">
+              <div class="table-wrap medium-wrap">
+                <table class="hierarchy-table">
+                  <thead>
+                    <tr>
+                      <th>Выбор</th>
+                      <th>Версия</th>
+                      <th>Дата</th>
+                      <th>Событий</th>
+                      <th>Derived scenario</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="revision in plannerRevisions"
+                      :key="revision.revision_id"
+                      :class="{ selected: revision.revision_id === selectedPlannerRevisionId }"
+                      @click="selectedPlannerRevisionId = revision.revision_id"
+                    >
+                      <td>
+                        <input
+                          type="radio"
+                          name="planner-revision"
+                          :checked="revision.revision_id === selectedPlannerRevisionId"
+                          @change="selectedPlannerRevisionId = revision.revision_id"
+                        />
+                      </td>
+                      <td><strong>{{ revision.version_name }}</strong></td>
+                      <td>{{ formatDateCell(revision.edited_at) }}</td>
+                      <td>{{ revision.item_count }}</td>
+                      <td>{{ plannerDerivedScenarioMap[revision.revision_id]?.name || 'Не создан' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
-              <div class="scenario-card-grid">
-                <div><span>Статус</span><strong>{{ item.status }}</strong></div>
-                <div><span>Период</span><strong>{{ formatScenarioWindow(item) }}</strong></div>
-                <div><span>Parent</span><strong>{{ item.parent_scenario_id || '—' }}</strong></div>
-                <div><span>Planner</span><strong>{{ scenarioHasPlannerVersion(item) ? 'Есть' : 'Нет' }}</strong></div>
+
+              <div class="detail-summary" v-if="selectedPlannerRevision">
+                <div><span>Revision</span><strong>{{ selectedPlannerRevision.version_name }}</strong></div>
+                <div><span>Сценарий-источник</span><strong>{{ selectedScenarioSummary?.parent_scenario_id ? (userVisibleScenarios.find((item) => item.scenario_id === plannerRevisionSourceScenarioId)?.name || plannerRevisionSourceScenarioId) : (selectedScenarioSummary?.name || '—') }}</strong></div>
+                <div><span>Событий</span><strong>{{ selectedPlannerRevision.item_count }}</strong></div>
+                <div><span>Derived</span><strong>{{ derivedScenarioForSelectedRevision?.name || 'Будет создан' }}</strong></div>
               </div>
-              <div class="scenario-card-links">
-                <span>Wells: {{ item.context?.wells_dataset?.name || '—' }}</span>
-                <span>GTM: {{ item.context?.gtm_dataset?.name || '—' }}</span>
-                <span>Infrastructure: {{ item.context?.infrastructure_dataset?.name || '—' }}</span>
-                <span>KRS: {{ item.context?.external_krs_schedule_dataset?.name || '—' }}</span>
-                <span>ManualInputSet: {{ item.context?.manual_input_set?.name || '—' }}</span>
+
+              <div class="toolbar align-end">
+                <button class="button primary" :disabled="!selectedPlannerRevisionId || loading" @click="applyPlannerRevisionToScenario">Применить revision</button>
               </div>
-              <div class="scenario-card-footer">
-                <span>{{ scenarioOriginLabel(item) }}</span>
-                <span v-if="item.production_summary">Нефть: {{ formatCompactNumber(item.production_summary.total_oil) }}</span>
-              </div>
-            </button>
+            </div>
           </div>
         </div>
 
-        <div class="tabs">
-          <button
-            v-for="tab in INPUT_TABS"
-            :key="tab.key"
-            class="tab-button"
-            :class="{ active: currentInputsTab === tab.key }"
-            @click="currentInputsTab = tab.key"
-          >
-            {{ tab.label }}
-          </button>
-        </div>
-
-        <div v-if="currentInputsTab === 'upload'" class="page-stack">
-          <div class="source-actions">
-            <button
-              v-for="(meta, key) in SOURCE_KIND_META"
-              :key="key"
-              class="source-action"
-              :class="{ active: selectedUploadSourceKind === key }"
-              @click="selectedUploadSourceKind = key"
-            >
-              <strong>{{ meta.title }}</strong>
-              <span>{{ meta.description }}</span>
-            </button>
-          </div>
-
-          <div class="module-grid two-wide">
+        <div v-else-if="activeCanvasNode === 'wells' || activeCanvasNode === 'gtm' || activeCanvasNode === 'infrastructure' || (activeCanvasNode === 'scenario' && scenarioFlowMode === 'external')" class="page-stack">
+          <div class="page-stack">
             <div class="panel soft">
-              <h2>Текущая загрузка</h2>
-              <p class="subtitle">Excel загружается как source-файл, затем нормализуется в Dataset и сохраняется в Postgres.</p>
-              <label class="upload-dropzone">
-                <input type="file" accept=".xlsx,.xls" @change="uploadSourceFile" />
-                <strong>Загрузить Excel</strong>
-                <span>{{ SOURCE_KIND_META[selectedUploadSourceKind].title }}</span>
-              </label>
-              <div class="form-grid">
-                <label class="field">
-                  <span>Сохраненный файл</span>
+              <h2>{{ SOURCE_KIND_META[selectedUploadSourceKind].title }}</h2>
+              <p class="subtitle">{{ SOURCE_KIND_META[selectedUploadSourceKind].description }}</p>
+              <input ref="uploadInputRef" type="file" accept=".xlsx,.xls" class="hidden-file-input" @change="uploadSourceFile" />
+              <div class="upload-compact-row">
+                <label class="compact-field">
+                  <span>Файл</span>
                   <select v-model="selectedUploadFileId">
                     <option value="">Выберите файл</option>
                     <option v-for="item in uploadedFiles" :key="item.file_id" :value="item.file_id">{{ item.original_name }}</option>
                   </select>
                 </label>
-                <label class="field">
-                  <span>Лист Excel</span>
+                <label class="compact-field">
+                  <span>Лист</span>
                   <select v-model="selectedUploadSheet" :disabled="!selectedUploadFileId">
                     <option value="">Выберите лист</option>
                     <option v-for="sheet in (uploadedFiles.find((item) => item.file_id === selectedUploadFileId)?.sheets || [])" :key="sheet" :value="sheet">{{ sheet }}</option>
                   </select>
                 </label>
-                <label class="field">
-                  <span>Имя Dataset</span>
+                <label class="compact-field">
+                  <span>Dataset</span>
                   <input v-model="datasetName" type="text" placeholder="Название набора данных" />
                 </label>
-                <label class="field">
-                  <span>Новая версия existing dataset</span>
-                  <select v-model="targetDatasetId">
-                    <option value="">Новый dataset</option>
-                    <option v-for="item in sourceDatasetOptions" :key="datasetReferenceKey(item.dataset_reference)" :value="item.dataset_reference.dataset_id">
+                <label class="compact-field">
+                  <span>Активная версия</span>
+                  <select :value="selectedDatasetKeys[selectedUploadSourceKind]" @change="selectDatasetByKey(selectedUploadSourceKind, $event.target.value)">
+                    <option value="">Не выбрана</option>
+                    <option v-for="item in sourceDatasetOptions" :key="datasetReferenceKey(item.dataset_reference)" :value="datasetReferenceKey(item.dataset_reference)">
                       {{ item.dataset_reference.name }}
                     </option>
                   </select>
                 </label>
-              </div>
-              <div class="toolbar">
-                <button class="button" :disabled="!selectedUploadFileId || loading" @click="openUploadedPreview(selectedUploadFileId, selectedUploadSheet || null)">Открыть preview</button>
-                <button class="button primary" :disabled="!inputFile || loading" @click="normalizeDataset">Нормализовать и сохранить</button>
-                <button
-                  v-if="lastNormalizedDatasetReference?.dataset_type === 'external_krs_schedule'"
-                  class="button success"
-                  :disabled="loading"
-                  @click="openImportedSchedule(lastNormalizedDatasetReference)"
-                >
-                  Открыть в Planner
-                </button>
-              </div>
-              <div v-if="inputFile" class="info-cards">
-                <div class="info-card"><span>Файл</span><strong>{{ inputFile.original_name }}</strong></div>
-                <div class="info-card"><span>Лист</span><strong>{{ inputFile.selected_sheet }}</strong></div>
-                <div class="info-card"><span>Колонок</span><strong>{{ inputFile.columns_info.length }}</strong></div>
-                <div class="info-card"><span>Preview строк</span><strong>{{ inputFile.preview.length }}</strong></div>
-              </div>
-            </div>
-
-            <div class="panel">
-              <h2>Mapping колонок</h2>
-              <p class="subtitle">Пустое поле означает auto-detect. Для wells и gtm имеет смысл задавать только спорные поля.</p>
-              <div class="mapping-grid">
-                <label v-for="fieldName in SOURCE_KIND_META[selectedUploadSourceKind].fields" :key="fieldName" class="field">
-                  <span>{{ MAPPING_LABELS[fieldName] }}</span>
-                  <select v-model="normalizeColumns[fieldName]">
-                    <option value="">Автоопределение</option>
-                    <option v-for="column in availableColumns" :key="`${fieldName}-${column.name}`" :value="column.name">{{ column.name }}</option>
-                  </select>
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <div class="module-grid two-wide">
-            <div class="panel">
-              <div class="toolbar between">
-                <div>
-                  <h2>Реестр datasets</h2>
-                  <p class="subtitle">Здесь выбираются активные datasets для расчета и для открытия в Planner.</p>
+                <div class="compact-actions upload-actions">
+                  <button class="button" :disabled="loading" @click="uploadInputRef?.click()">Загрузить Excel</button>
+                  <button class="button" :disabled="!selectedUploadFileId || loading" @click="openUploadedPreview(selectedUploadFileId, selectedUploadSheet || null)">Открыть</button>
+                  <button class="button" :disabled="!inputFile || loading" @click="openMappingModalForCurrentFile()">Сопоставление</button>
+                  <button class="button primary" :disabled="!inputFile || loading" @click="normalizeDataset">Сохранить dataset</button>
                 </div>
-                <button class="button ghost" :disabled="loading" @click="loadDatasets">Обновить</button>
               </div>
-              <div class="dataset-groups">
-                <div v-for="(items, type) in datasetTypes" :key="type" class="dataset-group">
-                  <div class="dataset-group-title">{{ SOURCE_KIND_META[type]?.title || type }}</div>
-                  <div v-if="!items.length" class="empty-inline">Нет наборов.</div>
-                  <div v-else class="dataset-list">
-                    <button
-                      v-for="item in items"
-                      :key="datasetReferenceKey(item.dataset_reference)"
-                      class="dataset-card"
-                      :class="{ active: datasetReferenceKey(selectedDatasets[type]) === datasetReferenceKey(item.dataset_reference) }"
-                      @click="openDatasetDetail(item.dataset_reference)"
-                    >
-                      <div class="dataset-card-head">
-                        <strong>{{ item.dataset_reference.name }}</strong>
-                        <span>{{ item.dataset_reference.row_count || 0 }} строк</span>
-                      </div>
-                      <div class="dataset-card-meta">
-                        <span>{{ item.source_file_name }}</span>
-                        <span>{{ formatDateCell(item.dataset_reference.created_at) }}</span>
-                      </div>
-                      <div class="dataset-card-actions">
-                        <button class="mini-button" @click.stop="setActiveDataset(item.dataset_reference)">Сделать активным</button>
-                        <button v-if="type === 'external_krs_schedule'" class="mini-button accent" @click.stop="openImportedSchedule(item.dataset_reference)">Planner</button>
-                      </div>
-                    </button>
+            </div>
+
+            <div v-if="activeCanvasNode === 'wells'" class="panel">
+              <h2>Сводка wells</h2>
+              <div class="table-wrap medium-wrap">
+                <table class="hierarchy-table">
+                  <thead>
+                    <tr><th>Узел</th><th>Скважин</th><th>Нефть</th><th>Жидкость</th><th>Газ</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in visibleWellsHierarchyRows" :key="row.key" :class="`node-${row.nodeType}`">
+                      <td>
+                        <div class="node-cell" :style="{ paddingLeft: `${row.depth * 18}px` }">
+                          <button v-if="row.children.length" type="button" class="node-toggle" @click="toggleWellsExpand(row.key)">{{ expandedWellsKeys.includes(row.key) ? '−' : '+' }}</button>
+                          <span v-else class="node-spacer"></span>
+                          <strong>{{ row.label }}</strong>
+                        </div>
+                      </td>
+                      <td>{{ row.metrics.count }}</td>
+                      <td>{{ formatCompactNumber(row.metrics.oil) }}</td>
+                      <td>{{ formatCompactNumber(row.metrics.liquid) }}</td>
+                      <td>{{ formatCompactNumber(row.metrics.gas) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div v-if="activeCanvasNode === 'gtm'" class="panel">
+              <h2>Сводка ГТМ</h2>
+              <div class="table-wrap medium-wrap">
+                <table class="hierarchy-table">
+                  <thead>
+                    <tr><th>Узел</th><th>Мероприятий</th><th>Прирост нефти</th><th>Прирост жидкости</th><th>Прирост газа</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in visibleGtmHierarchyRows" :key="row.key" :class="`node-${row.nodeType}`">
+                      <td>
+                        <div class="node-cell" :style="{ paddingLeft: `${row.depth * 18}px` }">
+                          <button v-if="row.children.length" type="button" class="node-toggle" @click="toggleGtmExpand(row.key)">{{ expandedGtmKeys.includes(row.key) ? '−' : '+' }}</button>
+                          <span v-else class="node-spacer"></span>
+                          <strong>{{ row.label }}</strong>
+                        </div>
+                      </td>
+                      <td>{{ row.metrics.count }}</td>
+                      <td>{{ formatCompactNumber(row.metrics.oil) }}</td>
+                      <td>{{ formatCompactNumber(row.metrics.liquid) }}</td>
+                      <td>{{ formatCompactNumber(row.metrics.gas) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div v-if="activeCanvasNode === 'infrastructure'" class="module-grid two-wide">
+              <div class="panel">
+                <h2>Иерархия infrastructure</h2>
+                <div class="table-wrap medium-wrap">
+                  <table class="hierarchy-table">
+                    <thead>
+                      <tr><th>Узел</th><th>Жидкость</th><th>Нефть</th><th>Газ</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="row in visibleInfrastructureTreeRows"
+                        :key="row.key"
+                        :class="[{ selected: selectedInfrastructureRowKey === row.key }, `node-${row.nodeType}`]"
+                        @click="selectedInfrastructureRowKey = row.key"
+                      >
+                        <td>
+                          <div class="node-cell" :style="{ paddingLeft: `${row.depth * 18}px` }">
+                            <button v-if="row.children.length" type="button" class="node-toggle" @click.stop="toggleInfrastructureExpand(row.key)">{{ expandedInfrastructureKeys.includes(row.key) ? '−' : '+' }}</button>
+                            <span v-else class="node-spacer"></span>
+                            <strong>{{ row.label }}</strong>
+                          </div>
+                        </td>
+                        <td>{{ formatCompactNumber(row.metrics.liquid) }}</td>
+                        <td>{{ formatCompactNumber(row.metrics.oil) }}</td>
+                        <td>{{ formatCompactNumber(row.metrics.gas) }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="toolbar between">
+                  <div>
+                    <h2>Срез мощностей</h2>
+                    <p class="subtitle">Выберите узел в таблице и метрику для просмотра.</p>
+                  </div>
+                  <div class="mode-toggle">
+                    <button type="button" class="mode-toggle-button" :class="{ active: infrastructureMetric === 'liquid' }" @click="infrastructureMetric = 'liquid'">Жидкость</button>
+                    <button type="button" class="mode-toggle-button" :class="{ active: infrastructureMetric === 'oil' }" @click="infrastructureMetric = 'oil'">Нефть</button>
+                    <button type="button" class="mode-toggle-button" :class="{ active: infrastructureMetric === 'gas' }" @click="infrastructureMetric = 'gas'">Газ</button>
+                  </div>
+                </div>
+                <div class="detail-summary">
+                  <div><span>Выбранный узел</span><strong>{{ selectedInfrastructureRow?.label || '—' }}</strong></div>
+                  <div><span>Значение</span><strong>{{ formatCompactNumber(selectedInfrastructureRow?.metrics?.[infrastructureMetric] || 0) }}</strong></div>
+                </div>
+                <div class="infrastructure-bar-chart">
+                  <div
+                    v-for="metric in ['liquid', 'oil', 'gas']"
+                    :key="metric"
+                    class="infra-bar"
+                  >
+                    <span>{{ metric === 'liquid' ? 'Жидкость' : metric === 'oil' ? 'Нефть' : 'Газ' }}</span>
+                    <div class="infra-bar-track">
+                      <div
+                        class="infra-bar-fill"
+                        :class="metric"
+                        :style="{ width: `${Math.min(100, ((selectedInfrastructureRow?.metrics?.[metric] || 0) / Math.max(selectedInfrastructureRow?.metrics?.liquid || 0, selectedInfrastructureRow?.metrics?.oil || 0, selectedInfrastructureRow?.metrics?.gas || 0, 1)) * 100)}%` }"
+                      ></div>
+                    </div>
+                    <strong>{{ formatCompactNumber(selectedInfrastructureRow?.metrics?.[metric] || 0) }}</strong>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div class="panel">
-              <h2>Детали dataset</h2>
-              <p class="subtitle">Нормализованный payload и validation summary для выбранного dataset.</p>
-              <div v-if="selectedDatasetDetail" class="page-stack tight">
-                <div class="detail-summary">
-                  <div><span>Тип</span><strong>{{ selectedDatasetDetail.dataset_reference.dataset_type }}</strong></div>
-                  <div><span>Имя</span><strong>{{ selectedDatasetDetail.dataset_reference.name }}</strong></div>
-                  <div><span>Источник</span><strong>{{ selectedDatasetDetail.source_file_name }}</strong></div>
-                </div>
-                <div class="validation-box">
-                  <strong>Validation</strong>
-                  <div>Источник: {{ selectedDatasetDetail.validation_report?.source_kind || '—' }}</div>
-                  <div>Лист: {{ selectedDatasetDetail.validation_report?.sheet_name || '—' }}</div>
-                  <div>Строк: {{ selectedDatasetDetail.validation_report?.row_count || 0 }}</div>
-                </div>
-
-                <div v-if="Array.isArray(selectedDatasetDetail.normalized_payload)" class="table-wrap preview-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th v-for="column in Object.keys(selectedDatasetDetail.normalized_payload[0] || {})" :key="column">{{ column }}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="(row, index) in selectedDatasetDetail.normalized_payload.slice(0, 6)" :key="index">
-                        <td v-for="column in Object.keys(selectedDatasetDetail.normalized_payload[0] || {})" :key="`${index}-${column}`">{{ row[column] }}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                <div v-else-if="selectedDatasetDetail.normalized_payload?.schedule?.items" class="table-wrap preview-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th v-for="column in Object.keys(selectedDatasetDetail.normalized_payload.schedule.items[0] || {})" :key="column">{{ column }}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="(row, index) in selectedDatasetDetail.normalized_payload.schedule.items.slice(0, 6)" :key="index">
-                        <td v-for="column in Object.keys(selectedDatasetDetail.normalized_payload.schedule.items[0] || {})" :key="`${index}-${column}`">{{ row[column] }}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+            <div v-if="inputFile?.preview?.length" class="panel">
+              <h2>Preview исходного Excel</h2>
+              <div class="table-wrap preview-wrap">
+                <table>
+                  <thead>
+                    <tr><th v-for="column in previewColumns" :key="column">{{ column }}</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(row, index) in inputFile.preview" :key="index">
+                      <td v-for="column in previewColumns" :key="`${index}-${column}`">{{ row[column] }}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
-              <div v-else class="empty-state">Выберите dataset в реестре.</div>
-            </div>
-          </div>
-
-          <div v-if="inputFile?.preview?.length" class="panel">
-            <h2>Preview исходного Excel</h2>
-            <div class="table-wrap preview-wrap">
-              <table>
-                <thead>
-                  <tr><th v-for="column in previewColumns" :key="column">{{ column }}</th></tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(row, index) in inputFile.preview" :key="index">
-                    <td v-for="column in previewColumns" :key="`${index}-${column}`">{{ row[column] }}</td>
-                  </tr>
-                </tbody>
-              </table>
             </div>
           </div>
         </div>
 
-        <div v-else-if="currentInputsTab === 'reservoir'" class="page-stack">
-          <div class="module-grid two-wide">
-            <div class="panel">
-              <div class="toolbar between">
-                <div>
-                  <h2>Конфигурации пласта</h2>
-                  <p class="subtitle">Каждая запись задает общую характеристику вытеснения и два ряда annual decline для выбранного LU / SLOY.</p>
-                </div>
-                <button class="button primary" @click="addReservoirConfig">Добавить конфигурацию</button>
-              </div>
-              <div class="config-list">
-                <button
-                  v-for="config in reservoirConfigs"
-                  :key="config.config_id"
-                  class="config-pill"
-                  :class="{ active: activeReservoirConfigId === config.config_id }"
-                  @click="activeReservoirConfigId = config.config_id"
-                >
-                  {{ config.lu_id || 'Без LU' }} / {{ config.sloy_id || 'Все слои' }}
-                </button>
-              </div>
+        <div v-else-if="activeCanvasNode === 'reservoir'" class="page-stack">
+          <div class="panel reservoir-strip compact" v-if="activeReservoirConfig">
+            <div class="reservoir-strip-title">
+              <h2>Конфигурации пласта</h2>
+              <p class="subtitle">LU / SLOY, характеристика вытеснения и годовые темпы падения жидкости.</p>
             </div>
+            <div class="reservoir-strip-row single-line">
+              <div class="field reservoir-strip-field reservoir-configs inline">
+                <span>Конфигурации</span>
+                <div class="config-list">
+                  <button
+                    v-for="config in reservoirConfigs"
+                    :key="config.config_id"
+                    class="config-pill"
+                    :class="{ active: activeReservoirConfigId === config.config_id }"
+                    @click="activeReservoirConfigId = config.config_id"
+                  >
+                    {{ config.lu_id || 'Без LU' }} / {{ config.sloy_id || 'Все слои' }}
+                  </button>
+                </div>
+              </div>
 
-            <div class="panel" v-if="activeReservoirConfig">
-              <div class="toolbar between">
-                <h2>Scope</h2>
-                <button class="button ghost" :disabled="reservoirConfigs.length === 1" @click="removeReservoirConfig(activeReservoirConfig.config_id)">Удалить конфигурацию</button>
+              <div class="field reservoir-strip-field reservoir-lu-field inline">
+                <span>LU</span>
+                <div class="lu-button-group">
+                  <button type="button" class="lu-chip-button" :class="{ active: activeReservoirConfig.lu_id === '' }" @click="activeReservoirConfig.lu_id = ''">Без LU</button>
+                  <button
+                    v-for="lu in luOptions"
+                    :key="lu"
+                    type="button"
+                    class="lu-chip-button"
+                    :class="{ active: activeReservoirConfig.lu_id === lu }"
+                    @click="activeReservoirConfig.lu_id = lu"
+                  >
+                    {{ lu }}
+                  </button>
+                </div>
               </div>
-              <div class="form-grid">
-                <label class="field">
-                  <span>LU</span>
-                  <select v-model="activeReservoirConfig.lu_id">
-                    <option value="">Выберите LU</option>
-                    <option v-for="lu in luOptions" :key="lu" :value="lu">{{ lu }}</option>
-                  </select>
-                </label>
-                <label class="field">
-                  <span>SLOY</span>
-                  <select v-model="activeReservoirConfig.sloy_id">
-                    <option value="">Все слои</option>
-                    <option v-for="sloy in sloyOptions" :key="sloy" :value="sloy">{{ sloy }}</option>
-                  </select>
-                </label>
-              </div>
-              <label class="field">
-                <span>Заметки</span>
-                <textarea v-model="activeReservoirConfig.notes" rows="2"></textarea>
+
+              <label class="field reservoir-strip-field reservoir-sloy-field inline">
+                <span>SLOY</span>
+                <select v-model="activeReservoirConfig.sloy_id">
+                  <option value="">Все слои</option>
+                  <option v-for="sloy in sloyOptions" :key="sloy" :value="sloy">{{ sloy }}</option>
+                </select>
               </label>
+
+              <label class="field reservoir-strip-field reservoir-notes-field inline">
+                <span>Заметки</span>
+                <input v-model="activeReservoirConfig.notes" type="text" placeholder="Комментарий к конфигурации" />
+              </label>
+
+              <div class="reservoir-strip-actions">
+                <button class="button primary" @click="addReservoirConfig">Добавить конфигурацию</button>
+                <button class="button ghost" :disabled="reservoirConfigs.length === 1" @click="removeReservoirConfig(activeReservoirConfig.config_id)">Удалить</button>
+              </div>
             </div>
           </div>
 
@@ -2171,18 +3069,28 @@ onMounted(async () => {
             <div class="panel">
               <h2>Обводненность → NIZ</h2>
               <p class="subtitle">Таблица предзаполнена шагом 5%. В колонку NIZ можно вставить целый столбец через Ctrl+V.</p>
-              <div class="table-wrap medium-wrap">
-                <table>
-                  <thead>
-                    <tr><th>Обводненность, %</th><th>NIZ</th></tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="(row, index) in activeReservoirConfig.displacement_rows" :key="`watercut-${index}`">
-                      <td>{{ row.watercut }}</td>
-                      <td><input v-model="row.NIZ" type="text" class="table-input" @paste="handleNizPaste($event, activeReservoirConfig, index)" /></td>
-                    </tr>
-                  </tbody>
-                </table>
+              <div class="reservoir-grid">
+                <div class="table-wrap compact-grid-wrap">
+                  <table class="compact-grid-table">
+                    <thead>
+                      <tr><th>Обв., %</th><th>NIZ</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(row, index) in activeReservoirConfig.displacement_rows" :key="`watercut-${index}`">
+                        <td>{{ row.watercut }}</td>
+                        <td><input v-model="row.NIZ" type="text" class="table-input compact-table-input" @paste="handleNizPaste($event, activeReservoirConfig, index)" /></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="mini-chart-card">
+                  <svg viewBox="0 0 240 100" class="mini-chart">
+                    <line x1="8" y1="88" x2="232" y2="88" class="mini-axis" />
+                    <line x1="8" y1="8" x2="8" y2="88" class="mini-axis" />
+                    <polyline v-if="reservoirChartPath" :points="reservoirChartPath.replaceAll('M ', '').replaceAll(' L ', ' ')" class="mini-line" />
+                  </svg>
+                  <div class="mini-chart-caption">Кривая NIZ по обводненности</div>
+                </div>
               </div>
             </div>
 
@@ -2191,30 +3099,50 @@ onMounted(async () => {
               <div class="decline-split">
                 <div>
                   <h3>База</h3>
-                  <div class="table-wrap medium-wrap">
-                    <table>
-                      <thead><tr><th>Месяц</th><th>Годовой темп, %</th></tr></thead>
-                      <tbody>
-                        <tr v-for="row in activeReservoirConfig.base_decline_rows" :key="`base-${row.month_index}`">
-                          <td>{{ row.month_index }}</td>
-                          <td><input v-model="row.liquid_decline_factor" type="number" step="0.1" class="table-input" /></td>
-                        </tr>
-                      </tbody>
-                    </table>
+                  <div class="decline-editor-grid">
+                    <div class="table-wrap compact-grid-wrap">
+                      <table class="compact-grid-table">
+                        <thead><tr><th>Мес.</th><th>Год. темп, %</th></tr></thead>
+                        <tbody>
+                          <tr v-for="row in activeReservoirConfig.base_decline_rows" :key="`base-${row.month_index}`">
+                            <td>{{ row.month_index }}</td>
+                            <td><input v-model="row.liquid_decline_factor" type="number" step="0.1" class="table-input compact-table-input" /></td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div class="mini-chart-card">
+                      <svg viewBox="0 0 240 100" class="mini-chart">
+                        <line x1="8" y1="88" x2="232" y2="88" class="mini-axis" />
+                        <line x1="8" y1="8" x2="8" y2="88" class="mini-axis" />
+                        <polyline v-if="baseDeclineChartPath" :points="baseDeclineChartPath.replaceAll('M ', '').replaceAll(' L ', ' ')" class="mini-line decline" />
+                      </svg>
+                      <div class="mini-chart-caption">Base decline</div>
+                    </div>
                   </div>
                 </div>
                 <div>
                   <h3>ВНС</h3>
-                  <div class="table-wrap medium-wrap">
-                    <table>
-                      <thead><tr><th>Месяц</th><th>Годовой темп, %</th></tr></thead>
-                      <tbody>
-                        <tr v-for="row in activeReservoirConfig.new_wells_decline_rows" :key="`new-${row.month_index}`">
-                          <td>{{ row.month_index }}</td>
-                          <td><input v-model="row.liquid_decline_factor" type="number" step="0.1" class="table-input" /></td>
-                        </tr>
-                      </tbody>
-                    </table>
+                  <div class="decline-editor-grid">
+                    <div class="table-wrap compact-grid-wrap">
+                      <table class="compact-grid-table">
+                        <thead><tr><th>Мес.</th><th>Год. темп, %</th></tr></thead>
+                        <tbody>
+                          <tr v-for="row in activeReservoirConfig.new_wells_decline_rows" :key="`new-${row.month_index}`">
+                            <td>{{ row.month_index }}</td>
+                            <td><input v-model="row.liquid_decline_factor" type="number" step="0.1" class="table-input compact-table-input" /></td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div class="mini-chart-card">
+                      <svg viewBox="0 0 240 100" class="mini-chart">
+                        <line x1="8" y1="88" x2="232" y2="88" class="mini-axis" />
+                        <line x1="8" y1="8" x2="8" y2="88" class="mini-axis" />
+                        <polyline v-if="newWellsDeclineChartPath" :points="newWellsDeclineChartPath.replaceAll('M ', '').replaceAll(' L ', ' ')" class="mini-line decline" />
+                      </svg>
+                      <div class="mini-chart-caption">New wells decline</div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2233,13 +3161,13 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div v-else-if="currentInputsTab === 'economics'" class="page-stack">
+        <div v-else-if="activeCanvasNode === 'economics'" class="page-stack">
           <div class="module-grid two-wide">
             <div class="panel">
               <div class="toolbar between">
                 <div>
-                  <h2>Экономические вводные</h2>
-                  <p class="subtitle">MVP-лист: net back по LU. Хранится в ManualInputSet и затем используется Module C.</p>
+                  <h2>Net Back по LU</h2>
+                  <p class="subtitle">LU-специфичная часть EconomicsConfig.</p>
                 </div>
                 <button class="button primary" @click="addEconomicsRow">Добавить LU</button>
               </div>
@@ -2266,6 +3194,29 @@ onMounted(async () => {
             </div>
 
             <div class="panel">
+              <div class="toolbar between">
+                <div>
+                  <h2>Стоимости мероприятий</h2>
+                  <p class="subtitle">`gtm_costs_by_type` из EconomicsConfig.</p>
+                </div>
+                <button class="button primary" @click="addEconomicsCostRow">Добавить тип</button>
+              </div>
+              <div class="table-wrap medium-wrap">
+                <table>
+                  <thead><tr><th>Тип ГТМ</th><th>Стоимость</th></tr></thead>
+                  <tbody>
+                    <tr v-for="row in economicsCostRows" :key="row.id">
+                      <td><input v-model="row.gtm_type" type="text" class="table-input" /></td>
+                      <td><input v-model="row.cost" type="number" step="0.01" class="table-input" /></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="module-grid two-wide">
+            <div class="panel">
               <h2>Сохраненные наборы</h2>
               <p class="subtitle">Загрузка сохраненного ManualInputSet обратно в редактор.</p>
               <div class="form-grid single">
@@ -2279,12 +3230,26 @@ onMounted(async () => {
                 <button class="button primary" :disabled="loading" @click="saveManualInputs">Сохранить текущий набор</button>
               </div>
             </div>
+
+            <div class="panel">
+              <h2>Сводка EconomicsConfig</h2>
+              <div class="detail-summary">
+                <div><span>LU записей</span><strong>{{ economicsRows.filter((row) => row.lu_id).length }}</strong></div>
+                <div><span>Типов затрат</span><strong>{{ economicsCostRows.filter((row) => row.gtm_type).length }}</strong></div>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div v-else-if="currentInputsTab === 'brigades'" class="page-stack">
+        <div v-else-if="activeCanvasNode === 'krs'" class="page-stack">
+          <div class="tabs">
+            <button class="tab-button" :class="{ active: krsInspectorTab === 'brigades' }" @click="krsInspectorTab = 'brigades'">Бригады</button>
+            <button class="tab-button" :class="{ active: krsInspectorTab === 'failure' }" @click="krsInspectorTab = 'failure'">Отказность</button>
+            <button class="tab-button" :class="{ active: krsInspectorTab === 'durations' }" @click="krsInspectorTab = 'durations'">Длительности</button>
+          </div>
+
           <div class="module-grid three-wide">
-            <div class="panel">
+            <div v-if="krsInspectorTab === 'brigades'" class="panel">
               <div class="toolbar between">
                 <div>
                   <h2>Количество бригад по LU</h2>
@@ -2318,7 +3283,7 @@ onMounted(async () => {
               </div>
             </div>
 
-            <div class="panel">
+            <div v-if="krsInspectorTab === 'failure'" class="panel">
               <div class="toolbar between">
                 <div>
                   <h2>Коэффициент отказности</h2>
@@ -2356,7 +3321,7 @@ onMounted(async () => {
               </div>
             </div>
 
-            <div class="panel">
+            <div v-if="krsInspectorTab === 'durations'" class="panel">
               <div class="toolbar between">
                 <div>
                   <h2>Длительности работ</h2>
@@ -2393,11 +3358,41 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div v-else class="page-stack">
+        <div v-else-if="activeCanvasNode === 'forecast'" class="page-stack">
           <div class="module-grid two-wide">
             <div class="panel">
+              <h2>Forecast</h2>
+              <p class="subtitle">`Module B` считает профиль добычи напрямую по привязанным входам сценария. Ограничения optimizer и infra policy на этот расчёт не влияют.</p>
+              <div class="detail-summary">
+                <div><span>Сценарий</span><strong>{{ optimizerForm.scenario_name || selectedScenarioSummary?.name || '—' }}</strong></div>
+                <div><span>Статус</span><strong>{{ scenarioDetail?.scenario?.status || 'draft' }}</strong></div>
+                <div><span>Период</span><strong>{{ formatDateCell(optimizerForm.forecast_start_date) }} — {{ formatDateCell(optimizerForm.forecast_end_date) }}</strong></div>
+                <div><span>Результат</span><strong>{{ scenarioReadiness.hasResult ? 'Профиль рассчитан' : 'Ещё не рассчитан' }}</strong></div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <h2>Активные входы сценария</h2>
+              <div class="detail-summary">
+                <div><span>Wells</span><strong>{{ selectedDatasets.wells?.name || '—' }}</strong></div>
+                <div><span>GTM</span><strong>{{ selectedDatasets.gtm?.name || '—' }}</strong></div>
+                <div><span>Infrastructure</span><strong>{{ selectedDatasets.infrastructure?.name || '—' }}</strong></div>
+                <div><span>ManualInputSet</span><strong>{{ manualInputSets.find((item) => item.reference.manual_input_set_id === selectedManualInputSetId)?.reference.name || '—' }}</strong></div>
+              </div>
+              <div class="validation-box">
+                <strong>Поведение расчёта</strong>
+                <div>Forecast считается без ограничений optimizer и запускается верхней кнопкой `Рассчитать`.</div>
+                <div>Infra policy и objective применяются только на этапе `KRS Optimizer`.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-else-if="activeCanvasNode === 'optimizer'" class="page-stack">
+          <div class="module-grid">
+            <div class="panel">
               <h2>Схема работы оптимизатора</h2>
-              <p class="subtitle">UI настраивает payload запуска. Сам optimizer еще не реализован, но расчетный сценарий Module B уже можно запускать отсюда.</p>
+              <p class="subtitle">Этот блок относится к `Module D: KRS Optimizer`. Здесь задаются настройки построения и оптимизации графика КРС, а не параметры расчёта `Forecast`.</p>
               <div class="form-grid">
                 <label class="field">
                   <span>Название сценария</span>
@@ -2477,25 +3472,10 @@ onMounted(async () => {
               </label>
               <div class="toolbar">
                 <button class="button" :disabled="loading" @click="saveManualInputs">Сохранить ManualInputSet</button>
-                <button class="button primary" :disabled="loading" @click="calculateForecast">Рассчитать профиль Module B</button>
-              </div>
-            </div>
-
-            <div class="panel">
-              <h2>Активные входы сценария</h2>
-              <div class="detail-summary">
-                <div><span>Wells</span><strong>{{ selectedDatasets.wells?.name || '—' }}</strong></div>
-                <div><span>GTM</span><strong>{{ selectedDatasets.gtm?.name || '—' }}</strong></div>
-                <div><span>Infrastructure</span><strong>{{ selectedDatasets.infrastructure?.name || '—' }}</strong></div>
-                <div><span>ManualInputSet</span><strong>{{ manualInputSets.find((item) => item.reference.manual_input_set_id === selectedManualInputSetId)?.reference.name || '—' }}</strong></div>
-              </div>
-              <div class="validation-box">
-                <strong>Дефолтный горизонт</strong>
-                <div>Старт: {{ formatDateCell(optimizerForm.forecast_start_date) }}</div>
-                <div>Конец: {{ formatDateCell(optimizerForm.forecast_end_date) }}</div>
               </div>
             </div>
           </div>
+        </div>
         </div>
       </section>
 
@@ -2509,7 +3489,7 @@ onMounted(async () => {
             <div class="toolbar">
               <select v-model="selectedScenarioId" class="compact-dropdown">
                 <option value="">Выберите сценарий</option>
-                <option v-for="scenario in groupedScenarios" :key="scenario.scenario_id" :value="scenario.scenario_id">
+                <option v-for="scenario in userVisibleScenarios" :key="scenario.scenario_id" :value="scenario.scenario_id">
                   {{ scenario.name }}
                 </option>
               </select>
@@ -2536,6 +3516,18 @@ onMounted(async () => {
                 <p class="subtitle">{{ productionChartSubtitle }}</p>
               </div>
               <div class="toolbar-actions">
+                <div class="mode-toggle">
+                  <button
+                    v-for="metric in PRODUCTION_METRICS"
+                    :key="metric.key"
+                    type="button"
+                    class="mode-toggle-button"
+                    :class="{ active: productionMetric === metric.key }"
+                    @click="productionMetric = metric.key"
+                  >
+                    {{ metric.label }}
+                  </button>
+                </div>
                 <div class="mode-toggle">
                   <button
                     v-for="mode in PRODUCTION_TIME_MODES"
@@ -2633,7 +3625,7 @@ onMounted(async () => {
                     class="production-axis-title"
                     transform="rotate(-90 18 130)"
                   >
-                    Добыча за период, т
+                    {{ `${PRODUCTION_METRICS.find((item) => item.key === productionMetric)?.label || 'Добыча'} за период, ${PRODUCTION_METRICS.find((item) => item.key === productionMetric)?.unit || ''}` }}
                   </text>
                   <text
                     :x="PRODUCTION_CHART_WIDTH - 16"
@@ -2641,7 +3633,7 @@ onMounted(async () => {
                     class="production-axis-title right"
                     transform="rotate(90 1264 130)"
                   >
-                    Накопленная добыча, т
+                    {{ `Накопленная ${PRODUCTION_METRICS.find((item) => item.key === productionMetric)?.label.toLowerCase() || 'добыча'}, ${PRODUCTION_METRICS.find((item) => item.key === productionMetric)?.unit || ''}` }}
                   </text>
                 </g>
                 <g v-for="bar in productionChartBars" :key="bar.date">
@@ -2671,25 +3663,31 @@ onMounted(async () => {
             <div class="toolbar between">
               <div>
                 <h2>Иерархия профиля</h2>
-                <p class="subtitle">Выделение работает по leaf rows. Parent-узлы только разворачивают и задают область выбора.</p>
+                <p class="subtitle">Выделение работает по leaf rows. Parent-узлы только разворачивают и задают область выбора. Справа показан временной ряд по выбранной агрегации.</p>
               </div>
               <button class="button ghost" @click="selectedProductionKeys = []">Сбросить выбор</button>
             </div>
-            <div class="table-wrap hierarchy-wrap">
-              <table class="hierarchy-table">
+            <div class="table-wrap hierarchy-wrap production-hierarchy-wrap">
+              <table class="hierarchy-table production-hierarchy-table">
                 <thead>
                   <tr>
                     <th>Выбор</th>
                     <th>Узел</th>
                     <th>Фонд</th>
                     <th>Скважин</th>
-                    <th>Нефть</th>
-                    <th>Жидкость</th>
-                    <th>Газ</th>
+                    <th>{{ PRODUCTION_METRICS.find((item) => item.key === productionMetric)?.label || 'Показатель' }}</th>
+                    <th
+                      v-for="column in productionTableColumns"
+                      :key="column.key"
+                      class="production-date-column"
+                      :title="column.fullLabel"
+                    >
+                      {{ column.label }}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="row in productionTree.rows" :key="row.key" :class="`node-${row.nodeType}`">
+                  <tr v-for="row in productionTableRows" :key="row.key" :class="`node-${row.nodeType}`">
                     <td><input type="checkbox" :checked="selectedProductionKeys.includes(row.key)" @change="toggleProductionSelection(row.key)" /></td>
                     <td>
                       <div class="node-cell" :style="{ paddingLeft: `${row.depth * 18}px` }">
@@ -2700,9 +3698,14 @@ onMounted(async () => {
                     </td>
                     <td>{{ row.fundType || '—' }}</td>
                     <td>{{ row.wellCount }}</td>
-                    <td>{{ formatCompactNumber(row.totalOil) }}</td>
-                    <td>{{ formatCompactNumber(row.totalLiquid) }}</td>
-                    <td>{{ formatCompactNumber(row.totalGas) }}</td>
+                    <td class="production-total-cell">{{ formatCompactNumber(row.metricTotal) }}</td>
+                    <td
+                      v-for="(value, index) in row.bucketSeries"
+                      :key="`${row.key}:${productionTableColumns[index]?.key || index}`"
+                      class="production-value-cell"
+                    >
+                      {{ formatCompactNumber(value) }}
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -2927,6 +3930,60 @@ onMounted(async () => {
           </div>
         </template>
       </section>
+
+      <div v-if="showMappingModal" class="modal-overlay" @click.self="showMappingModal = false">
+        <div class="modal-card mapping-modal">
+          <div class="toolbar between align-start">
+            <div>
+              <h2>Сопоставление колонок</h2>
+              <p class="subtitle">Проверьте предложенные соответствия. Если все верно, подтвердите и сохраните dataset без ручного прокликивания всех полей.</p>
+            </div>
+            <button class="button ghost" @click="showMappingModal = false">Закрыть</button>
+          </div>
+
+          <div class="mapping-columns-strip">
+            <span v-for="columnName in availableColumnNames" :key="columnName" class="mapping-column-chip">{{ columnName }}</span>
+          </div>
+
+          <div class="table-wrap medium-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Поле</th>
+                  <th>Обязательное</th>
+                  <th>Колонка Excel</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in mappingSuggestionRows" :key="row.fieldName">
+                  <td>{{ row.label }}</td>
+                  <td>{{ row.required ? 'Да' : 'Нет' }}</td>
+                  <td>
+                    <select v-model="normalizeColumns[row.fieldName]" class="table-input">
+                      <option value="">Не сопоставлять</option>
+                      <option v-for="columnName in availableColumnNames" :key="`${row.fieldName}-${columnName}`" :value="columnName">{{ columnName }}</option>
+                    </select>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="toolbar between">
+            <div class="subtitle">Обязательные поля вынесены вверх. Предложения уже проставлены автоматически.</div>
+            <div class="toolbar">
+              <button class="button" :disabled="loading" @click="showMappingModal = false">Принять</button>
+              <button
+                class="button primary"
+                :disabled="!inputFile || loading"
+                @click="showMappingModal = false; normalizeDataset()"
+              >
+                Принять и сохранить
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
   </div>
 </template>
@@ -3616,8 +4673,178 @@ th {
 
 .node-lu td strong,
 .node-sloy td strong,
+.node-type td strong,
+.node-object td strong,
 .node-pad td strong {
   font-weight: 700;
+}
+
+.reservoir-strip.compact {
+  padding: 12px 16px;
+}
+
+.reservoir-strip.compact .reservoir-strip-title {
+  display: none;
+}
+
+.reservoir-strip-row.single-line {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: nowrap;
+}
+
+.reservoir-strip-field.inline {
+  margin: 0;
+  min-width: 0;
+}
+
+.reservoir-strip-field.inline span {
+  margin-bottom: 4px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.reservoir-configs {
+  flex: 1 1 360px;
+}
+
+.reservoir-lu-field {
+  flex: 1.4 1 520px;
+}
+
+.reservoir-sloy-field {
+  flex: 0 0 200px;
+}
+
+.reservoir-notes-field {
+  flex: 0 0 220px;
+}
+
+.reservoir-notes-field input {
+  min-height: 36px;
+}
+
+.reservoir-strip-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.reservoir-strip-actions .button {
+  min-height: 36px;
+  padding: 0 14px;
+}
+
+.reservoir-configs .config-list {
+  min-height: 36px;
+  align-items: center;
+}
+
+.reservoir-strip.compact .lu-button-group {
+  gap: 6px;
+}
+
+.reservoir-strip.compact .lu-chip-button {
+  min-height: 36px;
+  padding: 0 10px;
+}
+
+@media (max-width: 1580px) {
+  .reservoir-strip-row.single-line {
+    flex-wrap: wrap;
+  }
+}
+
+.lu-button-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lu-chip-button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(35, 50, 68, 0.12);
+  border-radius: 999px;
+  background: #f5f8fc;
+  color: #41556c;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lu-chip-button.active {
+  background: #eaf3ff;
+  border-color: rgba(47, 128, 255, 0.26);
+  color: #154a9a;
+}
+
+.reservoir-grid,
+.decline-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 12px;
+  align-items: start;
+}
+
+.compact-grid-wrap {
+  max-height: 420px;
+}
+
+.compact-grid-table {
+  table-layout: fixed;
+}
+
+.compact-grid-table th,
+.compact-grid-table td {
+  padding: 4px 6px;
+  font-size: 12px;
+  line-height: 1.15;
+}
+
+.compact-table-input {
+  min-height: 28px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.mini-chart-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(35, 50, 68, 0.08);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff, #f9fbff);
+}
+
+.mini-chart {
+  width: 100%;
+  height: 100px;
+  overflow: visible;
+}
+
+.mini-axis {
+  stroke: rgba(35, 50, 68, 0.18);
+  stroke-width: 1;
+}
+
+.mini-line {
+  fill: none;
+  stroke: #2f80ff;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mini-line.decline {
+  stroke: #ff8a2b;
+}
+
+.mini-chart-caption {
+  color: #5b6d82;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .decline-split {
@@ -3731,6 +4958,70 @@ th {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.production-hierarchy-wrap {
+  overflow: auto;
+}
+
+.production-hierarchy-table {
+  min-width: max-content;
+}
+
+.production-hierarchy-table th,
+.production-hierarchy-table td {
+  white-space: nowrap;
+}
+
+.production-hierarchy-table th:nth-child(1),
+.production-hierarchy-table td:nth-child(1) {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #fff;
+}
+
+.production-hierarchy-table th:nth-child(2),
+.production-hierarchy-table td:nth-child(2) {
+  position: sticky;
+  left: 64px;
+  z-index: 2;
+  background: #fff;
+}
+
+.production-hierarchy-table th:nth-child(3),
+.production-hierarchy-table td:nth-child(3) {
+  position: sticky;
+  left: 324px;
+  z-index: 2;
+  background: #fff;
+}
+
+.production-hierarchy-table th:nth-child(4),
+.production-hierarchy-table td:nth-child(4) {
+  position: sticky;
+  left: 444px;
+  z-index: 2;
+  background: #fff;
+}
+
+.production-hierarchy-table th:nth-child(5),
+.production-hierarchy-table td:nth-child(5) {
+  position: sticky;
+  left: 544px;
+  z-index: 2;
+  background: #fff;
+}
+
+.production-date-column,
+.production-value-cell {
+  min-width: 86px;
+  text-align: right;
+}
+
+.production-total-cell {
+  text-align: right;
+  font-weight: 700;
 }
 
 .production-chart {
@@ -4210,6 +5501,8 @@ th {
   .info-cards,
   .stats-grid,
   .decline-split,
+  .reservoir-grid,
+  .decline-editor-grid,
   .scenario-card-grid,
   .scenario-card-links {
     grid-template-columns: 1fr;

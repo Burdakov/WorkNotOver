@@ -45,6 +45,8 @@
 - `well_pad_id`
 - профиль `ProductionPoint[]`
 
+`ProductionPoint[]` должен содержать посуточные `oil_rate`, `liquid_rate`, `gas_rate`, чтобы UI раздела `Добыча` мог без пересчёта forecast math агрегировать их в дневные, месячные и годовые buckets и переключать отображаемую метрику между нефтью, жидкостью и газом.
+
 ## Зона ответственности
 
 - baseline forecast
