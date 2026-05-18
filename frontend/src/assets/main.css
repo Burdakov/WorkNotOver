@@ -1050,14 +1050,24 @@ th {
 
 .upload-compact-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(140px, 0.8fr) minmax(220px, 1fr) minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(180px, 1fr) minmax(140px, 0.8fr) minmax(220px, 1fr) minmax(220px, 1fr);
   gap: 10px;
   align-items: end;
 }
 
 .upload-actions {
-  justify-content: flex-end;
-  align-items: flex-end;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  align-items: stretch;
+  gap: 12px;
+  width: 100%;
+}
+
+.upload-actions .button {
+  width: 100%;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .compact-info-cards {
