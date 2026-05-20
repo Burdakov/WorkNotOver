@@ -582,9 +582,9 @@ onMounted(async () => {
             <p class="subtitle">Загрузите Excel-файл с графиком КРС или откройте уже сохранённый график из сервиса.</p>
 
             <label class="upload-dropzone">
-              <input type="file" accept=".xlsx,.xls" @change="handleFileChange" />
+              <input type="file" accept=".xlsx,.xls,.xlsm" @change="handleFileChange" />
               <strong>Перетащите Excel-файл сюда или выберите его</strong>
-              <span>Поддерживаются форматы .xlsx и .xls</span>
+              <span>Поддерживаются форматы .xlsx, .xls и .xlsm</span>
             </label>
 
             <div class="form-grid single">

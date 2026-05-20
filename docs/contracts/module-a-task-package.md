@@ -116,11 +116,22 @@ Excel-файл текущего режима скважин.
 - current GOR
 - cumulative production, если доступно
 - cumulative gas production, если доступно
-- NIZ
+- NIZ, если присутствует в исходном файле, может быть импортирован как legacy-поле wells dataset, но каноническим источником `NIZ` для сценария должен считаться отдельный dataset типа `niz`
 - status
 - fund type (`Base` / `New wells`), если доступно
 
 ### Входной источник 2
+
+Excel-файл значений `NIZ` по скважинам.
+
+Ожидаемые логические поля:
+
+- well identifier / well name
+- NIZ
+
+Результат должен сохраняться как отдельный dataset с `dataset_type = niz` и использоваться для сценарного связывания `well_name -> NIZ`.
+
+### Входной источник 3
 
 Excel-файл графика ГТМ / кандидатных мероприятий.
 
@@ -141,7 +152,7 @@ Excel-файл графика ГТМ / кандидатных мероприят
 - expected GOR change, если доступно
 - duration, если доступно
 
-### Входной источник 3
+### Входной источник 4
 
 Excel-файл инфраструктурных ограничений.
 
@@ -155,7 +166,7 @@ Excel-файл инфраструктурных ограничений.
 - capacities Gas
 - connection / relation to wells or upstream object
 
-### Входной источник 4
+### Входной источник 5
 
 Excel-файл внешнего готового графика КРС.
 
@@ -175,7 +186,7 @@ Excel-файл внешнего готового графика КРС.
 
 Результат должен нормализоваться в `KrsScheduleScenario` и сохраняться в storage layer как dataset с `dataset_type = external_krs_schedule`.
 
-### Входной источник 5
+### Входной источник 6
 
 Ручной ввод через UI-формы.
 
@@ -200,11 +211,17 @@ Excel-файл внешнего готового графика КРС.
 
 ### Выход 2
 
+`NizDataset`
+
+Содержит валидированный набор scenario-bound сущностей `NizByWell`, пригодных для связывания `well_name -> NIZ` внутри активного сценария.
+
+### Выход 3
+
 `NormalizedGtmDataset`
 
 Содержит валидированный набор нормализованных сущностей `GtmCandidate` c reference-полями иерархии `LU`, `SLOY`, `WellPad`.
 
-### Выход 3
+### Выход 4
 
 `NormalizedInfrastructureDataset`
 
@@ -213,7 +230,7 @@ Excel-файл внешнего готового графика КРС.
 - `InfrastructureObject[]`
 - `InfrastructureConnection[]`
 
-### Выход 4
+### Выход 5
 
 `ImportValidationReport`
 
@@ -226,19 +243,19 @@ Excel-файл внешнего готового графика КРС.
 - warnings;
 - fatal validation errors, если есть.
 
-### Выход 5
+### Выход 6
 
 `DatasetReference` / metadata сохранённого набора данных
 
 Должен позволять downstream-модулям и сценарному контуру работать уже с сохранённым dataset, а не с raw Excel-файлом.
 
-### Выход 6
+### Выход 7
 
 `ImportedKrsSchedulePayload`
 
 Должен позволять `Module F: Planner` открыть внешний график КРС как готовую planner-compatible schedule model без обязательного прохождения через `Module D`.
 
-### Выход 7
+### Выход 8
 
 `ManualInputReference`
 
@@ -273,6 +290,7 @@ Excel-файл внешнего готового графика КРС.
 11. `Module A` не должен вшивать forecast-, economics-, planner- или scenario-assumptions.
 12. Внешний готовый график КРС после нормализации должен сохраняться как `Dataset` / `DatasetVersion` с `dataset_type = external_krs_schedule` и иметь извлекаемую структуру `KrsScheduleScenario`.
 13. Ручной коэффициент отказности должен сохраняться как отдельная конфигурационная сущность в составе `ManualInputSet`, а не как неструктурированное поле UI.
+14. Dataset типа `niz` должен позволять построить полное scenario-bound отображение `well_name -> NIZ` для всех скважин, которые downstream-сценарий привяжет из `wells` и `gtm`; если такого покрытия нет, сценарный контур должен маркировать входы как неполные.
 
 ---
 
@@ -419,6 +437,7 @@ Excel-файл внешнего готового графика КРС.
 12. Ни raw Excel-, ни pandas-структуры, ни raw form-state не выходят за границы import layer.
 13. Unit- или service-level tests покрывают основные успешные, ошибочные, hierarchy-, gas-, external-krs- и persistence-сценарии.
 14. Документация по контракту `Module A` обновляется в той же задаче, что и реализация.
+15. Dataset `niz` может быть привязан к сценарию как отдельный вход и использоваться downstream-модулями как канонический источник `NIZ`.
 
 ---
 

@@ -45,6 +45,7 @@ def _context_to_response(context: dict[str, Any] | None) -> ScenarioContextRespo
     context = context or {}
     return ScenarioContextResponse(
         wells_dataset=DatasetReference(**context["wells_dataset"]) if context.get("wells_dataset") else None,
+        niz_dataset=DatasetReference(**context["niz_dataset"]) if context.get("niz_dataset") else None,
         gtm_dataset=DatasetReference(**context["gtm_dataset"]) if context.get("gtm_dataset") else None,
         infrastructure_dataset=DatasetReference(**context["infrastructure_dataset"]) if context.get("infrastructure_dataset") else None,
         external_krs_schedule_dataset=DatasetReference(**context["external_krs_schedule_dataset"]) if context.get("external_krs_schedule_dataset") else None,
@@ -174,6 +175,46 @@ def _well_key_from_payload(item: dict[str, Any]) -> str:
     return str(item.get("well_name") or "").strip()
 
 
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _add_node_issue(node: ScenarioInputNodeValidation, issue: str) -> None:
+    if issue and issue not in node.issues:
+        node.issues.append(issue)
+
+
+def _mark_node_partial(node: ScenarioInputNodeValidation, issue: str) -> None:
+    node.state = "partial"
+    _add_node_issue(node, issue)
+
+
+def _build_niz_lookup(payload: list[dict[str, Any]]) -> dict[str, float]:
+    lookup: dict[str, float] = {}
+    for item in payload:
+        well_key = _well_key_from_payload(item)
+        niz_value = _coerce_float(item.get("niz"))
+        if well_key and niz_value > 0:
+            lookup[well_key] = niz_value
+    return lookup
+
+
+def _attach_niz_to_payload(payload: list[dict[str, Any]], niz_lookup: dict[str, float]) -> list[dict[str, Any]]:
+    enriched: list[dict[str, Any]] = []
+    for item in payload:
+        item_copy = dict(item)
+        well_key = _well_key_from_payload(item_copy)
+        if well_key and well_key in niz_lookup:
+            item_copy["niz"] = niz_lookup[well_key]
+        enriched.append(item_copy)
+    return enriched
+
+
 def _extract_external_schedule_items(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, dict):
         return []
@@ -186,7 +227,7 @@ def _extract_external_schedule_items(payload: Any) -> list[dict[str, Any]]:
     return [item for item in items if isinstance(item, dict)]
 
 
-def _build_input_validation(db: Session, scenario, context: ScenarioContextResponse) -> ScenarioInputValidationResponse:
+def _build_input_validation_legacy(db: Session, scenario, context: ScenarioContextResponse) -> ScenarioInputValidationResponse:
     validation = ScenarioInputValidationResponse(
         wells=_make_input_node_validation("ready" if context.wells_dataset else "empty"),
         gtm=_make_input_node_validation("ready" if context.gtm_dataset else "empty"),
@@ -259,6 +300,123 @@ def _build_input_validation(db: Session, scenario, context: ScenarioContextRespo
     return validation
 
 
+def _build_input_validation(db: Session, scenario, context: ScenarioContextResponse) -> ScenarioInputValidationResponse:
+    validation = ScenarioInputValidationResponse(
+        wells=_make_input_node_validation("ready" if context.wells_dataset else "empty"),
+        niz=_make_input_node_validation("ready" if context.niz_dataset else "empty"),
+        gtm=_make_input_node_validation("ready" if context.gtm_dataset else "empty"),
+        infrastructure=_make_input_node_validation("ready" if context.infrastructure_dataset else "empty"),
+        external_krs_schedule=_make_input_node_validation("ready" if context.external_krs_schedule_dataset else "empty"),
+        manual_input_set=_make_input_node_validation("ready" if context.manual_input_set else "empty"),
+    )
+
+    scenario_mode = str((scenario.metadata_json or {}).get("scenario_source_mode") or "")
+    requires_external = scenario_mode == "existing_krs"
+
+    issues: list[str] = []
+    if validation.wells.state != "ready":
+        issue = "Не привязан dataset wells."
+        _add_node_issue(validation.wells, issue)
+        issues.append(issue)
+    if validation.niz.state != "ready":
+        issue = "Не привязан dataset NIZ."
+        _add_node_issue(validation.niz, issue)
+        issues.append(issue)
+    if validation.gtm.state != "ready":
+        issue = "Не привязан dataset GTM."
+        _add_node_issue(validation.gtm, issue)
+        issues.append(issue)
+    if validation.manual_input_set.state != "ready":
+        issue = "Не привязан ManualInputSet."
+        _add_node_issue(validation.manual_input_set, issue)
+        issues.append(issue)
+    if requires_external and validation.external_krs_schedule.state != "ready":
+        issue = "Для сценария с внешним графиком КРС должен быть привязан dataset external_krs_schedule."
+        _add_node_issue(validation.external_krs_schedule, issue)
+        issues.append(issue)
+
+    wells_payload: list[dict[str, Any]] = []
+    gtm_payload: list[dict[str, Any]] = []
+    niz_payload: list[dict[str, Any]] = []
+    external_items: list[dict[str, Any]] = []
+
+    if context.wells_dataset is not None:
+        wells_payload = _resolve_payload_from_reference(db, context.wells_dataset, expected_type="wells")
+    if context.gtm_dataset is not None:
+        gtm_payload = _resolve_payload_from_reference(db, context.gtm_dataset, expected_type="gtm")
+    if context.niz_dataset is not None:
+        niz_payload = _resolve_payload_from_reference(db, context.niz_dataset, expected_type="niz")
+    if context.external_krs_schedule_dataset is not None:
+        resolved = DatasetRepository(db).get_dataset_version(
+            context.external_krs_schedule_dataset.dataset_id,
+            context.external_krs_schedule_dataset.dataset_version_id,
+        )
+        if resolved is not None:
+            _, version = resolved
+            external_items = _extract_external_schedule_items(version.normalized_payload_json)
+        if not external_items:
+            issue = "Во внешнем графике КРС нет нормализованных schedule items."
+            _mark_node_partial(validation.external_krs_schedule, issue)
+            issues.append(issue)
+
+    if context.niz_dataset is not None and not niz_payload:
+        issue = "В dataset NIZ нет нормализованных записей."
+        _mark_node_partial(validation.niz, issue)
+        issues.append(issue)
+
+    if wells_payload or gtm_payload:
+        wells_keys = {_well_key_from_payload(item) for item in wells_payload if _well_key_from_payload(item)}
+        gtm_keys = {_well_key_from_payload(item) for item in gtm_payload if _well_key_from_payload(item)}
+        niz_keys = set(_build_niz_lookup(niz_payload))
+
+        missing_niz_for_wells = sorted(wells_keys - niz_keys)
+        missing_niz_for_gtm = sorted(gtm_keys - niz_keys)
+
+        if missing_niz_for_wells:
+            preview = ", ".join(missing_niz_for_wells[:5])
+            suffix = "..." if len(missing_niz_for_wells) > 5 else ""
+            issue = f"В wells dataset есть скважины без NIZ в scenario-bound dataset: {preview}{suffix}"
+            _mark_node_partial(validation.wells, issue)
+            _mark_node_partial(validation.niz, issue)
+            issues.append(issue)
+        if missing_niz_for_gtm:
+            preview = ", ".join(missing_niz_for_gtm[:5])
+            suffix = "..." if len(missing_niz_for_gtm) > 5 else ""
+            issue = f"В GTM dataset есть скважины без NIZ в scenario-bound dataset: {preview}{suffix}"
+            _mark_node_partial(validation.gtm, issue)
+            _mark_node_partial(validation.niz, issue)
+            issues.append(issue)
+
+    if external_items:
+        external_wells = {
+            _well_key_from_payload(item)
+            for item in external_items
+            if _well_key_from_payload(item)
+        }
+        wells_keys = {_well_key_from_payload(item) for item in wells_payload if _well_key_from_payload(item)}
+        gtm_keys = {_well_key_from_payload(item) for item in gtm_payload if _well_key_from_payload(item)}
+
+        missing_in_wells = sorted(external_wells - wells_keys)
+        missing_in_gtm = sorted(external_wells - gtm_keys)
+
+        if missing_in_wells:
+            preview = ", ".join(missing_in_wells[:5])
+            suffix = "..." if len(missing_in_wells) > 5 else ""
+            issue = f"Во внешнем графике КРС есть скважины, отсутствующие в wells dataset: {preview}{suffix}"
+            _mark_node_partial(validation.wells, issue)
+            issues.append(issue)
+        if missing_in_gtm:
+            preview = ", ".join(missing_in_gtm[:5])
+            suffix = "..." if len(missing_in_gtm) > 5 else ""
+            issue = f"Во внешнем графике КРС есть скважины, отсутствующие в GTM dataset: {preview}{suffix}"
+            _mark_node_partial(validation.gtm, issue)
+            issues.append(issue)
+
+    validation.issues = issues
+    validation.is_forecast_ready = not issues
+    return validation
+
+
 def _ensure_pure_base_scenario(
     db: Session,
     *,
@@ -315,6 +473,7 @@ def _run_forecast_calculation(
     service = ForecastService(
         wells_reference=context.wells_dataset,
         wells_payload=wells_payload,
+        niz_reference=context.niz_dataset,
         gtm_reference=context.gtm_dataset,
         gtm_payload=[] if force_without_gtm else gtm_payload,
         manual_input_reference=context.manual_input_set,
@@ -327,6 +486,10 @@ def _run_forecast_calculation(
             wells={
                 "dataset_id": context.wells_dataset.dataset_id,
                 "dataset_version_id": context.wells_dataset.dataset_version_id,
+            },
+            niz={
+                "dataset_id": context.niz_dataset.dataset_id,
+                "dataset_version_id": context.niz_dataset.dataset_version_id,
             },
             gtm={
                 "dataset_id": context.gtm_dataset.dataset_id,
@@ -351,6 +514,8 @@ def _build_context_from_request(
     context = dict(existing_context or {})
     if bindings.wells is not None:
         context["wells_dataset"] = _resolve_dataset_reference(db, bindings.wells, expected_type="wells").model_dump()
+    if bindings.niz is not None:
+        context["niz_dataset"] = _resolve_dataset_reference(db, bindings.niz, expected_type="niz").model_dump()
     if bindings.gtm is not None:
         context["gtm_dataset"] = _resolve_dataset_reference(db, bindings.gtm, expected_type="gtm").model_dump()
     if bindings.infrastructure is not None:
@@ -387,7 +552,11 @@ def _calculate_for_scenario(
 
     wells_payload = _resolve_payload_from_reference(db, context.wells_dataset, expected_type="wells")
     gtm_payload = _resolve_payload_from_reference(db, context.gtm_dataset, expected_type="gtm")
+    niz_payload = _resolve_payload_from_reference(db, context.niz_dataset, expected_type="niz")
     manual_input_payload = _resolve_manual_input_payload(db, context.manual_input_set)
+    niz_lookup = _build_niz_lookup(niz_payload)
+    wells_payload = _attach_niz_to_payload(wells_payload, niz_lookup)
+    gtm_payload = _attach_niz_to_payload(gtm_payload, niz_lookup)
 
     pure_base_scenario_id: str | None = None
     is_pure_base = _is_pure_base_metadata(scenario.metadata_json)

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import shutil
 from pathlib import Path
@@ -16,6 +16,7 @@ from app.services.importing.normalizers import (
     normalize_external_krs_schedule,
     normalize_gtm,
     normalize_infrastructure,
+    normalize_niz,
     normalize_wells,
     resolve_columns,
     validate_hierarchy,
@@ -39,6 +40,10 @@ _SOURCE_KIND_MAPPING_FIELDS = {
         "gor",
         "cumulative_oil",
         "cumulative_gas",
+        "niz",
+    },
+    "niz": {
+        "well",
         "niz",
     },
     "gtm": {
@@ -107,8 +112,8 @@ def _build_column_mappings(source_kind: str, resolved_columns: dict[str, str | N
 @router.post("/files/upload", response_model=UploadResponse)
 def upload_excel(file: UploadFile = File(...), db: Session = Depends(get_db)) -> UploadResponse:
     extension = Path(file.filename or "source.xlsx").suffix.lower()
-    if extension not in {".xlsx", ".xls"}:
-        raise HTTPException(status_code=400, detail="Поддерживаются только Excel-файлы .xlsx и .xls.")
+    if extension not in {".xlsx", ".xls", ".xlsm"}:
+        raise HTTPException(status_code=400, detail="Поддерживаются только Excel-файлы .xlsx, .xls и .xlsm.")
 
     file_id = f"{uuid4()}{extension}"
     stored_path = STORAGE_DIR / file_id
@@ -140,7 +145,7 @@ def list_files(db: Session = Depends(get_db)) -> list[UploadedFileItem]:
 def get_file_details(file_id: str, sheet_name: str | None = None, db: Session = Depends(get_db)) -> UploadResponse:
     uploaded = next((item for item in DatasetRepository(db).list_uploaded_files() if item.file_id == file_id), None)
     if uploaded is None:
-        raise HTTPException(status_code=404, detail="Файл не найден.")
+        raise HTTPException(status_code=404, detail="Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ.")
 
     sheets, selected_sheet, df = sheet_df(Path(uploaded.stored_path), sheet_name)
     return UploadResponse(
@@ -180,7 +185,7 @@ def list_datasets(db: Session = Depends(get_db)) -> list[dict]:
 def get_dataset(dataset_id: str, dataset_version_id: str | None = None, db: Session = Depends(get_db)) -> dict:
     resolved = DatasetRepository(db).get_dataset_version(dataset_id, dataset_version_id)
     if resolved is None:
-        raise HTTPException(status_code=404, detail="Dataset не найден.")
+        raise HTTPException(status_code=404, detail="Dataset РЅРµ РЅР°Р№РґРµРЅ.")
 
     dataset, version = resolved
     return {
@@ -206,7 +211,7 @@ def normalize_dataset(payload: NormalizeRequest, db: Session = Depends(get_db)) 
     repo = DatasetRepository(db)
     uploaded = next((item for item in repo.list_uploaded_files() if item.file_id == payload.file_id), None)
     if uploaded is None:
-        raise HTTPException(status_code=404, detail="Файл не найден.")
+        raise HTTPException(status_code=404, detail="Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ.")
 
     file_path = Path(uploaded.stored_path)
     _, selected_sheet, df = sheet_df(file_path, payload.sheet_name)
@@ -227,6 +232,8 @@ def normalize_dataset(payload: NormalizeRequest, db: Session = Depends(get_db)) 
     if payload.source_kind == "wells":
         normalized_payload = normalize_wells(df, resolved_columns, report)
         validate_hierarchy(normalized_payload, report)
+    elif payload.source_kind == "niz":
+        normalized_payload = normalize_niz(df, resolved_columns, report)
     elif payload.source_kind == "gtm":
         normalized_payload = normalize_gtm(df, resolved_columns, report)
         validate_hierarchy(normalized_payload, report)
@@ -235,7 +242,7 @@ def normalize_dataset(payload: NormalizeRequest, db: Session = Depends(get_db)) 
     elif payload.source_kind == "external_krs_schedule":
         normalized_payload = normalize_external_krs_schedule(df, resolved_columns, report)
     else:
-        raise HTTPException(status_code=400, detail="Неподдерживаемый source_kind.")
+        raise HTTPException(status_code=400, detail="РќРµРїРѕРґРґРµСЂР¶РёРІР°РµРјС‹Р№ source_kind.")
 
     try:
         dataset_reference = repo.create_dataset_version(
@@ -262,3 +269,4 @@ def normalize_dataset(payload: NormalizeRequest, db: Session = Depends(get_db)) 
         validation_report=report,
         normalized_payload=normalized_payload,
     )
+

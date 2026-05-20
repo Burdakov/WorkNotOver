@@ -44,7 +44,12 @@ const SOURCE_KIND_META = {
   wells: {
     title: 'Загрузить базовый фонд',
     description: 'Формирует dataset типа wells для Module B.',
-    fields: ['well', 'area', 'lu', 'sloy', 'well_pad', 'brigade', 'fund_type', 'oil_rate', 'liquid_rate', 'gas_rate', 'watercut', 'gor', 'cumulative_oil', 'cumulative_gas', 'niz'],
+    fields: ['well', 'area', 'lu', 'sloy', 'well_pad', 'brigade', 'fund_type', 'oil_rate', 'liquid_rate', 'gas_rate', 'watercut', 'gor', 'cumulative_oil', 'cumulative_gas'],
+  },
+  niz: {
+    title: 'Р—Р°РіСЂСѓР·РёС‚СЊ NIZ РїРѕ СЃРєРІР°Р¶РёРЅР°Рј',
+    description: 'Р¤РѕСЂРјРёСЂСѓРµС‚ scenario-bound dataset С‚РёРїР° niz. РљР°Р¶РґР°СЏ СЃРєРІР°Р¶РёРЅР° РёР· wells Рё GTM РґРѕР»Р¶РЅР° РёРјРµС‚СЊ СЃРІРѕС‘ Р·РЅР°С‡РµРЅРёРµ NIZ.',
+    fields: ['well', 'niz'],
   },
   gtm: {
     title: 'Загрузить план ГТМ',
@@ -129,6 +134,7 @@ const FRONTEND_MAPPING_HINTS = {
 }
 const REQUIRED_MAPPING_FIELDS = {
   wells: ['well', 'liquid_rate'],
+  niz: ['well', 'niz'],
   gtm: ['well', 'planned_work', 'start_date'],
   infrastructure: ['object_name', 'object_type'],
   external_krs_schedule: ['brigade', 'well', 'start_date', 'end_date', 'planned_work'],
@@ -383,12 +389,14 @@ const plannerPublishScenarioName = ref('')
 
 const selectedDatasets = reactive({
   wells: null,
+  niz: null,
   gtm: null,
   infrastructure: null,
   external_krs_schedule: null,
 })
 const selectedDatasetKeys = reactive({
   wells: '',
+  niz: '',
   gtm: '',
   infrastructure: '',
   external_krs_schedule: '',
@@ -460,6 +468,7 @@ const infrastructureMetric = ref('liquid')
 const selectedInfrastructureRowKey = ref('infra:total')
 const krsInspectorTab = ref('brigades')
 const expandedWellsKeys = ref([])
+const expandedNizKeys = ref([])
 const expandedGtmKeys = ref([])
 const expandedInfrastructureKeys = ref([])
 
@@ -494,7 +503,7 @@ const availableColumns = computed(() => inputFile.value?.columns_info || [])
 const availableColumnNames = computed(() => availableColumns.value.map((column) => column.name))
 const previewColumns = computed(() => Object.keys(inputFile.value?.preview?.[0] || {}))
 const datasetTypes = computed(() => {
-  const groups = { wells: [], gtm: [], infrastructure: [], external_krs_schedule: [] }
+  const groups = { wells: [], niz: [], gtm: [], infrastructure: [], external_krs_schedule: [] }
   datasets.value.forEach((item) => {
     const type = item.dataset_reference.dataset_type
     if (groups[type]) groups[type].push(item)
@@ -582,6 +591,7 @@ const plannerDerivedScenarioMap = computed(() => Object.fromEntries(
 ))
 const scenarioContextStatus = computed(() => ({
   wells: selectedScenarioValidation.value?.wells?.state || (selectedDatasets.wells ? 'ready' : 'empty'),
+  niz: selectedScenarioValidation.value?.niz?.state || (selectedDatasets.niz ? 'ready' : 'empty'),
   gtm: selectedScenarioValidation.value?.gtm?.state || (selectedDatasets.gtm ? 'ready' : 'empty'),
   infrastructure: selectedScenarioValidation.value?.infrastructure?.state || (selectedDatasets.infrastructure ? 'ready' : 'empty'),
   manual_input: selectedScenarioValidation.value?.manual_input_set?.state || (selectedManualInputSetId.value ? 'ready' : 'empty'),
@@ -638,6 +648,7 @@ const krsInputStatus = computed(() => {
 })
 const inputNodeStatuses = computed(() => ({
   wells: scenarioContextStatus.value.wells,
+  niz: scenarioContextStatus.value.niz,
   gtm: scenarioContextStatus.value.gtm,
   infrastructure: scenarioContextStatus.value.infrastructure,
   reservoir: reservoirInputStatus.value,
@@ -652,6 +663,7 @@ const canCalculateScenario = computed(() => {
   }
   return Boolean(
     scenarioContextStatus.value.wells === 'ready'
+    && scenarioContextStatus.value.niz === 'ready'
     && scenarioContextStatus.value.gtm === 'ready'
     && scenarioContextStatus.value.manual_input === 'ready'
     && scenarioContextStatus.value.external_krs_schedule === 'ready'
@@ -667,6 +679,7 @@ const scenarioReadiness = computed(() => {
         : true
   const hasInputs = Boolean(
     scenarioContextStatus.value.wells === 'ready'
+    && scenarioContextStatus.value.niz === 'ready'
     && scenarioContextStatus.value.gtm === 'ready'
     && scenarioContextStatus.value.manual_input === 'ready'
     && (scenarioFlowMode.value !== 'external' || scenarioContextStatus.value.external_krs_schedule === 'ready'),
@@ -717,7 +730,7 @@ const workflowSteps = computed(() => {
     {
       key: 'inputs',
       label: '3. Входы сценария',
-      description: hasInputs ? 'Wells, GTM и ManualInputSet привязаны.' : 'Нужно привязать Wells, GTM и ManualInputSet.',
+      description: hasInputs ? 'Wells, NIZ, GTM и ManualInputSet привязаны.' : 'Нужно привязать Wells, NIZ, GTM и ManualInputSet.',
       ready: hasInputs,
     },
     {
@@ -1053,8 +1066,28 @@ const buildGroupedHierarchyRows = (rows, metricBuilder) => {
 }
 
 const wellsDatasetRows = computed(() => datasetRowsFromReference(selectedDatasets.wells))
+const nizDatasetRows = computed(() => datasetRowsFromReference(selectedDatasets.niz))
 const gtmDatasetRows = computed(() => datasetRowsFromReference(selectedDatasets.gtm))
 const infrastructureDatasetRows = computed(() => datasetRowsFromReference(selectedDatasets.infrastructure))
+const wellsHierarchyLookup = computed(() => {
+  const lookup = new Map()
+  wellsDatasetRows.value.forEach((row) => {
+    const key = pickRowValue(row, ['well_id', 'well_name', 'well'])
+    if (key) lookup.set(key, row)
+  })
+  return lookup
+})
+const nizHierarchySourceRows = computed(() => nizDatasetRows.value.map((row) => {
+  const key = pickRowValue(row, ['well_id', 'well_name', 'well'])
+  const linkedWell = wellsHierarchyLookup.value.get(key) || null
+  return {
+    ...linkedWell,
+    ...row,
+    lu_id: pickRowValue(linkedWell, ['lu_id', 'lu']),
+    well_pad_id: pickRowValue(linkedWell, ['well_pad_id', 'well_pad']),
+    well_name: pickRowValue(row, ['well_name', 'well']) || pickRowValue(linkedWell, ['well_name', 'well']),
+  }
+}))
 
 const wellsHierarchyRows = computed(() => buildGroupedHierarchyRows(
   wellsDatasetRows.value,
@@ -1063,6 +1096,13 @@ const wellsHierarchyRows = computed(() => buildGroupedHierarchyRows(
     : { count: 0, oil: 0, liquid: 0, gas: 0 },
 ))
 const visibleWellsHierarchyRows = computed(() => buildVisibleHierarchyRows(wellsHierarchyRows.value, expandedWellsKeys.value))
+const nizHierarchyRows = computed(() => buildGroupedHierarchyRows(
+  nizHierarchySourceRows.value,
+  (row) => row
+    ? { count: 1, oil: 0, liquid: pickNumberValue(row, ['niz']), gas: 0 }
+    : { count: 0, oil: 0, liquid: 0, gas: 0 },
+))
+const visibleNizHierarchyRows = computed(() => buildVisibleHierarchyRows(nizHierarchyRows.value, expandedNizKeys.value))
 
 const gtmHierarchyRows = computed(() => buildGroupedHierarchyRows(
   gtmDatasetRows.value,
@@ -1247,6 +1287,10 @@ const nodeInspectorTitle = computed(() => {
     default: return 'Сценарий'
   }
 })
+
+const effectiveNodeInspectorTitle = computed(() => (
+  activeCanvasNode.value === 'niz' ? 'NIZ' : nodeInspectorTitle.value
+))
 
 const productionTree = computed(() => {
   const wells = Array.isArray(scenarioDetail.value?.wells) ? scenarioDetail.value.wells : []
@@ -1651,6 +1695,7 @@ const applyScenarioContext = async (context) => {
   if (!context) return
   const mapping = {
     wells: context.wells_dataset,
+    niz: context.niz_dataset,
     gtm: context.gtm_dataset,
     infrastructure: context.infrastructure_dataset,
     external_krs_schedule: context.external_krs_schedule_dataset,
@@ -1678,6 +1723,7 @@ const buildScenarioRequestPayload = () => ({
   forecast_end_date: optimizerForm.forecast_end_date,
   inputs: {
     wells: datasetSelectionPayload(selectedDatasets.wells),
+    niz: datasetSelectionPayload(selectedDatasets.niz),
     gtm: datasetSelectionPayload(selectedDatasets.gtm),
     infrastructure: datasetSelectionPayload(selectedDatasets.infrastructure),
     external_krs_schedule: scenarioSourceMode.value === 'existing_krs'
@@ -1967,6 +2013,7 @@ const toggleHierarchyExpand = (expandedRef, key) => {
 }
 
 const toggleWellsExpand = (key) => toggleHierarchyExpand(expandedWellsKeys, key)
+const toggleNizExpand = (key) => toggleHierarchyExpand(expandedNizKeys, key)
 const toggleGtmExpand = (key) => toggleHierarchyExpand(expandedGtmKeys, key)
 const toggleInfrastructureExpand = (key) => toggleHierarchyExpand(expandedInfrastructureKeys, key)
 const setScenarioFlowSource = (mode) => {
@@ -2002,6 +2049,12 @@ const selectCanvasNode = async (nodeKey) => {
     currentInputsTab.value = 'upload'
     selectedUploadSourceKind.value = 'wells'
     if (selectedDatasets.wells) await openDatasetDetail(selectedDatasets.wells)
+    return
+  }
+  if (nodeKey === 'niz') {
+    currentInputsTab.value = 'upload'
+    selectedUploadSourceKind.value = 'niz'
+    if (selectedDatasets.niz) await openDatasetDetail(selectedDatasets.niz)
     return
   }
   if (nodeKey === 'gtm') {
@@ -2673,6 +2726,10 @@ watch(wellsHierarchyRows, (rows) => {
   syncExpandedHierarchy(expandedWellsKeys, rows)
 }, { immediate: true })
 
+watch(nizHierarchyRows, (rows) => {
+  syncExpandedHierarchy(expandedNizKeys, rows)
+}, { immediate: true })
+
 watch(gtmHierarchyRows, (rows) => {
   syncExpandedHierarchy(expandedGtmKeys, rows)
 }, { immediate: true })
@@ -2811,7 +2868,7 @@ onMounted(async () => {
               <div class="flow-down-arrow" aria-hidden="true">↓</div>
 
               <div class="flow-main-row">
-                <div class="canvas-node inputs-group" :class="{ ready: scenarioReadiness.hasInputs, active: ['wells', 'gtm', 'reservoir', 'economics', 'krs', 'infrastructure'].includes(activeCanvasNode) }">
+                <div class="canvas-node inputs-group" :class="{ ready: scenarioReadiness.hasInputs, active: ['wells', 'niz', 'gtm', 'reservoir', 'economics', 'krs', 'infrastructure'].includes(activeCanvasNode) }">
                   <span class="canvas-node-kicker">Module A + Manual Inputs</span>
                   <strong>Исходные данные</strong>
                   <small>Загрузка datasets и настройка ручных вводных.</small>
@@ -2819,6 +2876,10 @@ onMounted(async () => {
                     <button type="button" class="input-mini-node" :class="[inputNodeStatuses.wells, { active: activeCanvasNode === 'wells' }]" @click="selectCanvasNode('wells')">
                       <span class="input-mini-label">Wells</span>
                       <span v-if="inputNodeStatuses.wells !== 'empty'" class="input-mini-status">{{ inputNodeStatuses.wells === 'ready' ? '✓' : '−' }}</span>
+                    </button>
+                    <button type="button" class="input-mini-node" :class="[inputNodeStatuses.niz, { active: activeCanvasNode === 'niz' }]" @click="selectCanvasNode('niz')">
+                      <span class="input-mini-label">NIZ</span>
+                      <span v-if="inputNodeStatuses.niz !== 'empty'" class="input-mini-status">{{ inputNodeStatuses.niz === 'ready' ? '✓' : '−' }}</span>
                     </button>
                     <button type="button" class="input-mini-node" :class="[inputNodeStatuses.gtm, { active: activeCanvasNode === 'gtm' }]" @click="selectCanvasNode('gtm')">
                       <span class="input-mini-label">ГТМ</span>
@@ -2894,12 +2955,13 @@ onMounted(async () => {
         <div class="panel workbench-shell">
           <div class="toolbar between align-start">
             <div>
-              <h2>{{ nodeInspectorTitle }}</h2>
+              <h2>{{ effectiveNodeInspectorTitle }}</h2>
               <p class="subtitle">
                 <template v-if="activeCanvasNode === 'scenario' && scenarioFlowMode === 'external'">Для внешнего графика КРС нижний inspector показывает загрузку, preview и mapping колонок с автопредложением сопоставления.</template>
                 <template v-else-if="activeCanvasNode === 'scenario' && scenarioFlowMode === 'planner'">Нижний inspector показывает опубликованные planner revisions и позволяет выбрать, какую revision применить к активному сценарию.</template>
                 <template v-else-if="activeCanvasNode === 'scenario'">Источник графика уже выбран на диаграмме.</template>
                 <template v-else-if="activeCanvasNode === 'wells'">Версия wells dataset и сводная иерархия `LU -> куст -> скважина`.</template>
+                <template v-else-if="activeCanvasNode === 'niz'">Версия NIZ dataset и сводная иерархия `LU -> куст -> скважина` по связанным скважинам.</template>
                 <template v-else-if="activeCanvasNode === 'gtm'">Версия GTM dataset и сводная иерархия `LU -> куст -> скважина` с приростами.</template>
                 <template v-else-if="activeCanvasNode === 'reservoir'">LU / SLOY, характеристика вытеснения и годовые темпы падения жидкости.</template>
                 <template v-else-if="activeCanvasNode === 'economics'">Net back по LU и стоимости мероприятий по типам ГТМ.</template>
@@ -2974,12 +3036,12 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div v-else-if="activeCanvasNode === 'wells' || activeCanvasNode === 'gtm' || activeCanvasNode === 'infrastructure' || (activeCanvasNode === 'scenario' && scenarioFlowMode === 'external')" class="page-stack">
+        <div v-else-if="activeCanvasNode === 'wells' || activeCanvasNode === 'niz' || activeCanvasNode === 'gtm' || activeCanvasNode === 'infrastructure' || (activeCanvasNode === 'scenario' && scenarioFlowMode === 'external')" class="page-stack">
           <div class="page-stack">
             <div class="panel soft">
               <h2>{{ SOURCE_KIND_META[selectedUploadSourceKind].title }}</h2>
               <p class="subtitle">{{ SOURCE_KIND_META[selectedUploadSourceKind].description }}</p>
-              <input ref="uploadInputRef" type="file" accept=".xlsx,.xls" class="hidden-file-input" @change="uploadSourceFile" />
+              <input ref="uploadInputRef" type="file" accept=".xlsx,.xls,.xlsm" class="hidden-file-input" @change="uploadSourceFile" />
               <div class="upload-compact-row">
                 <label class="compact-field">
                   <span>Файл</span>
@@ -3037,6 +3099,30 @@ onMounted(async () => {
                       <td>{{ formatCompactNumber(row.metrics.oil) }}</td>
                       <td>{{ formatCompactNumber(row.metrics.liquid) }}</td>
                       <td>{{ formatCompactNumber(row.metrics.gas) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div v-if="activeCanvasNode === 'niz'" class="panel">
+              <h2>Сводка NIZ</h2>
+              <div class="table-wrap medium-wrap">
+                <table class="hierarchy-table">
+                  <thead>
+                    <tr><th>Узел</th><th>Скважин</th><th>NIZ</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in visibleNizHierarchyRows" :key="row.key" :class="`node-${row.nodeType}`">
+                      <td>
+                        <div class="node-cell" :style="{ paddingLeft: `${row.depth * 18}px` }">
+                          <button v-if="row.children.length" type="button" class="node-toggle" @click="toggleNizExpand(row.key)">{{ expandedNizKeys.includes(row.key) ? '−' : '+' }}</button>
+                          <span v-else class="node-spacer"></span>
+                          <strong>{{ row.label }}</strong>
+                        </div>
+                      </td>
+                      <td>{{ row.metrics.count }}</td>
+                      <td>{{ formatCompactNumber(row.metrics.liquid) }}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -3523,6 +3609,7 @@ onMounted(async () => {
               <h2>Активные входы сценария</h2>
               <div class="detail-summary">
                 <div><span>Wells</span><strong>{{ selectedDatasets.wells?.name || '—' }}</strong></div>
+                <div><span>NIZ</span><strong>{{ selectedDatasets.niz?.name || '—' }}</strong></div>
                 <div><span>GTM</span><strong>{{ selectedDatasets.gtm?.name || '—' }}</strong></div>
                 <div><span>Infrastructure</span><strong>{{ selectedDatasets.infrastructure?.name || '—' }}</strong></div>
                 <div><span>ManualInputSet</span><strong>{{ manualInputSets.find((item) => item.reference.manual_input_set_id === selectedManualInputSetId)?.reference.name || '—' }}</strong></div>

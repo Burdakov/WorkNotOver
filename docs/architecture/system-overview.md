@@ -29,6 +29,7 @@
 
 - загрузка Excel;
 - ручной ввод параметров и конфигураций;
+- загрузка отдельного dataset `NIZ` по скважинам;
 - ручной ввод коэффициентов отказности по `LU` и `SLOY`;
 - preview;
 - сопоставление колонок;
@@ -89,6 +90,7 @@
 Выход:
 
 - normalized well dataset;
+- normalized NIZ dataset;
 - normalized GTM dataset;
 - normalized infrastructure dataset;
 - manual input configs;
@@ -101,6 +103,7 @@
 Зона ответственности:
 
 - расчёт базового профиля нефти и жидкости;
+- применение scenario-bound `NIZ` по каждой скважине из `wells` и `gtm`;
 - расчёт базового профиля газа и `GOR`;
 - расчёт обводнённости;
 - расчёт эффекта ГТМ;

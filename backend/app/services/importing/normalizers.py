@@ -46,6 +46,7 @@ _HINTS: dict[str, list[str]] = {
 
 _REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "wells": ("well", "liquid_rate"),
+    "niz": ("well", "niz"),
     "gtm": ("well", "planned_work", "start_date"),
     "infrastructure": ("object_name", "object_type"),
     "external_krs_schedule": ("brigade", "well", "start_date", "end_date", "planned_work"),
@@ -144,6 +145,40 @@ def normalize_wells(df: pd.DataFrame, columns: NormalizeColumns, report: ImportV
                 "current_cumulative_liquid": None,
                 "niz": coerce_float(row.get(columns.niz)),
                 "reserves_group": None,
+                "metadata": {"source_row_number": row_number},
+            }
+        )
+
+    report.row_count = len(items)
+    return items
+
+
+def normalize_niz(df: pd.DataFrame, columns: NormalizeColumns, report: ImportValidationReport) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+
+    for index, row in df.iterrows():
+        row_number = index + 2
+        well_name = stringify(row.get(columns.well))
+        niz = coerce_float(row.get(columns.niz))
+
+        if not well_name and niz <= 0:
+            continue
+
+        if not well_name:
+            report.skipped_rows += 1
+            _warning(report, "Строка NIZ пропущена: отсутствует имя скважины.", row_number=row_number, field_name="well")
+            continue
+
+        if niz <= 0:
+            report.skipped_rows += 1
+            _warning(report, "Строка NIZ пропущена: значение NIZ должно быть больше нуля.", row_number=row_number, field_name="niz")
+            continue
+
+        items.append(
+            {
+                "well_id": _stable_well_id(well_name, row_number),
+                "well_name": well_name,
+                "niz": niz,
                 "metadata": {"source_row_number": row_number},
             }
         )

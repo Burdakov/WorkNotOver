@@ -37,6 +37,7 @@
 ### Dataset Types
 
 - `wells`
+- `niz`
 - `gtm`
 - `infrastructure`
 - `external_krs_schedule`
@@ -238,7 +239,27 @@
 - дебиты и накопленные показатели неотрицательны, если заданы;
 - `current_gor` задаётся в одном согласованном формате и единицах измерения по проекту;
 - `current_watercut` задаётся в одном согласованном формате: доля или проценты;
+- `niz` в runtime-контуре должен считаться каноническим сценарио-связанным значением, полученным из отдельного dataset типа `niz`, привязанного к `Scenario` по `well_name`; inline-значение в `WellState`, если оно присутствует в импортированном wells dataset, не должно считаться единственным источником истины;
 - `niz`, `current_cumulative_oil` и `current_watercut`, если доступны, должны быть достаточны для расчёта текущего положения скважины на характеристике вытеснения и обратного расчёта remaining NIZ.
+
+---
+
+## Entity: NizByWell
+
+Описывает scenario-bound значение `NIZ` для отдельной скважины.
+
+### Поля
+
+- `well_id: str | None`
+- `well_name: str`
+- `niz: float`
+- `metadata: dict[str, object] | None`
+
+### Инварианты
+
+- `well_name` должен совпадать с именем скважины, используемым для связывания `WellState` и `GtmCandidate`;
+- `niz > 0`;
+- dataset типа `niz` должен позволять построить полное отображение `well_name -> NIZ` для активного сценария.
 
 ---
 
@@ -819,6 +840,7 @@
 ### Related Entity: ScenarioInputBindings
 
 - `wells_dataset: DatasetReference | None`
+- `niz_dataset: DatasetReference | None`
 - `gtm_dataset: DatasetReference | None`
 - `infrastructure_dataset: DatasetReference | None`
 - `external_krs_schedule_dataset: DatasetReference | None`
@@ -827,6 +849,7 @@
 ### Related Entity: ScenarioInputValidation
 
 - `wells_state: str`
+- `niz_state: str`
 - `gtm_state: str`
 - `infrastructure_state: str`
 - `external_krs_schedule_state: str`
@@ -853,9 +876,11 @@
 - для такого производного сценария `parent_scenario_id` указывает на исходный расчетный сценарий, а `metadata.scenario_role` должно иметь значение `pure_base`;
 - исходный сценарий с GTM может хранить в `metadata.pure_base_scenario_id` ссылку на автоматически сформированный связанный сценарий `чистая База`;
 - если сценарий собран по ветке `Загрузить существующий график КРС`, в `input_bindings.external_krs_schedule_dataset` должна присутствовать ссылка на dataset типа `external_krs_schedule`;
+- в `input_bindings.niz_dataset` должна присутствовать ссылка на dataset типа `niz`, если сценарий должен быть допущен к расчету добычи;
 - `input_bindings` описывают канонические привязки сценария к данным, а не временное состояние локального UI.
 - у сценария должно существовать каноническое состояние валидации входов `ScenarioInputValidation`, чтобы один и тот же статус полноты входных данных читался одинаково в `Сценарии`, `Добыча` и planner-side flows;
 - если сценарий использует `external_krs_schedule`, но wells или gtm datasets не покрывают все скважины из внешнего графика, соответствующие узлы должны считаться `partial`, а `is_forecast_ready` должно быть `false`;
+- если wells dataset или gtm dataset содержат скважины, для которых отсутствует `NIZ` в привязанном scenario-bound dataset `niz`, соответствующие узлы `wells`, `gtm` и `niz` должны считаться `partial`, а `is_forecast_ready` должно быть `false`;
 - сценарий с `is_forecast_ready = false` не может быть передан в расчет добычи `Module B`.
 
 ---

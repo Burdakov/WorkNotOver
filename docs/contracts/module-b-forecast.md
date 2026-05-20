@@ -22,12 +22,14 @@
 ## Входы
 
 - `NormalizedWellDataset`
+- `NizDataset`
 - `NormalizedGtmDataset`
 - `DisplacementConfig`
 - `DeclineConfig`
 - при пересчёте из planner: `PlannerScheduleRevision` из `Module F`; `Module G` может инициировать такой пересчёт, но planner revision читается из `Planner`
 
 Перед запуском расчета `Module B` сценарий должен пройти проверку полноты входов. Если у сценария с `external_krs_schedule` есть скважины, которые отсутствуют в `NormalizedWellDataset` или `NormalizedGtmDataset`, такой сценарий считается недозаполненным и в расчет не допускается.
+Если у сценария отсутствует scenario-bound dataset типа `niz` или в нём нет значений `NIZ` для всех скважин, встречающихся в `NormalizedWellDataset` и `NormalizedGtmDataset`, такой сценарий также считается недозаполненным и в расчет не допускается.
 
 ## Выходы
 
@@ -149,6 +151,7 @@
 Нефть считается от жидкости, используя обводнённость.
 
 Обводнённость рассчитывается по `DisplacementConfig` через `NIZ` и накопленную добычу нефти.
+Абсолютное значение `NIZ` для каждой скважины должно приходить не из inline-поля wells dataset, а из отдельного scenario-bound dataset типа `niz`, связанного с `wells` и `gtm` по `well_name` / `well_id`.
 Для конкретной скважины должен использоваться `DisplacementConfig`, соответствующий её `LU` и при наличии её `SLOY`.
 
 Используемый в текущей методике нормализованный показатель:

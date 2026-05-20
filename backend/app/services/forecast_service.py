@@ -177,6 +177,7 @@ class ForecastService:
         *,
         wells_reference: DatasetReference,
         wells_payload: list[dict[str, Any]],
+        niz_reference: DatasetReference,
         gtm_reference: DatasetReference,
         gtm_payload: list[dict[str, Any]],
         manual_input_reference: ManualInputReference,
@@ -185,6 +186,7 @@ class ForecastService:
     ) -> None:
         self.wells_reference = wells_reference
         self.wells_payload = wells_payload
+        self.niz_reference = niz_reference
         self.gtm_reference = gtm_reference
         self.gtm_payload = gtm_payload
         self.manual_input_reference = manual_input_reference
@@ -313,6 +315,7 @@ class ForecastService:
                 metadata=payload.metadata,
             ),
             wells_dataset=self.wells_reference,
+            niz_dataset=self.niz_reference,
             gtm_dataset=self.gtm_reference,
             manual_input_set=self.manual_input_reference,
             production_summary=summary,
@@ -406,7 +409,7 @@ class ForecastService:
                     "current_gor": 0.0,
                     "current_cumulative_oil": 0.0,
                     "current_cumulative_gas": 0.0,
-                    "niz": 0.0,
+                    "niz": _coerce_float(event.get("niz")),
                     "metadata": {
                         "synthetic_well_state": True,
                         "synthetic_source": "gtm_only",

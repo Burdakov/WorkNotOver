@@ -15,6 +15,7 @@ class ForecastDatasetSelection(BaseModel):
 class ForecastCalculateRequest(BaseModel):
     name: str
     wells: ForecastDatasetSelection
+    niz: ForecastDatasetSelection
     gtm: ForecastDatasetSelection
     manual_input_set_id: str
     forecast_start_date: str | None = None
@@ -26,6 +27,7 @@ class ForecastCalculateRequest(BaseModel):
 
 class ScenarioInputBindings(BaseModel):
     wells: ForecastDatasetSelection | None = None
+    niz: ForecastDatasetSelection | None = None
     gtm: ForecastDatasetSelection | None = None
     infrastructure: ForecastDatasetSelection | None = None
     external_krs_schedule: ForecastDatasetSelection | None = None
@@ -44,6 +46,7 @@ class ScenarioUpsertRequest(BaseModel):
 
 class ScenarioContextResponse(BaseModel):
     wells_dataset: DatasetReference | None = None
+    niz_dataset: DatasetReference | None = None
     gtm_dataset: DatasetReference | None = None
     infrastructure_dataset: DatasetReference | None = None
     external_krs_schedule_dataset: DatasetReference | None = None
@@ -57,6 +60,7 @@ class ScenarioInputNodeValidation(BaseModel):
 
 class ScenarioInputValidationResponse(BaseModel):
     wells: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
+    niz: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
     gtm: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
     infrastructure: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
     external_krs_schedule: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
@@ -150,6 +154,7 @@ class ScenarioModelResponse(BaseModel):
 class ForecastCalculateResponse(BaseModel):
     scenario: ScenarioModelResponse
     wells_dataset: DatasetReference
+    niz_dataset: DatasetReference
     gtm_dataset: DatasetReference
     manual_input_set: ManualInputReference
     production_summary: ScenarioProductionSummary
