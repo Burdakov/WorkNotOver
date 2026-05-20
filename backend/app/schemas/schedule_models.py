@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from app.schemas.common import DatasetReference
+from app.schemas.forecast_models import ScenarioDetailResponse
 
 
 class ScheduleColumns(BaseModel):
@@ -95,3 +96,13 @@ class PlannerRevisionResponse(BaseModel):
     item_count: int = 0
     metadata: dict[str, Any] | None = None
     items: list[ScheduleItem]
+
+
+class PlannerRevisionPublishRequest(PlannerRevisionCreateRequest):
+    scenario_name: str | None = None
+    scenario_metadata: dict[str, Any] | None = None
+
+
+class PlannerRevisionPublishResponse(BaseModel):
+    revision: PlannerRevisionResponse
+    scenario: ScenarioDetailResponse

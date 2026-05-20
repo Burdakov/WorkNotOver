@@ -50,9 +50,25 @@ class ScenarioContextResponse(BaseModel):
     manual_input_set: ManualInputReference | None = None
 
 
+class ScenarioInputNodeValidation(BaseModel):
+    state: str = "empty"
+    issues: list[str] = Field(default_factory=list)
+
+
+class ScenarioInputValidationResponse(BaseModel):
+    wells: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
+    gtm: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
+    infrastructure: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
+    external_krs_schedule: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
+    manual_input_set: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
+    is_forecast_ready: bool = False
+    issues: list[str] = Field(default_factory=list)
+
+
 class ScenarioDetailResponse(BaseModel):
     scenario: "ScenarioModelResponse"
     context: ScenarioContextResponse
+    input_validation: ScenarioInputValidationResponse = Field(default_factory=ScenarioInputValidationResponse)
     production_summary: dict[str, Any] | None = None
     production_points: list[dict[str, Any]] = Field(default_factory=list)
     wells: list[dict[str, Any]] = Field(default_factory=list)
@@ -72,6 +88,7 @@ class ScenarioListItemResponse(BaseModel):
     status: str
     metadata: dict[str, Any] | None = None
     context: ScenarioContextResponse
+    input_validation: ScenarioInputValidationResponse = Field(default_factory=ScenarioInputValidationResponse)
     latest_result_created_at: str | None = None
     production_summary: dict[str, Any] | None = None
 

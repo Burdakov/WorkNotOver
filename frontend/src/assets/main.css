@@ -1007,6 +1007,10 @@ th {
   gap: 6px;
 }
 
+.compact-field.full-width {
+  width: 100%;
+}
+
 .compact-field span {
   color: #73859a;
   font-size: 11px;
@@ -1516,6 +1520,13 @@ th {
 .mapping-modal {
   display: grid;
   gap: 14px;
+  padding: 20px;
+}
+
+.planner-publish-modal {
+  display: grid;
+  gap: 16px;
+  width: min(720px, calc(100vw - 48px));
   padding: 20px;
 }
 

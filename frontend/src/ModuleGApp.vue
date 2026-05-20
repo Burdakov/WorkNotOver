@@ -133,6 +133,7 @@ const REQUIRED_MAPPING_FIELDS = {
   infrastructure: ['object_name', 'object_type'],
   external_krs_schedule: ['brigade', 'well', 'start_date', 'end_date', 'planned_work'],
 }
+const ACTIVE_SCENARIO_STORAGE_KEY = 'worknotover.activeScenarioId'
 
 const parseIsoDate = (value) => {
   if (!value) return null
@@ -377,6 +378,8 @@ const datasetDetails = reactive({})
 const datasetDetailKey = ref('')
 const uploadInputRef = ref(null)
 const showMappingModal = ref(false)
+const showPlannerPublishModal = ref(false)
+const plannerPublishScenarioName = ref('')
 
 const selectedDatasets = reactive({
   wells: null,
@@ -460,7 +463,7 @@ const expandedWellsKeys = ref([])
 const expandedGtmKeys = ref([])
 const expandedInfrastructureKeys = ref([])
 
-const selectedScenarioId = ref('')
+const selectedScenarioId = ref(typeof window !== 'undefined' ? (window.localStorage.getItem(ACTIVE_SCENARIO_STORAGE_KEY) || '') : '')
 const scenarioSourceMode = ref('new_krs')
 const scenarioDetail = ref(null)
 const pureBaseScenarioDetail = ref(null)
@@ -470,7 +473,6 @@ const productionTimeMode = ref('month')
 const productionMetric = ref('oil')
 const hoveredProductionBucketDate = ref('')
 
-const plannerDatasetSelectionKey = ref('')
 const plannerDatasetReference = ref(null)
 const plannerVersionName = ref('')
 const plannerRevisions = ref([])
@@ -521,6 +523,11 @@ const isPureBaseScenarioRecord = (scenario) => scenario?.metadata?.scenario_role
 const groupedScenarios = computed(() => [...scenarios.value].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')))
 const userVisibleScenarios = computed(() => groupedScenarios.value.filter((item) => !isPureBaseScenarioRecord(item)))
 const selectedScenarioSummary = computed(() => userVisibleScenarios.value.find((item) => item.scenario_id === selectedScenarioId.value) || null)
+const selectedScenarioValidation = computed(() => (
+  scenarioDetail.value?.input_validation
+  || selectedScenarioSummary.value?.input_validation
+  || null
+))
 const selectedManualInputSetSummary = computed(() => manualInputSets.value.find((item) => item.reference.manual_input_set_id === selectedManualInputSetId.value) || null)
 const isPlannerDerivedScenario = computed(() => Boolean(
   selectedScenarioSummary.value?.source_type === 'planner_manual_edit'
@@ -545,6 +552,25 @@ const sourceFlowReady = computed(() => ({
 const selectedPlannerRevision = computed(() => (
   plannerRevisions.value.find((item) => item.revision_id === selectedPlannerRevisionId.value) || null
 ))
+const selectedScenarioPlannerRevisionId = computed(() => (
+  scenarioDetail.value?.scenario?.metadata?.planner_revision_id
+  || selectedScenarioSummary.value?.metadata?.planner_revision_id
+  || ''
+))
+const selectedScenarioExternalKrsReference = computed(() => (
+  scenarioDetail.value?.context?.external_krs_schedule_dataset
+  || selectedScenarioSummary.value?.context?.external_krs_schedule_dataset
+  || null
+))
+const plannerHasBoundSource = computed(() => Boolean(
+  selectedScenarioPlannerRevisionId.value || selectedScenarioExternalKrsReference.value,
+))
+const plannerSourceLabel = computed(() => {
+  if (selectedScenarioPlannerRevisionId.value) return 'Planner revision'
+  if (selectedScenarioExternalKrsReference.value) return 'Внешний график КРС'
+  if (scenarioFlowMode.value === 'generated') return 'График ещё не сформирован'
+  return 'Источник не привязан'
+})
 const derivedScenarioForSelectedRevision = computed(() => {
   if (!selectedPlannerRevisionId.value) return null
   return userVisibleScenarios.value.find((item) => item.metadata?.planner_revision_id === selectedPlannerRevisionId.value) || null
@@ -555,11 +581,13 @@ const plannerDerivedScenarioMap = computed(() => Object.fromEntries(
     .map((item) => [item.metadata.planner_revision_id, item]),
 ))
 const scenarioContextStatus = computed(() => ({
-  wells: Boolean(selectedDatasets.wells),
-  gtm: Boolean(selectedDatasets.gtm),
-  infrastructure: Boolean(selectedDatasets.infrastructure),
-  manual_input: Boolean(selectedManualInputSetId.value),
-  external_krs_schedule: scenarioFlowMode.value === 'external' ? Boolean(selectedDatasets.external_krs_schedule) : true,
+  wells: selectedScenarioValidation.value?.wells?.state || (selectedDatasets.wells ? 'ready' : 'empty'),
+  gtm: selectedScenarioValidation.value?.gtm?.state || (selectedDatasets.gtm ? 'ready' : 'empty'),
+  infrastructure: selectedScenarioValidation.value?.infrastructure?.state || (selectedDatasets.infrastructure ? 'ready' : 'empty'),
+  manual_input: selectedScenarioValidation.value?.manual_input_set?.state || (selectedManualInputSetId.value ? 'ready' : 'empty'),
+  external_krs_schedule: scenarioFlowMode.value === 'external'
+    ? (selectedScenarioValidation.value?.external_krs_schedule?.state || (selectedDatasets.external_krs_schedule ? 'ready' : 'empty'))
+    : 'ready',
 }))
 const reservoirInputStatus = computed(() => resolveTouchedStatus(
   reservoirConfigs.value,
@@ -609,33 +637,39 @@ const krsInputStatus = computed(() => {
   return 'empty'
 })
 const inputNodeStatuses = computed(() => ({
-  wells: scenarioContextStatus.value.wells ? 'ready' : 'empty',
-  gtm: scenarioContextStatus.value.gtm ? 'ready' : 'empty',
-  infrastructure: scenarioContextStatus.value.infrastructure ? 'ready' : 'empty',
+  wells: scenarioContextStatus.value.wells,
+  gtm: scenarioContextStatus.value.gtm,
+  infrastructure: scenarioContextStatus.value.infrastructure,
   reservoir: reservoirInputStatus.value,
   economics: economicsInputStatus.value,
   krs: krsInputStatus.value,
 }))
-const canCalculateScenario = computed(() => Boolean(
-  selectedScenarioId.value
-  && scenarioContextStatus.value.wells
-  && scenarioContextStatus.value.gtm
-  && scenarioContextStatus.value.manual_input
-  && scenarioContextStatus.value.external_krs_schedule,
-))
+const scenarioBlockingIssue = computed(() => selectedScenarioValidation.value?.issues?.[0] || '')
+const canCalculateScenario = computed(() => {
+  if (!selectedScenarioId.value) return false
+  if (selectedScenarioValidation.value) {
+    return Boolean(selectedScenarioValidation.value.is_forecast_ready)
+  }
+  return Boolean(
+    scenarioContextStatus.value.wells === 'ready'
+    && scenarioContextStatus.value.gtm === 'ready'
+    && scenarioContextStatus.value.manual_input === 'ready'
+    && scenarioContextStatus.value.external_krs_schedule === 'ready'
+  )
+})
 const scenarioReadiness = computed(() => {
   const selectedScenario = selectedScenarioSummary.value
   const hasScenario = Boolean(selectedScenarioId.value)
   const hasSource = scenarioFlowMode.value === 'external'
-    ? Boolean(selectedDatasets.external_krs_schedule)
-    : scenarioFlowMode.value === 'planner'
-      ? (isPlannerDerivedScenario.value || plannerRevisions.value.length > 0)
-      : true
+    ? scenarioContextStatus.value.external_krs_schedule === 'ready'
+      : scenarioFlowMode.value === 'planner'
+        ? (isPlannerDerivedScenario.value || plannerRevisions.value.length > 0)
+        : true
   const hasInputs = Boolean(
-    selectedDatasets.wells
-    && selectedDatasets.gtm
-    && selectedManualInputSetId.value
-    && (scenarioFlowMode.value !== 'external' || selectedDatasets.external_krs_schedule),
+    scenarioContextStatus.value.wells === 'ready'
+    && scenarioContextStatus.value.gtm === 'ready'
+    && scenarioContextStatus.value.manual_input === 'ready'
+    && (scenarioFlowMode.value !== 'external' || scenarioContextStatus.value.external_krs_schedule === 'ready'),
   )
   const hasResult = Boolean(scenarioDetail.value?.production_summary)
   const isPlannerDerived = isPlannerDerivedScenario.value
@@ -1611,9 +1645,6 @@ const ensureSelectedDatasets = async () => {
     const candidate = datasetTypes.value[type]?.[0]?.dataset_reference || null
     if (candidate) await setActiveDataset(candidate)
   }
-  if (!plannerDatasetSelectionKey.value) {
-    plannerDatasetSelectionKey.value = selectedDatasetKeys.external_krs_schedule
-  }
 }
 
 const applyScenarioContext = async (context) => {
@@ -1640,7 +1671,7 @@ const applyScenarioContext = async (context) => {
 }
 
 const buildScenarioRequestPayload = () => ({
-  name: optimizerForm.scenario_name,
+  name: optimizerForm.scenario_name.trim(),
   source_type: selectedScenarioSummary.value?.source_type || 'uploaded_gtm',
   parent_scenario_id: selectedScenarioSummary.value?.parent_scenario_id || null,
   forecast_start_date: optimizerForm.forecast_start_date,
@@ -1751,6 +1782,7 @@ const saveActiveScenarioContext = async ({ silent = false } = {}) => {
     })
     const payload = await response.json()
     await loadScenarios()
+    await loadScenarioDetail(payload.scenario_id || selectedScenarioId.value)
     if (!silent) {
       showMessage('Контекст сценария сохранен.', 'success')
     }
@@ -1832,8 +1864,15 @@ const normalizeDataset = async () => {
     await loadDatasets()
     await setActiveDataset(payload.dataset_reference)
     datasetDetailKey.value = datasetReferenceKey(payload.dataset_reference)
-    if (payload.dataset_reference.dataset_type === 'external_krs_schedule') {
-      plannerDatasetSelectionKey.value = datasetReferenceKey(payload.dataset_reference)
+    if (
+      selectedScenarioId.value
+      && selectedUploadSourceKind.value === 'external_krs_schedule'
+      && scenarioSourceMode.value === 'existing_krs'
+    ) {
+      await saveActiveScenarioContext({ silent: true })
+      if (currentSection.value === 'planner') {
+        await syncPlannerWithActiveScenario({ silent: true })
+      }
     }
     showMessage('Dataset сохранен в Postgres.', 'success')
   } catch (error) {
@@ -2215,7 +2254,7 @@ const calculateForecast = async () => {
     return
   }
   if (!canCalculateScenario.value) {
-    showMessage('Сначала сохраните или выберите ManualInputSet.', 'error')
+    showMessage(scenarioBlockingIssue.value || 'Сценарий недозаполнен для расчета добычи.', 'error')
     return
   }
   loading.value = true
@@ -2233,7 +2272,7 @@ const calculateForecast = async () => {
     await loadScenarios()
     selectedScenarioId.value = payload.scenario.scenario_id
     await loadScenarioDetail(payload.scenario.scenario_id)
-    currentSection.value = 'production'
+    currentSection.value = 'planner'
     showMessage('Сценарий Module B рассчитан.', 'success')
   } catch (error) {
     showMessage(error.message, 'error')
@@ -2303,15 +2342,8 @@ const openPlannerFromScenario = async () => {
     showMessage('Сначала создайте или выберите сценарий.', 'error')
     return
   }
-  if (scenarioSourceMode.value === 'existing_krs') {
-    if (!selectedDatasets.external_krs_schedule) {
-      showMessage('Для сценария с внешним графиком КРС сначала привяжите imported KRS dataset.', 'error')
-      return
-    }
-    await openImportedSchedule(selectedDatasets.external_krs_schedule)
-    return
-  }
   currentSection.value = 'planner'
+  await syncPlannerWithActiveScenario({ silent: true })
   showMessage('Открыт модуль Planner для активного сценария.', 'info')
 }
 
@@ -2354,6 +2386,90 @@ const openImportedSchedule = async (reference) => {
   }
 }
 
+const resetPlannerRuntime = () => {
+  plannerDatasetReference.value = null
+  plannerVersionName.value = ''
+  versions.value = []
+  activeVersionId.value = 'base'
+}
+
+const applyPlannerScheduleRuntime = ({ items, versionName, datasetReference = null }) => {
+  plannerDatasetReference.value = datasetReference
+  plannerVersionName.value = versionName || datasetReference?.name || ''
+  versions.value = [{
+    id: 'base',
+    name: versionName || datasetReference?.name || 'График КРС',
+    created_at: new Date().toISOString(),
+    items: cloneItems(items || []),
+  }]
+  activeVersionId.value = 'base'
+}
+
+const loadImportedScheduleIntoPlanner = async (reference) => {
+  if (!reference) return null
+  const response = await request('/schedule/open-imported', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      dataset_id: reference.dataset_id,
+      dataset_version_id: reference.dataset_version_id,
+    }),
+  })
+  const payload = await response.json()
+  applyPlannerScheduleRuntime({
+    items: payload.items || [],
+    versionName: payload.version_name || 'Загруженный график',
+    datasetReference: payload.dataset_reference,
+  })
+  return payload
+}
+
+const loadPlannerRevisionIntoPlanner = async (revisionId) => {
+  if (!revisionId) return null
+  const response = await request(`/planner/revisions/${revisionId}`)
+  const revision = await response.json()
+  applyPlannerScheduleRuntime({
+    items: revision.items || [],
+    versionName: revision.version_name || 'Planner revision',
+    datasetReference: revision.metadata?.dataset_reference || selectedScenarioExternalKrsReference.value || null,
+  })
+  return revision
+}
+
+const syncPlannerWithActiveScenario = async ({ silent = false } = {}) => {
+  if (!selectedScenarioId.value) {
+    resetPlannerRuntime()
+    if (!silent) showMessage('Сначала выберите активный сценарий для Planner.', 'error')
+    return false
+  }
+
+  const revisionId = selectedScenarioPlannerRevisionId.value
+  const externalReference = selectedScenarioExternalKrsReference.value
+
+  loading.value = true
+  try {
+    if (revisionId) {
+      await loadPlannerRevisionIntoPlanner(revisionId)
+      if (!silent) showMessage('Planner синхронизирован с revision активного сценария.', 'info')
+      return true
+    }
+    if (externalReference) {
+      await loadImportedScheduleIntoPlanner(externalReference)
+      if (!silent) showMessage('Planner синхронизирован с внешним графиком активного сценария.', 'info')
+      return true
+    }
+    resetPlannerRuntime()
+    if (!silent) showMessage('Для активного сценария пока нет связанного графика КРС для Planner.', 'info')
+    return false
+  } catch (error) {
+    resetPlannerRuntime()
+    showMessage(error.message, 'error')
+    return false
+  } finally {
+    loading.value = false
+  }
+}
+
 const createPlannerVersion = () => {
   if (!activeVersion.value) return
   const name = window.prompt('Название новой версии графика', `Версия ${versions.value.length}`)
@@ -2369,15 +2485,29 @@ const createPlannerVersion = () => {
   showMessage('Новая версия графика создана.', 'success')
 }
 
+const openPublishPlannerVersionDialog = () => {
+  if (!selectedScenarioId.value) {
+    showMessage('Сначала выберите активный сценарий для Planner.', 'error')
+    return
+  }
+  if (!activeVersion.value) return
+  plannerPublishScenarioName.value = `${optimizerForm.scenario_name} / ${activeVersion.value.name}`.trim()
+  showPlannerPublishModal.value = true
+}
+
 const publishPlannerVersion = async () => {
   if (!selectedScenarioId.value) {
     showMessage('Сначала выберите активный сценарий для Planner.', 'error')
     return
   }
   if (!activeVersion.value) return
+  if (!plannerPublishScenarioName.value.trim()) {
+    showMessage('Введите имя нового сценария.', 'error')
+    return
+  }
   loading.value = true
   try {
-    const revisionResponse = await request('/planner/revisions', {
+    const publishResponse = await request('/planner/revisions/publish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2388,22 +2518,16 @@ const publishPlannerVersion = async () => {
         metadata: {
           dataset_reference: plannerDatasetReference.value,
         },
+        scenario_name: plannerPublishScenarioName.value.trim(),
       }),
     })
-    const revision = await revisionResponse.json()
-    const scenarioResponse = await request(`/scenarios/${selectedScenarioId.value}/from-planner-revision`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        revision_id: revision.revision_id,
-        name: `${optimizerForm.scenario_name} / ${activeVersion.value.name}`,
-      }),
-    })
-    const derivedScenario = await scenarioResponse.json()
+    const publishPayload = await publishResponse.json()
+    const derivedScenario = publishPayload.scenario
     await loadScenarios()
     selectedScenarioId.value = derivedScenario.scenario.scenario_id
     await loadScenarioDetail(derivedScenario.scenario.scenario_id)
-    currentSection.value = 'production'
+    currentSection.value = 'planner'
+    showPlannerPublishModal.value = false
     showMessage('Planner revision сохранен и новая версия сценария создана автоматически.', 'success')
   } catch (error) {
     showMessage(error.message, 'error')
@@ -2495,8 +2619,28 @@ const exportPlannerVersion = async () => {
 }
 
 watch(selectedScenarioId, async (scenarioId) => {
-  if (!scenarioId) return
+  if (typeof window !== 'undefined') {
+    if (scenarioId) {
+      window.localStorage.setItem(ACTIVE_SCENARIO_STORAGE_KEY, scenarioId)
+    } else {
+      window.localStorage.removeItem(ACTIVE_SCENARIO_STORAGE_KEY)
+    }
+  }
+  if (!scenarioId) {
+    scenarioDetail.value = null
+    pureBaseScenarioDetail.value = null
+    return
+  }
   await loadScenarioDetail(scenarioId)
+  if (currentSection.value === 'planner') {
+    await syncPlannerWithActiveScenario({ silent: true })
+  }
+})
+
+watch(currentSection, async (section) => {
+  if (section === 'planner') {
+    await syncPlannerWithActiveScenario({ silent: true })
+  }
 })
 
 watch(productionTimeMode, () => {
@@ -2599,6 +2743,10 @@ onMounted(async () => {
                 </option>
               </select>
             </label>
+            <label class="compact-field">
+              <span>Имя</span>
+              <input v-model="optimizerForm.scenario_name" type="text" class="compact-dropdown" placeholder="Введите имя сценария" />
+            </label>
             <label class="compact-field period">
               <span>Период</span>
               <div class="compact-period">
@@ -2609,7 +2757,7 @@ onMounted(async () => {
             </label>
             <div class="compact-actions">
               <button class="button primary" :disabled="loading" @click="saveScenarioContextAction">Сохранить контекст</button>
-              <button class="button primary" :disabled="loading" @click="calculateForecast">Рассчитать</button>
+              <button class="button primary" :disabled="loading || !canCalculateScenario" :title="scenarioBlockingIssue || ''" @click="calculateForecast">Рассчитать</button>
             </div>
           </div>
         </div>
@@ -3719,10 +3867,10 @@ onMounted(async () => {
           <div class="toolbar between align-start">
             <div>
               <h2>Источник Planner</h2>
-              <p class="subtitle">Planner открывает только импортированные datasets типа `external_krs_schedule` через runtime flow `open-imported`.</p>
+              <p class="subtitle">Planner автоматически открывает график активного сценария: внешний imported KRS dataset или опубликованную planner revision.</p>
             </div>
             <div class="toolbar">
-              <select v-model="plannerDatasetSelectionKey" class="compact-dropdown">
+              <select v-if="false" v-model="plannerDatasetSelectionKey" class="compact-dropdown">
                 <option value="">Выберите imported KRS dataset</option>
                 <option
                   v-for="item in datasetTypes.external_krs_schedule"
@@ -3734,18 +3882,22 @@ onMounted(async () => {
               </select>
               <button
                 class="button primary"
+                v-if="false"
                 :disabled="!plannerDatasetSelectionKey || loading"
                 @click="openImportedSchedule(datasetTypes.external_krs_schedule.find((item) => datasetReferenceKey(item.dataset_reference) === plannerDatasetSelectionKey)?.dataset_reference)"
               >
                 Открыть
               </button>
+              <div class="detail-summary planner-source-summary">
+                <div><span>Сценарий</span><strong>{{ selectedScenarioSummary?.name || optimizerForm.scenario_name || '—' }}</strong></div>
+                <div><span>Источник</span><strong>{{ plannerSourceLabel }}</strong></div>
+              </div>
+              
             </div>
           </div>
         </div>
 
-        <div v-if="!activeItems.length" class="panel empty-state">
-          Сначала импортируйте существующий график КРС на листе `Загрузка`, затем откройте его здесь через dataset runtime flow.
-        </div>
+        <div v-if="!activeItems.length" class="panel empty-state">Planner пока не получил график из активного сценария. Загрузите внешний график КРС или создайте planner revision в рамках выбранного сценария.</div>
 
         <template v-else>
           <div class="stats-grid">
@@ -3763,7 +3915,7 @@ onMounted(async () => {
               <div class="toolbar actions-wrap">
                 <select v-model="activeVersionId"><option v-for="version in versions" :key="version.id" :value="version.id">{{ version.name }}</option></select>
                 <button class="button" @click="createPlannerVersion">Локальная версия</button>
-                <button class="button primary" :disabled="!selectedScenarioId || loading" @click="publishPlannerVersion">Создать версию</button>
+                <button class="button primary" :disabled="!selectedScenarioId || loading" @click="openPublishPlannerVersionDialog">Создать версию</button>
                 <button class="button success" @click="exportPlannerVersion">Выгрузить Excel</button>
               </div>
             </div>
@@ -3930,6 +4082,26 @@ onMounted(async () => {
           </div>
         </template>
       </section>
+
+      <div v-if="showPlannerPublishModal" class="modal-overlay" @click.self="showPlannerPublishModal = false">
+        <div class="modal-card planner-publish-modal">
+          <div class="toolbar between align-start">
+            <div>
+              <h2>Новый сценарий из Planner</h2>
+              <p class="subtitle">Planner revision создаст новый сценарий типа `Полученный из Planner` и сразу сделает его активным во всей системе.</p>
+            </div>
+            <button class="button ghost" @click="showPlannerPublishModal = false">Закрыть</button>
+          </div>
+          <label class="compact-field full-width">
+            <span>Имя нового сценария</span>
+            <input v-model="plannerPublishScenarioName" type="text" class="compact-dropdown" placeholder="Введите имя сценария" />
+          </label>
+          <div class="toolbar end">
+            <button class="button" :disabled="loading" @click="showPlannerPublishModal = false">Отмена</button>
+            <button class="button primary" :disabled="loading || !plannerPublishScenarioName.trim()" @click="publishPlannerVersion">Создать версию</button>
+          </div>
+        </div>
+      </div>
 
       <div v-if="showMappingModal" class="modal-overlay" @click.self="showMappingModal = false">
         <div class="modal-card mapping-modal">
@@ -5543,3 +5715,4 @@ th {
   }
 }
 </style>
+

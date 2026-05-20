@@ -16,6 +16,8 @@ from app.schemas.forecast_models import (
     ScenarioContextResponse,
     ScenarioDetailResponse,
     ScenarioInputBindings,
+    ScenarioInputNodeValidation,
+    ScenarioInputValidationResponse,
     ScenarioListItemResponse,
     ScenarioModelResponse,
     ScenarioRecalculateFromRevisionRequest,
@@ -123,10 +125,12 @@ def _scenario_response(scenario) -> ScenarioModelResponse:
     )
 
 
-def _scenario_detail_payload(scenario, result) -> ScenarioDetailResponse:
+def _scenario_detail_payload(db: Session, scenario, result) -> ScenarioDetailResponse:
+    context = _context_to_response(_extract_context(scenario.metadata_json))
     return ScenarioDetailResponse(
         scenario=_scenario_response(scenario),
-        context=_context_to_response(_extract_context(scenario.metadata_json)),
+        context=context,
+        input_validation=_build_input_validation(db, scenario, context),
         production_summary=result.production_summary_json if result else None,
         production_points=result.production_points_json if result and result.production_points_json else [],
         wells=result.well_results_json if result and result.well_results_json else [],
@@ -154,6 +158,105 @@ def _resolve_manual_input_payload(db: Session, reference: ManualInputReference) 
     if item is None:
         raise HTTPException(status_code=404, detail="ManualInputSet не найден.")
     return dict(item.payload_json or {})
+
+
+def _make_input_node_validation(state: str, *issues: str) -> ScenarioInputNodeValidation:
+    return ScenarioInputNodeValidation(
+        state=state,
+        issues=[issue for issue in issues if issue],
+    )
+
+
+def _well_key_from_payload(item: dict[str, Any]) -> str:
+    well_id = str(item.get("well_id") or "").strip()
+    if well_id:
+        return well_id
+    return str(item.get("well_name") or "").strip()
+
+
+def _extract_external_schedule_items(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    schedule = payload.get("schedule")
+    if not isinstance(schedule, dict):
+        return []
+    items = schedule.get("items")
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _build_input_validation(db: Session, scenario, context: ScenarioContextResponse) -> ScenarioInputValidationResponse:
+    validation = ScenarioInputValidationResponse(
+        wells=_make_input_node_validation("ready" if context.wells_dataset else "empty"),
+        gtm=_make_input_node_validation("ready" if context.gtm_dataset else "empty"),
+        infrastructure=_make_input_node_validation("ready" if context.infrastructure_dataset else "empty"),
+        external_krs_schedule=_make_input_node_validation("ready" if context.external_krs_schedule_dataset else "empty"),
+        manual_input_set=_make_input_node_validation("ready" if context.manual_input_set else "empty"),
+    )
+
+    scenario_mode = str((scenario.metadata_json or {}).get("scenario_source_mode") or "")
+    requires_external = scenario_mode == "existing_krs"
+
+    issues: list[str] = []
+    if validation.wells.state != "ready":
+        issues.append("Не привязан dataset wells.")
+    if validation.gtm.state != "ready":
+        issues.append("Не привязан dataset GTM.")
+    if validation.manual_input_set.state != "ready":
+        issues.append("Не привязан ManualInputSet.")
+    if requires_external and validation.external_krs_schedule.state != "ready":
+        issues.append("Для сценария с внешним графиком КРС должен быть привязан dataset external_krs_schedule.")
+
+    external_items: list[dict[str, Any]] = []
+    if context.external_krs_schedule_dataset is not None:
+        resolved = DatasetRepository(db).get_dataset_version(
+            context.external_krs_schedule_dataset.dataset_id,
+            context.external_krs_schedule_dataset.dataset_version_id,
+        )
+        if resolved is not None:
+            _, version = resolved
+            external_items = _extract_external_schedule_items(version.normalized_payload_json)
+        if not external_items:
+            issue = "Во внешнем графике КРС нет нормализованных schedule items."
+            validation.external_krs_schedule = _make_input_node_validation("partial", issue)
+            issues.append(issue)
+
+    if external_items:
+        external_wells = {
+            _well_key_from_payload(item)
+            for item in external_items
+            if _well_key_from_payload(item)
+        }
+        wells_payload: list[dict[str, Any]] = []
+        if context.wells_dataset is not None:
+            wells_payload = _resolve_payload_from_reference(db, context.wells_dataset, expected_type="wells")
+        gtm_payload: list[dict[str, Any]] = []
+        if context.gtm_dataset is not None:
+            gtm_payload = _resolve_payload_from_reference(db, context.gtm_dataset, expected_type="gtm")
+
+        wells_keys = {_well_key_from_payload(item) for item in wells_payload if _well_key_from_payload(item)}
+        gtm_keys = {_well_key_from_payload(item) for item in gtm_payload if _well_key_from_payload(item)}
+
+        missing_in_wells = sorted(external_wells - wells_keys)
+        missing_in_gtm = sorted(external_wells - gtm_keys)
+
+        if missing_in_wells:
+            preview = ", ".join(missing_in_wells[:5])
+            suffix = "..." if len(missing_in_wells) > 5 else ""
+            issue = f"Во внешнем графике КРС есть скважины, отсутствующие в wells dataset: {preview}{suffix}"
+            validation.wells = _make_input_node_validation("partial", issue)
+            issues.append(issue)
+        if missing_in_gtm:
+            preview = ", ".join(missing_in_gtm[:5])
+            suffix = "..." if len(missing_in_gtm) > 5 else ""
+            issue = f"Во внешнем графике КРС есть скважины, отсутствующие в GTM dataset: {preview}{suffix}"
+            validation.gtm = _make_input_node_validation("partial", issue)
+            issues.append(issue)
+
+    validation.issues = issues
+    validation.is_forecast_ready = not issues
+    return validation
 
 
 def _ensure_pure_base_scenario(
@@ -275,8 +378,12 @@ def _calculate_for_scenario(
         raise HTTPException(status_code=404, detail="Сценарий не найден.")
 
     context = _context_to_response(_extract_context(scenario.metadata_json))
-    if context.wells_dataset is None or context.gtm_dataset is None or context.manual_input_set is None:
-        raise HTTPException(status_code=400, detail="Для расчета сценария должны быть привязаны wells, gtm и ManualInputSet.")
+    input_validation = _build_input_validation(db, scenario, context)
+    if not input_validation.is_forecast_ready:
+        raise HTTPException(
+            status_code=400,
+            detail=input_validation.issues[0] if input_validation.issues else "Сценарий недозаполнен для расчета добычи.",
+        )
 
     wells_payload = _resolve_payload_from_reference(db, context.wells_dataset, expected_type="wells")
     gtm_payload = _resolve_payload_from_reference(db, context.gtm_dataset, expected_type="gtm")
@@ -362,13 +469,14 @@ def _calculate_for_scenario(
     resolved = repo.get_scenario_with_latest_result(scenario_id)
     if resolved is None:
         raise HTTPException(status_code=500, detail="Не удалось прочитать рассчитанный сценарий.")
-    return _scenario_detail_payload(*resolved)
+    return _scenario_detail_payload(db, *resolved)
 
 
 @router.get("", response_model=list[ScenarioListItemResponse])
 def list_scenarios(db: Session = Depends(get_db)) -> list[ScenarioListItemResponse]:
     items = []
     for scenario, result in ScenarioRepository(db).list_scenarios():
+        context = _context_to_response(_extract_context(scenario.metadata_json))
         items.append(
             ScenarioListItemResponse(
                 scenario_id=scenario.scenario_id,
@@ -380,7 +488,8 @@ def list_scenarios(db: Session = Depends(get_db)) -> list[ScenarioListItemRespon
                 created_at=scenario.created_at.isoformat(),
                 status=scenario.status,
                 metadata=scenario.metadata_json,
-                context=_context_to_response(_extract_context(scenario.metadata_json)),
+                context=context,
+                input_validation=_build_input_validation(db, scenario, context),
                 latest_result_created_at=result.created_at.isoformat() if result else None,
                 production_summary=result.production_summary_json if result else None,
             )
@@ -390,10 +499,12 @@ def list_scenarios(db: Session = Depends(get_db)) -> list[ScenarioListItemRespon
 
 @router.post("", response_model=ScenarioModelResponse)
 def create_scenario(payload: ScenarioUpsertRequest, db: Session = Depends(get_db)) -> ScenarioModelResponse:
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Имя сценария обязательно.")
     context = _build_context_from_request(db, bindings=payload.inputs, existing_context=None)
     metadata = _merge_metadata(existing_metadata=None, context=context, patch_metadata=payload.metadata)
     scenario = ScenarioRepository(db).create_scenario(
-        name=payload.name,
+        name=payload.name.strip(),
         source_type=payload.source_type,
         parent_scenario_id=payload.parent_scenario_id,
         forecast_start_date=payload.forecast_start_date,
@@ -410,11 +521,13 @@ def update_scenario(scenario_id: str, payload: ScenarioUpsertRequest, db: Sessio
     scenario = repo.get_scenario(scenario_id)
     if scenario is None:
         raise HTTPException(status_code=404, detail="Сценарий не найден.")
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Имя сценария обязательно.")
     context = _build_context_from_request(db, bindings=payload.inputs, existing_context=_extract_context(scenario.metadata_json))
     metadata = _merge_metadata(existing_metadata=scenario.metadata_json, context=context, patch_metadata=payload.metadata)
     updated = repo.update_scenario(
         scenario_id,
-        name=payload.name,
+        name=payload.name.strip(),
         source_type=payload.source_type,
         forecast_start_date=payload.forecast_start_date,
         forecast_end_date=payload.forecast_end_date,
@@ -430,7 +543,7 @@ def get_scenario(scenario_id: str, db: Session = Depends(get_db)) -> ScenarioDet
     resolved = ScenarioRepository(db).get_scenario_with_latest_result(scenario_id)
     if resolved is None:
         raise HTTPException(status_code=404, detail="Сценарий не найден.")
-    return _scenario_detail_payload(*resolved)
+    return _scenario_detail_payload(db, *resolved)
 
 
 @router.post("/{scenario_id}/calculate", response_model=ScenarioDetailResponse)
@@ -461,6 +574,7 @@ def create_scenario_from_planner_revision(
         context=parent_context,
         patch_metadata={
             **(payload.metadata or {}),
+            "scenario_source_mode": "planner",
             "planner_revision_id": revision.revision_id,
             "planner_version_id": revision.planner_version_id,
             "planner_version_name": revision.version_name,

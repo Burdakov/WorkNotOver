@@ -824,6 +824,16 @@
 - `external_krs_schedule_dataset: DatasetReference | None`
 - `manual_input_set: ManualInputReference | None`
 
+### Related Entity: ScenarioInputValidation
+
+- `wells_state: str`
+- `gtm_state: str`
+- `infrastructure_state: str`
+- `external_krs_schedule_state: str`
+- `manual_input_set_state: str`
+- `is_forecast_ready: bool`
+- `issues: list[str]`
+
 ### Source Types
 
 - `uploaded_gtm`
@@ -844,6 +854,9 @@
 - исходный сценарий с GTM может хранить в `metadata.pure_base_scenario_id` ссылку на автоматически сформированный связанный сценарий `чистая База`;
 - если сценарий собран по ветке `Загрузить существующий график КРС`, в `input_bindings.external_krs_schedule_dataset` должна присутствовать ссылка на dataset типа `external_krs_schedule`;
 - `input_bindings` описывают канонические привязки сценария к данным, а не временное состояние локального UI.
+- у сценария должно существовать каноническое состояние валидации входов `ScenarioInputValidation`, чтобы один и тот же статус полноты входных данных читался одинаково в `Сценарии`, `Добыча` и planner-side flows;
+- если сценарий использует `external_krs_schedule`, но wells или gtm datasets не покрывают все скважины из внешнего графика, соответствующие узлы должны считаться `partial`, а `is_forecast_ready` должно быть `false`;
+- сценарий с `is_forecast_ready = false` не может быть передан в расчет добычи `Module B`.
 
 ---
 

@@ -27,6 +27,8 @@
 - `DeclineConfig`
 - при пересчёте из planner: `PlannerScheduleRevision` из `Module F`; `Module G` может инициировать такой пересчёт, но planner revision читается из `Planner`
 
+Перед запуском расчета `Module B` сценарий должен пройти проверку полноты входов. Если у сценария с `external_krs_schedule` есть скважины, которые отсутствуют в `NormalizedWellDataset` или `NormalizedGtmDataset`, такой сценарий считается недозаполненным и в расчет не допускается.
+
 ## Выходы
 
 - `ProductionScenario`

@@ -49,6 +49,7 @@
 - предоставляет `PlannerScheduleRevision` для прямого чтения `Module B` при planner-side recalculation
 - передаёт planner revisions в `Module G`
 - передаёт в `Module G` факт выполнения действия `Создать версию` вместе с `PlannerScheduleRevision` и ссылкой на активный сценарный контекст
+- в UI использует тот же active scenario context, что и разделы `Сценарии` и `Добыча`, а не отдельный локальный выбор сценария или dataset
 
 ## Контрактные правила
 
@@ -58,8 +59,12 @@
 4. `Module F` должен уметь открывать график КРС как из `Module D`, так и из внешнего `ImportedKrsSchedulePayload`, подготовленного `Module A`.
 5. Действие `Создать версию` в `Planner` должно создавать новый `PlannerScheduleRevision` и передавать его в `Module G` как основание для автоматического формирования новой версии сценария.
 6. `Module F` не определяет состав сценарных атрибутов и не ведёт список сценариев; эти обязанности остаются в `Module G`.
+7. Если активный сценарий имеет `source_type = planner_manual_edit`, `Planner` должен открывать связанную `PlannerScheduleRevision` этого сценария как канонический editable source.
+8. Если активный сценарий использует ветку `Внешний график`, `Planner` должен открывать `external_krs_schedule`, привязанный к этому активному сценарию, а не произвольный dataset вне сценарного контекста.
+9. После действия `Создать версию` новый planner-derived scenario должен становиться текущим active scenario для `Сценарии`, `Добыча` и дальнейших переходов в `Planner`.
 
 ## Важно
 
 Старый смысл `Module F` как "planner bridge + feedback loop" больше не используется.  
 `Planner` теперь выделен в отдельный модуль, а orchestration и пересчёт вынесены в `Module G`.
+
