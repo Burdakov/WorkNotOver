@@ -21,7 +21,7 @@ from app.schemas.schedule_models import (
     ScheduleParseRequest,
     ScheduleParseResponse,
 )
-from app.services.importing.excel_utils import coerce_date, coerce_float, normalize_text, sheet_df, stringify
+from app.services.importing.excel_utils import coerce_date, coerce_float, excel_row_number, normalize_text, sheet_df, stringify
 
 router = APIRouter(prefix="/api/schedule", tags=["schedule"])
 
@@ -97,7 +97,7 @@ def parse_schedule_rows(df: pd.DataFrame, resolved: ScheduleColumns) -> tuple[li
 
         items.append(
             ScheduleItem(
-                event_id=f"evt-{index + 2}",
+                event_id=f"evt-{excel_row_number(df, index)}",
                 brigade=brigade,
                 area=area,
                 well=well,
@@ -108,7 +108,7 @@ def parse_schedule_rows(df: pd.DataFrame, resolved: ScheduleColumns) -> tuple[li
                 duration_days=duration_days,
                 has_increment=has_increment,
                 is_ppd=is_ppd,
-                source_row_number=index + 2,
+                source_row_number=excel_row_number(df, index),
             )
         )
 

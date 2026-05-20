@@ -6,7 +6,7 @@ import pandas as pd
 
 from app.schemas.common import ImportValidationReport, ValidationIssue
 from app.schemas.import_models import NormalizeColumns
-from app.services.importing.excel_utils import coerce_date, coerce_float, normalize_text, stringify
+from app.services.importing.excel_utils import coerce_date, coerce_float, excel_row_number, normalize_text, stringify
 
 _HINTS: dict[str, list[str]] = {
     "well": ["скв", "скваж", "well"],
@@ -118,7 +118,7 @@ def normalize_wells(df: pd.DataFrame, columns: NormalizeColumns, report: ImportV
     items: list[dict[str, Any]] = []
 
     for index, row in df.iterrows():
-        row_number = index + 2
+        row_number = excel_row_number(df, index)
         well_name = stringify(row.get(columns.well))
         if not well_name:
             continue
@@ -157,7 +157,7 @@ def normalize_niz(df: pd.DataFrame, columns: NormalizeColumns, report: ImportVal
     items: list[dict[str, Any]] = []
 
     for index, row in df.iterrows():
-        row_number = index + 2
+        row_number = excel_row_number(df, index)
         well_name = stringify(row.get(columns.well))
         niz = coerce_float(row.get(columns.niz))
 
@@ -191,7 +191,7 @@ def normalize_gtm(df: pd.DataFrame, columns: NormalizeColumns, report: ImportVal
     items: list[dict[str, Any]] = []
 
     for index, row in df.iterrows():
-        row_number = index + 2
+        row_number = excel_row_number(df, index)
         well_name = stringify(row.get(columns.well))
         planned_work = stringify(row.get(columns.planned_work))
         if not well_name and not planned_work:
@@ -237,7 +237,7 @@ def normalize_infrastructure(df: pd.DataFrame, columns: NormalizeColumns, report
     connections: list[dict[str, Any]] = []
 
     for index, row in df.iterrows():
-        row_number = index + 2
+        row_number = excel_row_number(df, index)
         object_name = stringify(row.get(columns.object_name))
         if not object_name:
             continue
@@ -280,7 +280,7 @@ def normalize_external_krs_schedule(df: pd.DataFrame, columns: NormalizeColumns,
     items: list[dict[str, Any]] = []
 
     for index, row in df.iterrows():
-        row_number = index + 2
+        row_number = excel_row_number(df, index)
         brigade = stringify(row.get(columns.brigade))
         well_name = stringify(row.get(columns.well))
         start_date = coerce_date(row.get(columns.start_date))
