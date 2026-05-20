@@ -114,9 +114,6 @@ Excel-файл текущего режима скважин.
 - current liquid rate
 - current watercut
 - current GOR
-- cumulative production, если доступно
-- cumulative gas production, если доступно
-- NIZ, если присутствует в исходном файле, может быть импортирован как legacy-поле wells dataset, но каноническим источником `NIZ` для сценария должен считаться отдельный dataset типа `niz`
 - status
 - fund type (`Base` / `New wells`), если доступно
 
@@ -128,8 +125,10 @@ Excel-файл значений `NIZ` по скважинам.
 
 - well identifier / well name
 - NIZ
+- cumulative oil production, если доступно
+- cumulative gas production, если доступно
 
-Результат должен сохраняться как отдельный dataset с `dataset_type = niz` и использоваться для сценарного связывания `well_name -> NIZ`.
+Результат должен сохраняться как отдельный dataset с `dataset_type = niz` и использоваться для сценарного связывания `well_name -> NIZ`, `well_name -> current_cumulative_oil` и `well_name -> current_cumulative_gas`.
 
 ### Входной источник 3
 
@@ -213,7 +212,7 @@ Excel-файл внешнего готового графика КРС.
 
 `NizDataset`
 
-Содержит валидированный набор scenario-bound сущностей `NizByWell`, пригодных для связывания `well_name -> NIZ` внутри активного сценария.
+Содержит валидированный набор scenario-bound сущностей `NizByWell`, пригодных для связывания `well_name -> NIZ`, `well_name -> current_cumulative_oil` и `well_name -> current_cumulative_gas` внутри активного сценария.
 
 ### Выход 3
 

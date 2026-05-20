@@ -407,8 +407,8 @@ class ForecastService:
                     "current_gas_rate": 0.0,
                     "current_watercut": 0.0,
                     "current_gor": 0.0,
-                    "current_cumulative_oil": 0.0,
-                    "current_cumulative_gas": 0.0,
+                    "current_cumulative_oil": _coerce_float(event.get("current_cumulative_oil")),
+                    "current_cumulative_gas": _coerce_float(event.get("current_cumulative_gas")),
                     "niz": _coerce_float(event.get("niz")),
                     "metadata": {
                         "synthetic_well_state": True,

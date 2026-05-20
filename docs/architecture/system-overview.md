@@ -91,6 +91,7 @@
 
 - normalized well dataset;
 - normalized NIZ dataset;
+- scenario-bound cumulative oil / gas values are also carried through the `niz` dataset and linked to wells by `well_name`;
 - normalized GTM dataset;
 - normalized infrastructure dataset;
 - manual input configs;

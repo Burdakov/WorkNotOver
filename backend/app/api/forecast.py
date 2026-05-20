@@ -87,23 +87,27 @@ def _coerce_float(value, default: float = 0.0) -> float:
         return default
 
 
-def _build_niz_lookup(payload: list[dict]) -> dict[str, float]:
-    lookup: dict[str, float] = {}
+def _build_niz_lookup(payload: list[dict]) -> dict[str, dict[str, float]]:
+    lookup: dict[str, dict[str, float]] = {}
     for item in payload:
         well_key = _well_key(item)
         niz_value = _coerce_float(item.get("niz"))
         if well_key and niz_value > 0:
-            lookup[well_key] = niz_value
+            lookup[well_key] = {
+                "niz": niz_value,
+                "current_cumulative_oil": _coerce_float(item.get("current_cumulative_oil")),
+                "current_cumulative_gas": _coerce_float(item.get("current_cumulative_gas")),
+            }
     return lookup
 
 
-def _attach_niz_to_payload(payload: list[dict], niz_lookup: dict[str, float]) -> list[dict]:
+def _attach_niz_to_payload(payload: list[dict], niz_lookup: dict[str, dict[str, float]]) -> list[dict]:
     enriched: list[dict] = []
     for item in payload:
         item_copy = dict(item)
         well_key = _well_key(item_copy)
         if well_key and well_key in niz_lookup:
-            item_copy["niz"] = niz_lookup[well_key]
+            item_copy.update(niz_lookup[well_key])
         enriched.append(item_copy)
     return enriched
 
@@ -113,7 +117,7 @@ def _validate_niz_coverage(
     wells_payload: list[dict],
     gtm_payload: list[dict],
     niz_payload: list[dict],
-) -> dict[str, float]:
+ ) -> dict[str, dict[str, float]]:
     niz_lookup = _build_niz_lookup(niz_payload)
     if not niz_lookup:
         raise HTTPException(status_code=400, detail="Dataset NIZ не содержит валидных значений для расчета.")

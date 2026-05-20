@@ -140,10 +140,10 @@ def normalize_wells(df: pd.DataFrame, columns: NormalizeColumns, report: ImportV
                 "current_liquid_rate": coerce_float(row.get(columns.liquid_rate)),
                 "current_watercut": coerce_float(row.get(columns.watercut)),
                 "current_gor": coerce_float(row.get(columns.gor)),
-                "current_cumulative_oil": coerce_float(row.get(columns.cumulative_oil)),
-                "current_cumulative_gas": coerce_float(row.get(columns.cumulative_gas)),
+                "current_cumulative_oil": None,
+                "current_cumulative_gas": None,
                 "current_cumulative_liquid": None,
-                "niz": coerce_float(row.get(columns.niz)),
+                "niz": None,
                 "reserves_group": None,
                 "metadata": {"source_row_number": row_number},
             }
@@ -179,6 +179,8 @@ def normalize_niz(df: pd.DataFrame, columns: NormalizeColumns, report: ImportVal
                 "well_id": _stable_well_id(well_name, row_number),
                 "well_name": well_name,
                 "niz": niz,
+                "current_cumulative_oil": coerce_float(row.get(columns.cumulative_oil)),
+                "current_cumulative_gas": coerce_float(row.get(columns.cumulative_gas)),
                 "metadata": {"source_row_number": row_number},
             }
         )

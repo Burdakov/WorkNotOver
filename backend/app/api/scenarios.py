@@ -194,23 +194,27 @@ def _mark_node_partial(node: ScenarioInputNodeValidation, issue: str) -> None:
     _add_node_issue(node, issue)
 
 
-def _build_niz_lookup(payload: list[dict[str, Any]]) -> dict[str, float]:
-    lookup: dict[str, float] = {}
+def _build_niz_lookup(payload: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    lookup: dict[str, dict[str, float]] = {}
     for item in payload:
         well_key = _well_key_from_payload(item)
         niz_value = _coerce_float(item.get("niz"))
         if well_key and niz_value > 0:
-            lookup[well_key] = niz_value
+            lookup[well_key] = {
+                "niz": niz_value,
+                "current_cumulative_oil": _coerce_float(item.get("current_cumulative_oil")),
+                "current_cumulative_gas": _coerce_float(item.get("current_cumulative_gas")),
+            }
     return lookup
 
 
-def _attach_niz_to_payload(payload: list[dict[str, Any]], niz_lookup: dict[str, float]) -> list[dict[str, Any]]:
+def _attach_niz_to_payload(payload: list[dict[str, Any]], niz_lookup: dict[str, dict[str, float]]) -> list[dict[str, Any]]:
     enriched: list[dict[str, Any]] = []
     for item in payload:
         item_copy = dict(item)
         well_key = _well_key_from_payload(item_copy)
         if well_key and well_key in niz_lookup:
-            item_copy["niz"] = niz_lookup[well_key]
+            item_copy.update(niz_lookup[well_key])
         enriched.append(item_copy)
     return enriched
 

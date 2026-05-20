@@ -240,6 +240,7 @@
 - `current_gor` задаётся в одном согласованном формате и единицах измерения по проекту;
 - `current_watercut` задаётся в одном согласованном формате: доля или проценты;
 - `niz` в runtime-контуре должен считаться каноническим сценарио-связанным значением, полученным из отдельного dataset типа `niz`, привязанного к `Scenario` по `well_name`; inline-значение в `WellState`, если оно присутствует в импортированном wells dataset, не должно считаться единственным источником истины;
+- `current_cumulative_oil` и `current_cumulative_gas` в runtime-контуре также должны считаться каноническими scenario-bound значениями, полученными из dataset типа `niz`; inline-значения этих полей в wells dataset не должны считаться источником истины для расчётного контура;
 - `niz`, `current_cumulative_oil` и `current_watercut`, если доступны, должны быть достаточны для расчёта текущего положения скважины на характеристике вытеснения и обратного расчёта remaining NIZ.
 
 ---
@@ -253,13 +254,16 @@
 - `well_id: str | None`
 - `well_name: str`
 - `niz: float`
+- `current_cumulative_oil: float | None`
+- `current_cumulative_gas: float | None`
 - `metadata: dict[str, object] | None`
 
 ### Инварианты
 
 - `well_name` должен совпадать с именем скважины, используемым для связывания `WellState` и `GtmCandidate`;
 - `niz > 0`;
-- dataset типа `niz` должен позволять построить полное отображение `well_name -> NIZ` для активного сценария.
+- dataset типа `niz` должен позволять построить полное отображение `well_name -> NIZ` для активного сценария;
+- если накопленные показатели доступны, они должны храниться здесь же как scenario-bound значения `current_cumulative_oil` и `current_cumulative_gas` для соответствующей скважины.
 
 ---
 

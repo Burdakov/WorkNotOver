@@ -38,13 +38,12 @@ _SOURCE_KIND_MAPPING_FIELDS = {
         "liquid_rate",
         "watercut",
         "gor",
-        "cumulative_oil",
-        "cumulative_gas",
-        "niz",
     },
     "niz": {
         "well",
         "niz",
+        "cumulative_oil",
+        "cumulative_gas",
     },
     "gtm": {
         "well",

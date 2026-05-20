@@ -44,12 +44,12 @@ const SOURCE_KIND_META = {
   wells: {
     title: 'Загрузить базовый фонд',
     description: 'Формирует dataset типа wells для Module B.',
-    fields: ['well', 'area', 'lu', 'sloy', 'well_pad', 'brigade', 'fund_type', 'oil_rate', 'liquid_rate', 'gas_rate', 'watercut', 'gor', 'cumulative_oil', 'cumulative_gas'],
+    fields: ['well', 'area', 'lu', 'sloy', 'well_pad', 'brigade', 'fund_type', 'oil_rate', 'liquid_rate', 'gas_rate', 'watercut', 'gor'],
   },
   niz: {
     title: 'Р—Р°РіСЂСѓР·РёС‚СЊ NIZ РїРѕ СЃРєРІР°Р¶РёРЅР°Рј',
     description: 'Р¤РѕСЂРјРёСЂСѓРµС‚ scenario-bound dataset С‚РёРїР° niz. РљР°Р¶РґР°СЏ СЃРєРІР°Р¶РёРЅР° РёР· wells Рё GTM РґРѕР»Р¶РЅР° РёРјРµС‚СЊ СЃРІРѕС‘ Р·РЅР°С‡РµРЅРёРµ NIZ.',
-    fields: ['well', 'niz'],
+    fields: ['well', 'niz', 'cumulative_oil', 'cumulative_gas'],
   },
   gtm: {
     title: 'Загрузить план ГТМ',

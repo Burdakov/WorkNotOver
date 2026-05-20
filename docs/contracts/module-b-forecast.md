@@ -153,6 +153,7 @@
 Обводнённость рассчитывается по `DisplacementConfig` через `NIZ` и накопленную добычу нефти.
 Абсолютное значение `NIZ` для каждой скважины должно приходить не из inline-поля wells dataset, а из отдельного scenario-bound dataset типа `niz`, связанного с `wells` и `gtm` по `well_name` / `well_id`.
 Для конкретной скважины должен использоваться `DisplacementConfig`, соответствующий её `LU` и при наличии её `SLOY`.
+Накопленные показатели `current_cumulative_oil` и `current_cumulative_gas`, если они участвуют в расчёте или сохраняются в runtime-state, должны поступать не из wells dataset, а из scenario-bound dataset типа `niz`, связанного со скважиной по `well_name` / `well_id`.
 
 Используемый в текущей методике нормализованный показатель:
 
