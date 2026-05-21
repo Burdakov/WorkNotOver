@@ -16,6 +16,7 @@ _HINTS: dict[str, list[str]] = {
     "well_pad": ["куст", "wellpad", "well_pad"],
     "brigade": ["бригада", "brigade"],
     "fund_type": ["вид фонда", "тип фонда", "fund type"],
+    "fund_state": ["состояние по фонду", "состояние фонда", "состояние"],
     "start_date": ["дата начала", "начало", "start"],
     "end_date": ["заверш", "оконч", "конец", "end"],
     "planned_work": ["планируемый объем работ", "планируемый объём работ", "объем работ", "объём работ", "мероприят"],
@@ -45,12 +46,71 @@ _HINTS: dict[str, list[str]] = {
 }
 
 _REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
-    "wells": ("well", "liquid_rate"),
-    "niz": ("well", "niz"),
+    "wells": ("well", "lu", "well_pad", "fund_state", "oil_rate", "liquid_rate", "watercut"),
+    "niz": ("well", "lu", "well_pad", "niz"),
     "gtm": ("well", "planned_work", "start_date"),
     "infrastructure": ("object_name", "object_type"),
     "external_krs_schedule": ("brigade", "well", "start_date", "end_date", "planned_work"),
 }
+
+
+def _sample_column_texts(df: pd.DataFrame, column: str, limit: int = 20) -> list[str]:
+    if column not in df.columns:
+        return []
+    series = df[column].dropna().head(limit)
+    return [stringify(value) for value in series if stringify(value)]
+
+
+def _looks_like_alphanumeric_well_mask(value: str) -> bool:
+    return bool(value) and any(char.isalpha() for char in value) and any(char.isdigit() for char in value)
+
+
+def _looks_like_numeric_well_number(value: str) -> bool:
+    normalized = value.replace(" ", "").replace("-", "").replace("_", "")
+    return normalized.isdigit()
+
+
+def _extract_effective_well_name(row: pd.Series, primary_column: str | None) -> str:
+    primary_value = stringify(row.get(primary_column)) if primary_column else ""
+    if not primary_value or _looks_like_alphanumeric_well_mask(primary_value):
+        return primary_value
+
+    for column_name in row.index:
+        normalized_column = normalize_text(column_name)
+        if "id" not in normalized_column:
+            continue
+        candidate = stringify(row.get(column_name))
+        if _looks_like_alphanumeric_well_mask(candidate):
+            return candidate
+        if "скв" not in normalized_column and "well" not in normalized_column:
+            continue
+        candidate = stringify(row.get(column_name))
+        if _looks_like_alphanumeric_well_mask(candidate):
+            return candidate
+
+    return primary_value
+
+
+def _score_well_column(df: pd.DataFrame, column: str, normalized_column: str, hints: list[str]) -> int:
+    score = sum(1 for hint in hints if hint in normalized_column)
+
+    if "id" in normalized_column and ("скв" in normalized_column or "well" in normalized_column):
+        score += 100
+    if "скважин" in normalized_column and "№" in column:
+        score += 10
+
+    if "id" in normalized_column:
+        score += 100
+    if "№" in column:
+        score += 10
+    sample_values = _sample_column_texts(df, column)
+    alpha_numeric_count = sum(1 for value in sample_values if _looks_like_alphanumeric_well_mask(value))
+    numeric_only_count = sum(1 for value in sample_values if _looks_like_numeric_well_number(value))
+
+    score += alpha_numeric_count * 20
+    score -= numeric_only_count * 3
+
+    return score
 
 
 def _warning(report: ImportValidationReport, message: str, row_number: int | None = None, field_name: str | None = None) -> None:
@@ -60,8 +120,10 @@ def _warning(report: ImportValidationReport, message: str, row_number: int | Non
 
 
 def _stable_well_id(well_name: str, row_number: int) -> str:
-    normalized = normalize_text(well_name)
-    return f"well::{normalized or row_number}"
+    raw = stringify(well_name)
+    if raw:
+        return " ".join(raw.split())
+    return f"well_{row_number}"
 
 
 def _normalize_fund_type(value: Any) -> str | None:
@@ -73,6 +135,13 @@ def _normalize_fund_type(value: Any) -> str | None:
         return "New wells"
     if "base" in normalized or "баз" in normalized:
         return "Base"
+    return raw
+
+
+def _normalize_fund_state(value: Any) -> str | None:
+    raw = stringify(value)
+    if not raw:
+        return None
     return raw
 
 
@@ -98,14 +167,21 @@ def resolve_columns(df: pd.DataFrame, provided: NormalizeColumns | None, source_
             resolved[key] = explicit
             continue
 
-        match = next(
-            (
-                column
-                for column in columns
-                if any(hint in normalized_columns[column] for hint in hints) and not _is_ambiguous(key, normalized_columns[column])
-            ),
-            None,
-        )
+        candidates = [
+            column
+            for column in columns
+            if any(hint in normalized_columns[column] for hint in hints) and not _is_ambiguous(key, normalized_columns[column])
+        ]
+        if key == "well" and candidates:
+            match = max(
+                candidates,
+                key=lambda column: (
+                    _score_well_column(df, column, normalized_columns[column], hints),
+                    -columns.index(column),
+                ),
+            )
+        else:
+            match = candidates[0] if candidates else None
         resolved[key] = match
 
     missing = [field for field in _REQUIRED_FIELDS.get(source_kind, ()) if not resolved.get(field)]
@@ -119,7 +195,7 @@ def normalize_wells(df: pd.DataFrame, columns: NormalizeColumns, report: ImportV
 
     for index, row in df.iterrows():
         row_number = excel_row_number(df, index)
-        well_name = stringify(row.get(columns.well))
+        well_name = _extract_effective_well_name(row, columns.well)
         if not well_name:
             continue
 
@@ -127,13 +203,14 @@ def normalize_wells(df: pd.DataFrame, columns: NormalizeColumns, report: ImportV
             {
                 "well_id": _stable_well_id(well_name, row_number),
                 "well_name": well_name,
-                "area": stringify(row.get(columns.area)) or None,
+                "area": None,
                 "lu_id": stringify(row.get(columns.lu)) or None,
                 "sloy_id": stringify(row.get(columns.sloy)) or None,
                 "well_pad_id": stringify(row.get(columns.well_pad)) or None,
                 "infrastructure_object_id": None,
-                "brigade": stringify(row.get(columns.brigade)) or None,
-                "fund_type": _normalize_fund_type(row.get(columns.fund_type)),
+                "brigade": None,
+                "fund_type": "Base",
+                "fund_state": _normalize_fund_state(row.get(columns.fund_state)),
                 "status": None,
                 "current_oil_rate": coerce_float(row.get(columns.oil_rate)),
                 "current_gas_rate": coerce_float(row.get(columns.gas_rate)),
@@ -153,20 +230,41 @@ def normalize_wells(df: pd.DataFrame, columns: NormalizeColumns, report: ImportV
     return items
 
 
-def normalize_niz(df: pd.DataFrame, columns: NormalizeColumns, report: ImportValidationReport) -> list[dict[str, Any]]:
+def normalize_niz(
+    df: pd.DataFrame,
+    columns: NormalizeColumns,
+    report: ImportValidationReport,
+    row_matches: dict[int, str] | None = None,
+    manual_entries: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
+    row_matches = row_matches or {}
+    manual_entries = manual_entries or []
 
     for index, row in df.iterrows():
         row_number = excel_row_number(df, index)
-        well_name = stringify(row.get(columns.well))
+        source_well_name = stringify(row.get(columns.well))
+        lu_id = stringify(row.get(columns.lu))
+        well_pad_id = stringify(row.get(columns.well_pad))
         niz = coerce_float(row.get(columns.niz))
+        well_name = stringify(row_matches.get(row_number)) or source_well_name
 
-        if not well_name and niz <= 0:
+        if not source_well_name and not lu_id and not well_pad_id and niz <= 0:
             continue
 
         if not well_name:
             report.skipped_rows += 1
             _warning(report, "Строка NIZ пропущена: отсутствует имя скважины.", row_number=row_number, field_name="well")
+            continue
+
+        if not lu_id:
+            report.skipped_rows += 1
+            _warning(report, "РЎС‚СЂРѕРєР° NIZ РїСЂРѕРїСѓС‰РµРЅР°: РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚ LU.", row_number=row_number, field_name="lu")
+            continue
+
+        if not well_pad_id:
+            report.skipped_rows += 1
+            _warning(report, "РЎС‚СЂРѕРєР° NIZ РїСЂРѕРїСѓС‰РµРЅР°: РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚ РєСѓСЃС‚.", row_number=row_number, field_name="well_pad")
             continue
 
         if niz <= 0:
@@ -178,10 +276,34 @@ def normalize_niz(df: pd.DataFrame, columns: NormalizeColumns, report: ImportVal
             {
                 "well_id": _stable_well_id(well_name, row_number),
                 "well_name": well_name,
+                "source_well_name": source_well_name,
+                "lu_id": lu_id or None,
+                "well_pad_id": well_pad_id or None,
                 "niz": niz,
                 "current_cumulative_oil": coerce_float(row.get(columns.cumulative_oil)),
                 "current_cumulative_gas": coerce_float(row.get(columns.cumulative_gas)),
                 "metadata": {"source_row_number": row_number},
+            }
+        )
+
+    for manual_index, entry in enumerate(manual_entries, start=1):
+        well_name = stringify(entry.get("well_name"))
+        lu_id = stringify(entry.get("lu_id"))
+        well_pad_id = stringify(entry.get("well_pad_id"))
+        niz = coerce_float(entry.get("niz"))
+        if not well_name or not lu_id or not well_pad_id or niz <= 0:
+            continue
+        items.append(
+            {
+                "well_id": _stable_well_id(well_name, 100000 + manual_index),
+                "well_name": well_name,
+                "source_well_name": well_name,
+                "lu_id": lu_id or None,
+                "well_pad_id": well_pad_id or None,
+                "niz": niz,
+                "current_cumulative_oil": coerce_float(entry.get("cumulative_oil")),
+                "current_cumulative_gas": coerce_float(entry.get("cumulative_gas")),
+                "metadata": {"source_row_number": None, "source": "manual"},
             }
         )
 
@@ -194,7 +316,7 @@ def normalize_gtm(df: pd.DataFrame, columns: NormalizeColumns, report: ImportVal
 
     for index, row in df.iterrows():
         row_number = excel_row_number(df, index)
-        well_name = stringify(row.get(columns.well))
+        well_name = _extract_effective_well_name(row, columns.well)
         planned_work = stringify(row.get(columns.planned_work))
         if not well_name and not planned_work:
             continue
@@ -284,7 +406,7 @@ def normalize_external_krs_schedule(df: pd.DataFrame, columns: NormalizeColumns,
     for index, row in df.iterrows():
         row_number = excel_row_number(df, index)
         brigade = stringify(row.get(columns.brigade))
-        well_name = stringify(row.get(columns.well))
+        well_name = _extract_effective_well_name(row, columns.well)
         start_date = coerce_date(row.get(columns.start_date))
         end_date = coerce_date(row.get(columns.end_date))
         planned_work = stringify(row.get(columns.planned_work))

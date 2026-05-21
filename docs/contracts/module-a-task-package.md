@@ -104,18 +104,21 @@ Excel-файл текущего режима скважин.
 
 Ожидаемые логические поля:
 
+Обязательные для нормализации `wells` dataset:
+
 - well identifier / well name
-- area
 - LU
-- SLOY
 - WellPad
+- fund state (`в работе` / иные статусы)
 - current oil rate
-- current gas rate
 - current liquid rate
 - current watercut
+
+Необязательные, но допустимые к загрузке:
+
+- current gas rate
 - current GOR
-- status
-- fund type (`Base` / `New wells`), если доступно
+- SLOY
 
 ### Входной источник 2
 
@@ -124,11 +127,24 @@ Excel-файл значений `NIZ` по скважинам.
 Ожидаемые логические поля:
 
 - well identifier / well name
+- LU
+- WellPad
 - NIZ
 - cumulative oil production, если доступно
 - cumulative gas production, если доступно
 
 Результат должен сохраняться как отдельный dataset с `dataset_type = niz` и использоваться для сценарного связывания `well_name -> NIZ`, `well_name -> current_cumulative_oil` и `well_name -> current_cumulative_gas`.
+
+При загрузке dataset типа `niz` UI и import-layer должны поддерживать дополнительное построчное сопоставление `well_name` из NIZ с уже загруженными скважинами из `wells` и `gtm`.
+
+Правила:
+
+- сначала выполняется обычное сопоставление колонок;
+- затем для каждой строки `niz` должен формироваться список предложенных скважин по похожему буквенному и числовому индексу;
+- пользователь должен иметь возможность выбрать корректную скважину из dropdown;
+- если для части скважин из `wells` и `gtm` соответствующая строка `niz` не нашлась, UI должен показывать отдельный список unmatched-скважин с ручным вводом `NIZ`, `current_cumulative_oil` и `current_cumulative_gas`;
+- для unmatched-скважин ручной ввод должен поддерживать вставку значений по столбцам через copy-paste;
+- после подтверждения dataset должен сохраняться уже с каноническим `well_name`, используемым в scenario-bound связывании.
 
 ### Входной источник 3
 

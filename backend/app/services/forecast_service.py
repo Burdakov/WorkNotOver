@@ -14,6 +14,7 @@ from app.schemas.forecast_models import (
     ScenarioProductionSummary,
     WellForecastResult,
 )
+from app.services.importing.excel_utils import normalize_text
 
 
 def _parse_iso_date(value: str | None) -> date | None:
@@ -46,6 +47,11 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _is_active_base_fund_state(value: Any) -> bool:
+    normalized = normalize_text(value)
+    return "в работе" in normalized
 
 
 def _well_key(payload: dict[str, Any]) -> str:
@@ -402,6 +408,7 @@ class ForecastService:
                     "sloy_id": event.get("sloy_id"),
                     "well_pad_id": event.get("well_pad_id"),
                     "fund_type": "New wells",
+                    "fund_state": None,
                     "current_oil_rate": 0.0,
                     "current_liquid_rate": 0.0,
                     "current_gas_rate": 0.0,
@@ -434,6 +441,7 @@ class ForecastService:
         well_id = _well_key(well)
         well_name = str(well.get("well_name") or well_id)
         fund_type = str(well.get("fund_type") or "Base")
+        fund_state = well.get("fund_state")
         lu_id = well.get("lu_id")
         sloy_id = well.get("sloy_id")
 
@@ -470,9 +478,10 @@ class ForecastService:
         if current_gor <= 0 and current_oil > 0 and current_gas > 0:
             current_gor = current_gas / current_oil
 
-        active_liquid = current_liquid if fund_type == "Base" else 0.0
+        base_well_is_active = fund_type == "Base" and _is_active_base_fund_state(fund_state)
+        active_liquid = current_liquid if base_well_is_active else 0.0
         active_gor = current_gor
-        gas_floor = current_gas if fund_type == "Base" else 0.0
+        gas_floor = current_gas if base_well_is_active else 0.0
         decline_anchor = context.start_day
         startup_day: date | None = None
 
@@ -500,6 +509,9 @@ class ForecastService:
                 expected_liquid_increment = _coerce_float(event.get("expected_liquid_increment"))
                 expected_gas_increment = _coerce_float(event.get("expected_gas_increment"))
                 expected_gor_change = _coerce_float(event.get("expected_gor_change"))
+
+                if fund_type == "Base" and active_liquid <= 0 and expected_liquid_increment > 0:
+                    decline_anchor = current_day
 
                 active_liquid = max(active_liquid + expected_liquid_increment, 0.0)
                 gas_floor = max(gas_floor + expected_gas_increment, 0.0)
@@ -544,6 +556,7 @@ class ForecastService:
             well_id=well_id,
             well_name=well_name,
             fund_type=fund_type,
+            fund_state=str(fund_state).strip() or None if fund_state is not None else None,
             lu_id=lu_id,
             sloy_id=sloy_id,
             well_pad_id=well.get("well_pad_id"),

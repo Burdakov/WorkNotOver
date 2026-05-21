@@ -90,6 +90,8 @@
 Выход:
 
 - normalized well dataset;
+- base wells in that dataset are imported with `fund_type = Base`;
+- initial participation of each base well is controlled by scenario-bound field `fund_state` from the wells dataset;
 - normalized NIZ dataset;
 - scenario-bound cumulative oil / gas values are also carried through the `niz` dataset and linked to wells by `well_name`;
 - normalized GTM dataset;
@@ -105,6 +107,7 @@
 
 - расчёт базового профиля нефти и жидкости;
 - применение scenario-bound `NIZ` по каждой скважине из `wells` и `gtm`;
+- включение базовой скважины в первый расчётный шаг только при `fund_state = в работе`;
 - расчёт базового профиля газа и `GOR`;
 - расчёт обводнённости;
 - расчёт эффекта ГТМ;

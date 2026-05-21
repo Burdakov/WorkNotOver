@@ -1,6 +1,8 @@
 ﻿from __future__ import annotations
 
+import re
 import shutil
+from difflib import SequenceMatcher
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,8 +12,17 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.repositories.dataset_repository import DatasetRepository
 from app.schemas.common import ImportValidationReport
-from app.schemas.import_models import NormalizeRequest, NormalizeResponse, UploadResponse, UploadedFileItem
-from app.services.importing.excel_utils import STORAGE_DIR, columns_info, preview_records, sheet_df
+from app.schemas.import_models import (
+    NizWellCandidateOption,
+    NizWellMatchPreviewRequest,
+    NizWellMatchPreviewResponse,
+    NizWellMatchSuggestionRow,
+    NormalizeRequest,
+    NormalizeResponse,
+    UploadResponse,
+    UploadedFileItem,
+)
+from app.services.importing.excel_utils import STORAGE_DIR, columns_info, excel_row_number, normalize_text, preview_records, sheet_df, stringify
 from app.services.importing.normalizers import (
     normalize_external_krs_schedule,
     normalize_gtm,
@@ -27,12 +38,10 @@ router = APIRouter(prefix="/api", tags=["module-a"])
 _SOURCE_KIND_MAPPING_FIELDS = {
     "wells": {
         "well",
-        "area",
         "lu",
         "sloy",
         "well_pad",
-        "brigade",
-        "fund_type",
+        "fund_state",
         "oil_rate",
         "gas_rate",
         "liquid_rate",
@@ -41,6 +50,8 @@ _SOURCE_KIND_MAPPING_FIELDS = {
     },
     "niz": {
         "well",
+        "lu",
+        "well_pad",
         "niz",
         "cumulative_oil",
         "cumulative_gas",
@@ -106,6 +117,136 @@ def get_db():
 def _build_column_mappings(source_kind: str, resolved_columns: dict[str, str | None]) -> dict[str, str]:
     allowed_fields = _SOURCE_KIND_MAPPING_FIELDS.get(source_kind, set())
     return {key: value for key, value in resolved_columns.items() if key in allowed_fields and value}
+
+
+_WELL_GENERIC_TOKENS = {"скв", "скважина", "скваж", "well", "id", "no", "n"}
+
+
+def _well_signature(value: str) -> dict[str, str]:
+    normalized = normalize_text(value)
+    cleaned = re.sub(r"[^0-9a-zа-я]+", " ", normalized)
+    tokens = [token for token in cleaned.split() if token and token not in _WELL_GENERIC_TOKENS]
+    compact = " ".join(tokens).strip()
+    digits = " ".join(re.findall(r"\d+", compact))
+    letters = " ".join(re.findall(r"[a-zа-я]+", compact))
+    return {"raw": value, "compact": compact, "digits": digits, "letters": letters}
+
+
+def _candidate_score(source: dict[str, str], candidate: dict[str, str]) -> float:
+    if not source["compact"] or not candidate["compact"]:
+        return 0.0
+
+    score = 0.0
+    if source["compact"] == candidate["compact"]:
+        score += 100.0
+    ratio = SequenceMatcher(None, source["compact"], candidate["compact"]).ratio()
+    score += ratio * 35.0
+
+    if source["digits"] and candidate["digits"]:
+        if source["digits"] == candidate["digits"]:
+            score += 45.0
+        elif source["digits"] in candidate["digits"] or candidate["digits"] in source["digits"]:
+            score += 20.0
+
+    if source["letters"] and candidate["letters"]:
+        if source["letters"] == candidate["letters"]:
+            score += 25.0
+        elif source["letters"] in candidate["letters"] or candidate["letters"] in source["letters"]:
+            score += 10.0
+
+    return score
+
+
+def _is_confident_well_match(source: dict[str, str], candidate: dict[str, str]) -> bool:
+    source_digits = source.get("digits", "").strip()
+    candidate_digits = candidate.get("digits", "").strip()
+    source_letters = source.get("letters", "").strip()
+    candidate_letters = candidate.get("letters", "").strip()
+    if not source_digits or not candidate_digits or not source_letters or not candidate_letters:
+        return False
+    return source_digits == candidate_digits and source_letters == candidate_letters
+
+
+def _rank_candidate_wells(source_row: dict[str, str], candidate_wells: list[dict[str, str]], limit: int = 8) -> list[NizWellCandidateOption]:
+    source_signature = _well_signature(source_row["well_name"])
+    source_lu = normalize_text(source_row.get("lu_id"))
+    source_pad = normalize_text(source_row.get("well_pad_id"))
+    ranked = []
+    seen: set[tuple[str, str, str]] = set()
+
+    same_lu_same_pad = []
+    same_lu = []
+    rest = []
+    for candidate in candidate_wells:
+        candidate_name = stringify(candidate.get("well_name"))
+        candidate_lu = stringify(candidate.get("lu_id"))
+        candidate_pad = stringify(candidate.get("well_pad_id"))
+        identity = (candidate_name, candidate_lu, candidate_pad)
+        if not candidate_name or identity in seen:
+            continue
+        seen.add(identity)
+        bucket_item = {
+            "well_name": candidate_name,
+            "lu_id": candidate_lu or None,
+            "well_pad_id": candidate_pad or None,
+        }
+        candidate_lu_norm = normalize_text(candidate_lu)
+        candidate_pad_norm = normalize_text(candidate_pad)
+        if source_lu and candidate_lu_norm == source_lu and source_pad and candidate_pad_norm == source_pad:
+            same_lu_same_pad.append(bucket_item)
+        elif source_lu and candidate_lu_norm == source_lu:
+            same_lu.append(bucket_item)
+        else:
+            rest.append(bucket_item)
+
+    search_space = same_lu_same_pad or same_lu or rest
+    for candidate in search_space:
+        score = _candidate_score(source_signature, _well_signature(candidate["well_name"]))
+        if source_lu and normalize_text(candidate.get("lu_id")) == source_lu:
+            score += 15.0
+        if source_pad and normalize_text(candidate.get("well_pad_id")) == source_pad:
+            score += 20.0
+        if score <= 0:
+            continue
+        ranked.append((score, candidate))
+    ranked.sort(key=lambda item: (-item[0], item[1]["well_name"]))
+    return [NizWellCandidateOption(**item) for _, item in ranked[:limit]]
+
+
+def _build_niz_row_matches(df, resolved_columns, candidate_wells: list[dict[str, str]]) -> list[NizWellMatchSuggestionRow]:
+    rows: list[NizWellMatchSuggestionRow] = []
+    for index, row in df.iterrows():
+        row_number = excel_row_number(df, index)
+        source_well_name = stringify(row.get(resolved_columns.well))
+        source_lu_id = stringify(row.get(resolved_columns.lu)) if resolved_columns.lu else ""
+        source_well_pad_id = stringify(row.get(resolved_columns.well_pad)) if resolved_columns.well_pad else ""
+        if not source_well_name:
+            continue
+        candidates = _rank_candidate_wells(
+            {
+                "well_name": source_well_name,
+                "lu_id": source_lu_id,
+                "well_pad_id": source_well_pad_id,
+            },
+            candidate_wells,
+        )
+        best_match = None
+        if candidates:
+            source_signature = _well_signature(source_well_name)
+            top_candidate_signature = _well_signature(candidates[0].well_name)
+            if _is_confident_well_match(source_signature, top_candidate_signature):
+                best_match = candidates[0].well_name
+        rows.append(
+            NizWellMatchSuggestionRow(
+                row_number=row_number,
+                source_well_name=source_well_name,
+                source_lu_id=source_lu_id or None,
+                source_well_pad_id=source_well_pad_id or None,
+                matched_well_name=best_match,
+                candidates=candidates,
+            )
+        )
+    return rows
 
 
 @router.post("/files/upload", response_model=UploadResponse)
@@ -205,6 +346,34 @@ def get_dataset(dataset_id: str, dataset_version_id: str | None = None, db: Sess
     }
 
 
+@router.post("/import/niz-well-matches", response_model=NizWellMatchPreviewResponse)
+def preview_niz_well_matches(payload: NizWellMatchPreviewRequest, db: Session = Depends(get_db)) -> NizWellMatchPreviewResponse:
+    repo = DatasetRepository(db)
+    uploaded = next((item for item in repo.list_uploaded_files() if item.file_id == payload.file_id), None)
+    if uploaded is None:
+        raise HTTPException(status_code=404, detail="Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ.")
+
+    file_path = Path(uploaded.stored_path)
+    _, selected_sheet, df = sheet_df(file_path, payload.sheet_name)
+
+    try:
+        resolved_columns = resolve_columns(df, payload.columns, "niz")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    candidate_wells = [
+        {
+            "well_name": stringify(item.well_name),
+            "lu_id": stringify(item.lu_id),
+            "well_pad_id": stringify(item.well_pad_id),
+        }
+        for item in payload.candidate_wells
+        if stringify(item.well_name)
+    ]
+    rows = _build_niz_row_matches(df, resolved_columns, candidate_wells)
+    return NizWellMatchPreviewResponse(rows=rows)
+
+
 @router.post("/import/normalize", response_model=NormalizeResponse)
 def normalize_dataset(payload: NormalizeRequest, db: Session = Depends(get_db)) -> NormalizeResponse:
     repo = DatasetRepository(db)
@@ -232,7 +401,18 @@ def normalize_dataset(payload: NormalizeRequest, db: Session = Depends(get_db)) 
         normalized_payload = normalize_wells(df, resolved_columns, report)
         validate_hierarchy(normalized_payload, report)
     elif payload.source_kind == "niz":
-        normalized_payload = normalize_niz(df, resolved_columns, report)
+        niz_row_matches = {
+            item.row_number: item.matched_well_name
+            for item in payload.niz_well_matches
+            if item.matched_well_name
+        }
+        normalized_payload = normalize_niz(
+            df,
+            resolved_columns,
+            report,
+            row_matches=niz_row_matches,
+            manual_entries=[item.model_dump() for item in payload.manual_niz_entries],
+        )
     elif payload.source_kind == "gtm":
         normalized_payload = normalize_gtm(df, resolved_columns, report)
         validate_hierarchy(normalized_payload, report)

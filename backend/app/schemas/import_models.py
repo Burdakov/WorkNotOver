@@ -30,6 +30,7 @@ class NormalizeColumns(BaseModel):
     well_pad: str | None = None
     brigade: str | None = None
     fund_type: str | None = None
+    fund_state: str | None = None
     start_date: str | None = None
     end_date: str | None = None
     planned_work: str | None = None
@@ -58,6 +59,26 @@ class NormalizeColumns(BaseModel):
     parent_object: str | None = None
 
 
+class NizWellMatchInput(BaseModel):
+    row_number: int
+    matched_well_name: str | None = None
+
+
+class NizWellCandidateInput(BaseModel):
+    well_name: str
+    lu_id: str | None = None
+    well_pad_id: str | None = None
+
+
+class ManualNizEntryInput(BaseModel):
+    well_name: str
+    lu_id: str | None = None
+    well_pad_id: str | None = None
+    niz: float | None = None
+    cumulative_oil: float | None = None
+    cumulative_gas: float | None = None
+
+
 class NormalizeRequest(BaseModel):
     file_id: str
     source_kind: str
@@ -65,12 +86,40 @@ class NormalizeRequest(BaseModel):
     columns: NormalizeColumns | None = None
     dataset_name: str | None = None
     dataset_id: str | None = None
+    niz_well_matches: list[NizWellMatchInput] = Field(default_factory=list)
+    manual_niz_entries: list[ManualNizEntryInput] = Field(default_factory=list)
 
 
 class NormalizeResponse(BaseModel):
     dataset_reference: DatasetReference
     validation_report: ImportValidationReport
     normalized_payload: dict[str, Any] | list[dict[str, Any]]
+
+
+class NizWellMatchPreviewRequest(BaseModel):
+    file_id: str
+    sheet_name: str | None = None
+    columns: NormalizeColumns | None = None
+    candidate_wells: list[NizWellCandidateInput] = Field(default_factory=list)
+
+
+class NizWellCandidateOption(BaseModel):
+    well_name: str
+    lu_id: str | None = None
+    well_pad_id: str | None = None
+
+
+class NizWellMatchSuggestionRow(BaseModel):
+    row_number: int
+    source_well_name: str
+    source_lu_id: str | None = None
+    source_well_pad_id: str | None = None
+    matched_well_name: str | None = None
+    candidates: list[NizWellCandidateOption] = Field(default_factory=list)
+
+
+class NizWellMatchPreviewResponse(BaseModel):
+    rows: list[NizWellMatchSuggestionRow] = Field(default_factory=list)
 
 
 class DisplacementCurvePointInput(BaseModel):

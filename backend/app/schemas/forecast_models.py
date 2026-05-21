@@ -119,6 +119,7 @@ class WellForecastResult(BaseModel):
     well_id: str
     well_name: str
     fund_type: str | None = None
+    fund_state: str | None = None
     lu_id: str | None = None
     sloy_id: str | None = None
     well_pad_id: str | None = None

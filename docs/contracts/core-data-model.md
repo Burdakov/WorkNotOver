@@ -46,7 +46,7 @@
 ### Инварианты
 
 - `dataset_id` устойчив во всех модулях;
-- `source_format` для Excel-импорта обычно равен `xlsx` или `xls`;
+- `source_format` для Excel-импорта обычно равен `xlsx` или `xls` или `xlsm`;
 - `Dataset` описывает логическую сущность набора, а не конкретную ревизию его строк.
 
 ---
@@ -210,6 +210,7 @@
 - `well_pad_id: str | None`
 - `infrastructure_object_id: str | None`
 - `fund_type: str | None`
+- `fund_state: str | None`
 - `status: str | None`
 - `current_oil_rate: float | None`
 - `current_gas_rate: float | None`
@@ -234,6 +235,8 @@
 - `lu_id`, `sloy_id`, `well_pad_id` задают иерархию принадлежности скважины, если доступны;
 - `fund_type`, если задан, должен использовать канонические значения `Base` и `New wells`;
 - для `fund_type = Base` скважина считается частью базового фонда, и её baseline forecast строится от последнего фактического режима;
+- `fund_state` задаёт стартовое состояние базового фонда: при `fund_type = Base` и `fund_state = в работе` скважина участвует в первом расчётном шаге с входным дебитом из wells dataset;
+- при `fund_type = Base` и любом другом значении `fund_state` скважина не участвует в первом расчётном шаге, её стартовый дебит должен считаться равным нулю до наступления GTM-события;
 - для `fund_type = New wells` baseline-rule базового фонда не должен применяться автоматически без отдельной сценарной логики; дата запуска в текущей методике определяется датой соответствующего ГТМ или planner-side события, а не отдельным полем `WellState`;
 - после наступления события ГТМ или запуска для `fund_type = New wells` жидкостный инкремент применяется по той же логике `expected_liquid_increment`, что и для `Base`;
 - дебиты и накопленные показатели неотрицательны, если заданы;
@@ -253,6 +256,8 @@
 
 - `well_id: str | None`
 - `well_name: str`
+- `lu_id: str | None`
+- `well_pad_id: str | None`
 - `niz: float`
 - `current_cumulative_oil: float | None`
 - `current_cumulative_gas: float | None`
@@ -261,6 +266,7 @@
 ### Инварианты
 
 - `well_name` должен совпадать с именем скважины, используемым для связывания `WellState` и `GtmCandidate`;
+- `lu_id` Рё `well_pad_id` РґРѕР»Р¶РЅС‹ С…СЂР°РЅРёС‚СЊ СЃС†РµРЅР°СЂРЅС‹Р№ РєРѕРЅС‚РµРєСЃС‚ С‚РѕР№ Р¶Рµ СЃРєРІР°Р¶РёРЅС‹ РЅР° СѓСЂРѕРІРЅРµ `LU -> WellPad`;
 - `niz > 0`;
 - dataset типа `niz` должен позволять построить полное отображение `well_name -> NIZ` для активного сценария;
 - если накопленные показатели доступны, они должны храниться здесь же как scenario-bound значения `current_cumulative_oil` и `current_cumulative_gas` для соответствующей скважины.
@@ -511,6 +517,7 @@
 - `well_id: str`
 - `well_name: str`
 - `fund_type: str | None`
+- `fund_state: str | None`
 - `lu_id: str | None`
 - `sloy_id: str | None`
 - `well_pad_id: str | None`

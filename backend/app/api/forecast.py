@@ -112,6 +112,14 @@ def _attach_niz_to_payload(payload: list[dict], niz_lookup: dict[str, dict[str, 
     return enriched
 
 
+def _is_base_well_without_fund_state(item: dict) -> bool:
+    fund_type = str(item.get("fund_type") or "Base").strip()
+    if fund_type != "Base":
+        return False
+    fund_state = str(item.get("fund_state") or "").strip()
+    return not fund_state
+
+
 def _validate_niz_coverage(
     *,
     wells_payload: list[dict],
@@ -142,6 +150,21 @@ def _validate_niz_coverage(
         raise HTTPException(
             status_code=400,
             detail=f"В GTM dataset есть скважины без NIZ в scenario-bound dataset: {preview}{suffix}",
+        )
+
+    missing_fund_state = sorted(
+        {
+            str(item.get("well_name") or item.get("well_id") or "").strip()
+            for item in wells_payload
+            if _is_base_well_without_fund_state(item)
+        }
+    )
+    if missing_fund_state:
+        preview = ", ".join(missing_fund_state[:5])
+        suffix = "..." if len(missing_fund_state) > 5 else ""
+        raise HTTPException(
+            status_code=400,
+            detail=f"В wells dataset есть базовые скважины без значения 'состояние по фонду': {preview}{suffix}",
         )
 
     return niz_lookup

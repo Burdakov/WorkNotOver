@@ -219,6 +219,14 @@ def _attach_niz_to_payload(payload: list[dict[str, Any]], niz_lookup: dict[str, 
     return enriched
 
 
+def _is_base_well_without_fund_state(item: dict[str, Any]) -> bool:
+    fund_type = str(item.get("fund_type") or "Base").strip()
+    if fund_type != "Base":
+        return False
+    fund_state = str(item.get("fund_state") or "").strip()
+    return not fund_state
+
+
 def _extract_external_schedule_items(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, dict):
         return []
@@ -380,16 +388,28 @@ def _build_input_validation(db: Session, scenario, context: ScenarioContextRespo
             preview = ", ".join(missing_niz_for_wells[:5])
             suffix = "..." if len(missing_niz_for_wells) > 5 else ""
             issue = f"В wells dataset есть скважины без NIZ в scenario-bound dataset: {preview}{suffix}"
-            _mark_node_partial(validation.wells, issue)
             _mark_node_partial(validation.niz, issue)
             issues.append(issue)
         if missing_niz_for_gtm:
             preview = ", ".join(missing_niz_for_gtm[:5])
             suffix = "..." if len(missing_niz_for_gtm) > 5 else ""
             issue = f"В GTM dataset есть скважины без NIZ в scenario-bound dataset: {preview}{suffix}"
-            _mark_node_partial(validation.gtm, issue)
             _mark_node_partial(validation.niz, issue)
             issues.append(issue)
+
+    missing_fund_state = sorted(
+        {
+            str(item.get("well_name") or item.get("well_id") or "").strip()
+            for item in wells_payload
+            if _is_base_well_without_fund_state(item)
+        }
+    )
+    if missing_fund_state:
+        preview = ", ".join(missing_fund_state[:5])
+        suffix = "..." if len(missing_fund_state) > 5 else ""
+        issue = f"В wells dataset есть базовые скважины без значения 'состояние по фонду': {preview}{suffix}"
+        _mark_node_partial(validation.wells, issue)
+        issues.append(issue)
 
     if external_items:
         external_wells = {

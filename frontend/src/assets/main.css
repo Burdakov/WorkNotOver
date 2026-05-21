@@ -524,12 +524,45 @@ select:disabled {
 
 .table-wrap {
   overflow: auto;
+  min-width: 0;
+  max-width: 100%;
   border: 1px solid rgba(35, 50, 68, 0.08);
   border-radius: 16px;
 }
 
 .preview-wrap {
   max-height: 360px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.preview-panel {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.preview-scroll-shell {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.preview-table {
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
+}
+
+.preview-table th,
+.preview-table td {
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 table {
@@ -1054,9 +1087,29 @@ th {
 
 .upload-compact-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(140px, 0.8fr) minmax(220px, 1fr) minmax(220px, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
   align-items: end;
+  min-width: 0;
+}
+
+.upload-compact-row > * {
+  min-width: 0;
+}
+
+.upload-compact-row .compact-field {
+  min-width: 0;
+}
+
+.upload-compact-row input,
+.upload-compact-row select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.upload-compact-row select {
+  text-overflow: ellipsis;
 }
 
 .upload-actions {
@@ -1066,6 +1119,7 @@ th {
   align-items: stretch;
   gap: 12px;
   width: 100%;
+  min-width: 0;
 }
 
 .upload-actions .button {
@@ -1364,6 +1418,7 @@ th {
 .input-mini-node.partial .input-mini-status {
   background: #fff0bd;
   color: #9b6a00;
+  cursor: help;
 }
 
 .flow-arrow {
@@ -1648,6 +1703,31 @@ th {
   display: block;
   margin-top: 6px;
   color: #1b2737;
+}
+
+.wells-summary-head {
+  align-items: center;
+  gap: 12px;
+}
+
+.wells-summary-head h2 {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.wells-state-toggle {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  overflow-x: auto;
+  white-space: nowrap;
+  gap: 6px;
+}
+
+.wells-state-toggle .mode-toggle-button {
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.2;
+  flex: 0 0 auto;
 }
 
 tr.selected td {
