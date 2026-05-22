@@ -145,6 +145,8 @@ Excel-файл значений `NIZ` по скважинам.
 - если для части скважин из `wells` и `gtm` соответствующая строка `niz` не нашлась, UI должен показывать отдельный список unmatched-скважин с ручным вводом `NIZ`, `current_cumulative_oil` и `current_cumulative_gas`;
 - для unmatched-скважин ручной ввод должен поддерживать вставку значений по столбцам через copy-paste;
 - после подтверждения dataset должен сохраняться уже с каноническим `well_name`, используемым в scenario-bound связывании.
+- канонический порядок загрузки должен быть `wells -> gtm -> niz`;
+- dataset `niz` должен строиться поверх уже выбранных текущих datasets `wells` и `gtm`, а не поверх устаревших scenario-bound datasets от предыдущей загрузки.
 
 ### Входной источник 3
 
@@ -153,19 +155,29 @@ Excel-файл графика ГТМ / кандидатных мероприят
 Ожидаемые логические поля:
 
 - well identifier / well name
-- area
 - LU
 - SLOY
 - WellPad
-- brigade, если доступно
 - GTM type
-- planned work
-- candidate dates
+- start date
+- end date
 - expected OIl increment
 - expected liquid increment
 - expected gas increment, если доступно
 - expected GOR change, если доступно
-- duration, если доступно
+
+При загрузке dataset типа `gtm` UI и import-layer должны поддерживать дополнительное построчное сопоставление `well_name` из GTM с уже загруженными скважинами из `wells`.
+
+Правила:
+
+- перед загрузкой `gtm` должен быть выбран текущий dataset `wells`;
+- для строк `gtm` сопоставление должно выполняться иерархически в пределах `LU -> WellPad -> well_name`;
+- если строка `gtm` сопоставлена со скважиной из `wells`, в нормализованном dataset должно использоваться каноническое имя этой базовой скважины;
+- если строка `gtm` не сопоставлена ни с одной скважиной из `wells`, она должна считаться `New wells / ВНС` и сохраняться со своим исходным `well_name`;
+- upload-flow не должен создавать дубли базовых скважин из-за различий в маске имени между `wells` и `gtm`.
+- обязательные поля `gtm`: `well`, `lu`, `sloy`, `well_pad`, `gtm_type`, `start_date`, `end_date`, `increment`, `liquid_increment`;
+- необязательные, но доступные поля `gtm`: `gas_increment`, `gor_change`;
+- статус `partial` в upload-узле `gtm` должен ставиться только если не заполнены обязательные поля текущего GTM dataset.
 
 ### Входной источник 4
 

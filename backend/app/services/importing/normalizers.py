@@ -48,7 +48,7 @@ _HINTS: dict[str, list[str]] = {
 _REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "wells": ("well", "lu", "well_pad", "fund_state", "oil_rate", "liquid_rate", "watercut"),
     "niz": ("well", "lu", "well_pad", "niz"),
-    "gtm": ("well", "planned_work", "start_date"),
+    "gtm": ("well", "lu", "sloy", "well_pad", "gtm_type", "start_date", "end_date", "increment", "liquid_increment"),
     "infrastructure": ("object_name", "object_type"),
     "external_krs_schedule": ("brigade", "well", "start_date", "end_date", "planned_work"),
 }
@@ -192,21 +192,36 @@ def resolve_columns(df: pd.DataFrame, provided: NormalizeColumns | None, source_
 
 def normalize_wells(df: pd.DataFrame, columns: NormalizeColumns, report: ImportValidationReport) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str, str]] = set()
 
     for index, row in df.iterrows():
         row_number = excel_row_number(df, index)
         well_name = _extract_effective_well_name(row, columns.well)
         if not well_name:
             continue
+        lu_id = stringify(row.get(columns.lu)) or None
+        sloy_id = stringify(row.get(columns.sloy)) or None
+        well_pad_id = stringify(row.get(columns.well_pad)) or None
+        dedupe_key = (lu_id or "", well_pad_id or "", well_name)
+        if dedupe_key in seen_keys:
+            report.skipped_rows += 1
+            _warning(
+                report,
+                "Строка wells пропущена: дублирующаяся скважина в пределах LU/куста.",
+                row_number=row_number,
+                field_name="well",
+            )
+            continue
+        seen_keys.add(dedupe_key)
 
         items.append(
             {
                 "well_id": _stable_well_id(well_name, row_number),
                 "well_name": well_name,
                 "area": None,
-                "lu_id": stringify(row.get(columns.lu)) or None,
-                "sloy_id": stringify(row.get(columns.sloy)) or None,
-                "well_pad_id": stringify(row.get(columns.well_pad)) or None,
+                "lu_id": lu_id,
+                "sloy_id": sloy_id,
+                "well_pad_id": well_pad_id,
                 "infrastructure_object_id": None,
                 "brigade": None,
                 "fund_type": "Base",
@@ -240,6 +255,7 @@ def normalize_niz(
     items: list[dict[str, Any]] = []
     row_matches = row_matches or {}
     manual_entries = manual_entries or []
+    seen_keys: set[tuple[str, str, str]] = set()
 
     for index, row in df.iterrows():
         row_number = excel_row_number(df, index)
@@ -272,6 +288,18 @@ def normalize_niz(
             _warning(report, "Строка NIZ пропущена: значение NIZ должно быть больше нуля.", row_number=row_number, field_name="niz")
             continue
 
+        dedupe_key = (lu_id, well_pad_id, well_name)
+        if dedupe_key in seen_keys:
+            report.skipped_rows += 1
+            _warning(
+                report,
+                "Строка NIZ пропущена: дублирующаяся скважина в пределах LU/куста после сопоставления.",
+                row_number=row_number,
+                field_name="well",
+            )
+            continue
+        seen_keys.add(dedupe_key)
+
         items.append(
             {
                 "well_id": _stable_well_id(well_name, row_number),
@@ -293,6 +321,15 @@ def normalize_niz(
         niz = coerce_float(entry.get("niz"))
         if not well_name or not lu_id or not well_pad_id or niz <= 0:
             continue
+        dedupe_key = (lu_id, well_pad_id, well_name)
+        if dedupe_key in seen_keys:
+            _warning(
+                report,
+                "Ручная строка NIZ пропущена: для этой скважины значение уже существует.",
+                field_name="well",
+            )
+            continue
+        seen_keys.add(dedupe_key)
         items.append(
             {
                 "well_id": _stable_well_id(well_name, 100000 + manual_index),
@@ -311,14 +348,21 @@ def normalize_niz(
     return items
 
 
-def normalize_gtm(df: pd.DataFrame, columns: NormalizeColumns, report: ImportValidationReport) -> list[dict[str, Any]]:
+def normalize_gtm(
+    df: pd.DataFrame,
+    columns: NormalizeColumns,
+    report: ImportValidationReport,
+    row_matches: dict[int, str] | None = None,
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
+    row_matches = row_matches or {}
 
     for index, row in df.iterrows():
         row_number = excel_row_number(df, index)
-        well_name = _extract_effective_well_name(row, columns.well)
+        source_well_name = _extract_effective_well_name(row, columns.well)
+        well_name = stringify(row_matches.get(row_number)) or source_well_name
         planned_work = stringify(row.get(columns.planned_work))
-        if not well_name and not planned_work:
+        if not source_well_name and not planned_work:
             continue
 
         candidate_start = coerce_date(row.get(columns.start_date))
@@ -348,7 +392,12 @@ def normalize_gtm(df: pd.DataFrame, columns: NormalizeColumns, report: ImportVal
                 "expected_gor_change": coerce_float(row.get(columns.gor_change)),
                 "priority": None,
                 "source_row_number": row_number,
-                "metadata": {"source_row_number": row_number},
+                "metadata": {
+                    "source_row_number": row_number,
+                    "source_well_name": source_well_name,
+                    "matched_existing_well": bool(row_matches.get(row_number)),
+                    "fund_type_hint": "Base" if row_matches.get(row_number) else "New wells",
+                },
             }
         )
 

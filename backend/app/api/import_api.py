@@ -13,6 +13,8 @@ from app.db.session import SessionLocal
 from app.repositories.dataset_repository import DatasetRepository
 from app.schemas.common import ImportValidationReport
 from app.schemas.import_models import (
+    GtmWellMatchPreviewRequest,
+    GtmWellMatchPreviewResponse,
     NizWellCandidateOption,
     NizWellMatchPreviewRequest,
     NizWellMatchPreviewResponse,
@@ -58,16 +60,12 @@ _SOURCE_KIND_MAPPING_FIELDS = {
     },
     "gtm": {
         "well",
-        "area",
         "lu",
         "sloy",
         "well_pad",
-        "brigade",
         "gtm_type",
-        "planned_work",
         "start_date",
         "end_date",
-        "duration_days",
         "increment",
         "liquid_increment",
         "gas_increment",
@@ -213,7 +211,28 @@ def _rank_candidate_wells(source_row: dict[str, str], candidate_wells: list[dict
     return [NizWellCandidateOption(**item) for _, item in ranked[:limit]]
 
 
-def _build_niz_row_matches(df, resolved_columns, candidate_wells: list[dict[str, str]]) -> list[NizWellMatchSuggestionRow]:
+def _dedupe_candidate_wells(candidate_wells: list[dict[str, str]]) -> list[dict[str, str]]:
+    deduped: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for candidate in candidate_wells:
+        well_name = stringify(candidate.get("well_name"))
+        lu_id = stringify(candidate.get("lu_id"))
+        well_pad_id = stringify(candidate.get("well_pad_id"))
+        key = (lu_id, well_pad_id, well_name)
+        if not well_name or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(
+            {
+                "well_name": well_name,
+                "lu_id": lu_id or None,
+                "well_pad_id": well_pad_id or None,
+            }
+        )
+    return deduped
+
+
+def _build_well_match_rows(df, resolved_columns, candidate_wells: list[dict[str, str]]) -> list[NizWellMatchSuggestionRow]:
     rows: list[NizWellMatchSuggestionRow] = []
     for index, row in df.iterrows():
         row_number = excel_row_number(df, index)
@@ -361,7 +380,7 @@ def preview_niz_well_matches(payload: NizWellMatchPreviewRequest, db: Session = 
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    candidate_wells = [
+    candidate_wells = _dedupe_candidate_wells([
         {
             "well_name": stringify(item.well_name),
             "lu_id": stringify(item.lu_id),
@@ -369,9 +388,37 @@ def preview_niz_well_matches(payload: NizWellMatchPreviewRequest, db: Session = 
         }
         for item in payload.candidate_wells
         if stringify(item.well_name)
-    ]
-    rows = _build_niz_row_matches(df, resolved_columns, candidate_wells)
+    ])
+    rows = _build_well_match_rows(df, resolved_columns, candidate_wells)
     return NizWellMatchPreviewResponse(rows=rows)
+
+
+@router.post("/import/gtm-well-matches", response_model=GtmWellMatchPreviewResponse)
+def preview_gtm_well_matches(payload: GtmWellMatchPreviewRequest, db: Session = Depends(get_db)) -> GtmWellMatchPreviewResponse:
+    repo = DatasetRepository(db)
+    uploaded = next((item for item in repo.list_uploaded_files() if item.file_id == payload.file_id), None)
+    if uploaded is None:
+        raise HTTPException(status_code=404, detail="Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ.")
+
+    file_path = Path(uploaded.stored_path)
+    _, selected_sheet, df = sheet_df(file_path, payload.sheet_name)
+
+    try:
+        resolved_columns = resolve_columns(df, payload.columns, "gtm")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    candidate_wells = _dedupe_candidate_wells([
+        {
+            "well_name": stringify(item.well_name),
+            "lu_id": stringify(item.lu_id),
+            "well_pad_id": stringify(item.well_pad_id),
+        }
+        for item in payload.candidate_wells
+        if stringify(item.well_name)
+    ])
+    rows = _build_well_match_rows(df, resolved_columns, candidate_wells)
+    return GtmWellMatchPreviewResponse(rows=rows)
 
 
 @router.post("/import/normalize", response_model=NormalizeResponse)
@@ -414,7 +461,12 @@ def normalize_dataset(payload: NormalizeRequest, db: Session = Depends(get_db)) 
             manual_entries=[item.model_dump() for item in payload.manual_niz_entries],
         )
     elif payload.source_kind == "gtm":
-        normalized_payload = normalize_gtm(df, resolved_columns, report)
+        gtm_row_matches = {
+            item.row_number: item.matched_well_name
+            for item in payload.gtm_well_matches
+            if item.matched_well_name
+        }
+        normalized_payload = normalize_gtm(df, resolved_columns, report, row_matches=gtm_row_matches)
         validate_hierarchy(normalized_payload, report)
     elif payload.source_kind == "infrastructure":
         normalized_payload = normalize_infrastructure(df, resolved_columns, report)

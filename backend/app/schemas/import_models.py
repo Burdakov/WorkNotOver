@@ -64,6 +64,11 @@ class NizWellMatchInput(BaseModel):
     matched_well_name: str | None = None
 
 
+class GtmWellMatchInput(BaseModel):
+    row_number: int
+    matched_well_name: str | None = None
+
+
 class NizWellCandidateInput(BaseModel):
     well_name: str
     lu_id: str | None = None
@@ -87,6 +92,7 @@ class NormalizeRequest(BaseModel):
     dataset_name: str | None = None
     dataset_id: str | None = None
     niz_well_matches: list[NizWellMatchInput] = Field(default_factory=list)
+    gtm_well_matches: list[GtmWellMatchInput] = Field(default_factory=list)
     manual_niz_entries: list[ManualNizEntryInput] = Field(default_factory=list)
 
 
@@ -119,6 +125,17 @@ class NizWellMatchSuggestionRow(BaseModel):
 
 
 class NizWellMatchPreviewResponse(BaseModel):
+    rows: list[NizWellMatchSuggestionRow] = Field(default_factory=list)
+
+
+class GtmWellMatchPreviewRequest(BaseModel):
+    file_id: str
+    sheet_name: str | None = None
+    columns: NormalizeColumns | None = None
+    candidate_wells: list[NizWellCandidateInput] = Field(default_factory=list)
+
+
+class GtmWellMatchPreviewResponse(BaseModel):
     rows: list[NizWellMatchSuggestionRow] = Field(default_factory=list)
 
 

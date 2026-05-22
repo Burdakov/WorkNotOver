@@ -92,9 +92,13 @@
 - normalized well dataset;
 - base wells in that dataset are imported with `fund_type = Base`;
 - initial participation of each base well is controlled by scenario-bound field `fund_state` from the wells dataset;
+- canonical upload order inside Scenario UI is `wells -> gtm -> niz`;
+- inside the Scenario UI input chain the loading order must be visualized as `wells -> gtm -> niz -> displacement config -> KRS -> infrastructure -> economics`;
 - normalized NIZ dataset;
 - scenario-bound cumulative oil / gas values are also carried through the `niz` dataset and linked to wells by `well_name`;
 - normalized GTM dataset;
+- GTM rows are hierarchically matched against the current wells dataset; matched rows reuse base wells, unmatched rows become `New wells / ВНС`;
+- GTM required import fields are `well`, `lu`, `sloy`, `well_pad`, `gtm_type`, `start_date`, `end_date`, `increment`, `liquid_increment`; `gas_increment` and `gor_change` remain optional.
 - normalized infrastructure dataset;
 - manual input configs;
 - validation report.

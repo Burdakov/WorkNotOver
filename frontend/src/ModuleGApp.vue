@@ -53,8 +53,8 @@ const SOURCE_KIND_META = {
   },
   gtm: {
     title: 'Загрузить план ГТМ',
-    description: 'Формирует dataset типа gtm для расчета и планирования.',
-    fields: ['well', 'area', 'lu', 'sloy', 'well_pad', 'brigade', 'gtm_type', 'planned_work', 'start_date', 'end_date', 'duration_days', 'increment', 'liquid_increment', 'gas_increment', 'gor_change'],
+    description: 'Формирует dataset типа gtm для расчета и планирования. Загружается после wells и сопоставляется с базовым фондом в иерархии LU -> куст -> скважина.',
+    fields: ['well', 'lu', 'sloy', 'well_pad', 'gtm_type', 'start_date', 'end_date', 'increment', 'liquid_increment', 'gas_increment', 'gor_change'],
   },
   infrastructure: {
     title: 'Загрузить ограничения инфраструктуры',
@@ -141,9 +141,36 @@ const FRONTEND_MAPPING_HINTS = {
 const REQUIRED_MAPPING_FIELDS = {
   wells: ['well', 'lu', 'well_pad', 'fund_state', 'oil_rate', 'liquid_rate', 'watercut'],
   niz: ['well', 'lu', 'well_pad', 'niz'],
-  gtm: ['well', 'planned_work', 'start_date'],
+  gtm: ['well', 'lu', 'sloy', 'well_pad', 'gtm_type', 'start_date', 'end_date', 'increment', 'liquid_increment'],
   infrastructure: ['object_name', 'object_type'],
   external_krs_schedule: ['brigade', 'well', 'start_date', 'end_date', 'planned_work'],
+}
+const DATASET_REQUIRED_VALUE_FIELDS = {
+  wells: ['well_name', 'lu_id', 'well_pad_id', 'fund_state', 'current_oil_rate', 'current_liquid_rate', 'current_watercut'],
+  niz: ['well_name', 'lu_id', 'well_pad_id', 'niz'],
+  gtm: ['well_name', 'lu_id', 'sloy_id', 'well_pad_id', 'gtm_type', 'start_date', 'end_date', 'increment', 'liquid_increment'],
+  infrastructure: ['object_name', 'object_type'],
+}
+const DATASET_NUMERIC_FIELDS = new Set([
+  'current_oil_rate',
+  'current_liquid_rate',
+  'current_watercut',
+  'niz',
+  'increment',
+  'liquid_increment',
+  'capacity_oil',
+  'capacity_gas',
+  'capacity_liquid',
+  'capacity_water',
+])
+const DATASET_FIELD_LABEL_KEYS = {
+  well_name: 'well',
+  lu_id: 'lu',
+  sloy_id: 'sloy',
+  well_pad_id: 'well_pad',
+  current_oil_rate: 'oil_rate',
+  current_liquid_rate: 'liquid_rate',
+  current_watercut: 'watercut',
 }
 const ACTIVE_SCENARIO_STORAGE_KEY = 'worknotover.activeScenarioId'
 
@@ -422,7 +449,9 @@ const showMappingModal = ref(false)
 const showPlannerPublishModal = ref(false)
 const plannerPublishScenarioName = ref('')
 const nizWellMatchRows = ref([])
+const gtmWellMatchRows = ref([])
 const loadingNizWellMatches = ref(false)
+const loadingGtmWellMatches = ref(false)
 const manualNizRows = ref([])
 
 const selectedDatasets = reactive({
@@ -511,6 +540,7 @@ const expandedWellsKeys = ref([])
 const expandedNizKeys = ref([])
 const expandedGtmKeys = ref([])
 const expandedNizMatchKeys = ref([])
+const expandedGtmMatchKeys = ref([])
 const expandedInfrastructureKeys = ref([])
 
 const selectedScenarioId = ref(typeof window !== 'undefined' ? (window.localStorage.getItem(ACTIVE_SCENARIO_STORAGE_KEY) || '') : '')
@@ -717,20 +747,26 @@ const krsInputStatus = computed(() => {
   if (brigadeStatus === 'ready' || failureStatus === 'ready' || durationStatus === 'ready') return 'ready'
   return 'empty'
 })
+const localDatasetStatuses = computed(() => ({
+  wells: datasetValidationForType('wells'),
+  niz: datasetValidationForType('niz'),
+  gtm: datasetValidationForType('gtm'),
+  infrastructure: datasetValidationForType('infrastructure'),
+}))
 const inputNodeStatuses = computed(() => ({
-  wells: scenarioContextStatus.value.wells,
-  niz: scenarioContextStatus.value.niz,
-  gtm: scenarioContextStatus.value.gtm,
-  infrastructure: scenarioContextStatus.value.infrastructure,
+  wells: localDatasetStatuses.value.wells.state,
+  niz: localDatasetStatuses.value.niz.state,
+  gtm: localDatasetStatuses.value.gtm.state,
+  infrastructure: localDatasetStatuses.value.infrastructure.state,
   reservoir: reservoirInputStatus.value,
   economics: economicsInputStatus.value,
   krs: krsInputStatus.value,
 }))
 const inputNodePartialIssues = computed(() => ({
-  wells: selectedDatasetMatchesScenarioContext('wells') ? (selectedScenarioValidation.value?.wells?.issues?.[0] || '') : '',
-  niz: selectedDatasetMatchesScenarioContext('niz') ? (selectedScenarioValidation.value?.niz?.issues?.[0] || '') : localNizCoverageValidation.value.issue,
-  gtm: selectedDatasetMatchesScenarioContext('gtm') ? (selectedScenarioValidation.value?.gtm?.issues?.[0] || '') : '',
-  infrastructure: selectedDatasetMatchesScenarioContext('infrastructure') ? (selectedScenarioValidation.value?.infrastructure?.issues?.[0] || '') : '',
+  wells: localDatasetStatuses.value.wells.issue,
+  niz: localDatasetStatuses.value.niz.issue,
+  gtm: localDatasetStatuses.value.gtm.issue,
+  infrastructure: localDatasetStatuses.value.infrastructure.issue,
   reservoir: reservoirInputStatus.value === 'partial' ? 'Есть незаполненные обязательные поля в характеристике вытеснения.' : '',
   economics: economicsInputStatus.value === 'partial' ? 'Есть незаполненные обязательные поля в экономических вводных.' : '',
   krs: krsInputStatus.value === 'partial' ? 'Есть незаполненные обязательные поля в ограничениях КРС.' : '',
@@ -1067,6 +1103,36 @@ const datasetRowsFromReference = (reference) => {
   return []
 }
 
+const datasetFieldHasValue = (row, fieldName) => {
+  const value = row?.[fieldName]
+  if (DATASET_NUMERIC_FIELDS.has(fieldName)) {
+    return hasFilledValue(value)
+  }
+  return hasFilledText(value)
+}
+
+const datasetValidationForType = (type) => {
+  const reference = selectedDatasets[type]
+  if (!reference) return { state: 'empty', issue: '' }
+  const rows = datasetRowsFromReference(reference)
+  const requiredFields = DATASET_REQUIRED_VALUE_FIELDS[type] || []
+  if (!requiredFields.length) return { state: 'ready', issue: '' }
+  if (!rows.length) {
+    return { state: 'partial', issue: 'Dataset не содержит строк с обязательными полями.' }
+  }
+  for (const fieldName of requiredFields) {
+    const missingCount = rows.reduce((count, row) => count + (datasetFieldHasValue(row, fieldName) ? 0 : 1), 0)
+    if (missingCount > 0) {
+      const labelKey = DATASET_FIELD_LABEL_KEYS[fieldName] || fieldName
+      return {
+        state: 'partial',
+        issue: `Не заполнено обязательное поле "${MAPPING_LABELS[labelKey] || labelKey}" в ${missingCount} строках.`,
+      }
+    }
+  }
+  return { state: 'ready', issue: '' }
+}
+
 const pickRowValue = (row, keys) => {
   for (const key of keys) {
     const value = row?.[key]
@@ -1167,20 +1233,53 @@ const nizDatasetRows = computed(() => datasetRowsFromReference(selectedDatasets.
 const gtmDatasetRows = computed(() => datasetRowsFromReference(selectedDatasets.gtm))
 const infrastructureDatasetRows = computed(() => datasetRowsFromReference(selectedDatasets.infrastructure))
 const rowWellKey = (row) => pickRowValue(row, ['well_id', 'well_name', 'well']).trim()
+const hierarchyWellKey = (row) => [
+  pickRowValue(row, ['lu_id', 'lu']).trim(),
+  pickRowValue(row, ['well_pad_id', 'well_pad']).trim(),
+  pickRowValue(row, ['well_name', 'well']).trim(),
+].join('|')
 const nizCandidateWellRows = computed(() => {
   const items = new Map()
   const registerRow = (row) => {
     const wellName = rowWellKey(row)
     if (!wellName) return
-    if (items.has(wellName)) return
-    items.set(wellName, {
+    const luId = pickRowValue(row, ['lu_id', 'lu']) || ''
+    const wellPadId = pickRowValue(row, ['well_pad_id', 'well_pad']) || ''
+    const key = `${luId}|${wellPadId}|${wellName}`
+    if (items.has(key)) return
+    items.set(key, {
+      match_key: key,
       well_name: wellName,
-      lu_id: pickRowValue(row, ['lu_id', 'lu']) || '',
-      well_pad_id: pickRowValue(row, ['well_pad_id', 'well_pad']) || '',
+      lu_id: luId,
+      well_pad_id: wellPadId,
     })
   }
   wellsDatasetRows.value.forEach(registerRow)
   gtmDatasetRows.value.forEach(registerRow)
+  return [...items.values()].sort((a, b) => {
+    const luCompare = (a.lu_id || '').localeCompare(b.lu_id || '', 'ru')
+    if (luCompare !== 0) return luCompare
+    const padCompare = (a.well_pad_id || '').localeCompare(b.well_pad_id || '', 'ru')
+    if (padCompare !== 0) return padCompare
+    return a.well_name.localeCompare(b.well_name, 'ru')
+  })
+})
+const gtmCandidateWellRows = computed(() => {
+  const items = new Map()
+  wellsDatasetRows.value.forEach((row) => {
+    const wellName = rowWellKey(row)
+    if (!wellName) return
+    const luId = pickRowValue(row, ['lu_id', 'lu']) || ''
+    const wellPadId = pickRowValue(row, ['well_pad_id', 'well_pad']) || ''
+    const key = `${luId}|${wellPadId}|${wellName}`
+    if (items.has(key)) return
+    items.set(key, {
+      match_key: key,
+      well_name: wellName,
+      lu_id: luId,
+      well_pad_id: wellPadId,
+    })
+  })
   return [...items.values()].sort((a, b) => {
     const luCompare = (a.lu_id || '').localeCompare(b.lu_id || '', 'ru')
     if (luCompare !== 0) return luCompare
@@ -1199,6 +1298,27 @@ const nizMatchOptions = (row) => {
   ;[
     ...(row?.candidates || []),
     ...nizCandidateWellRows.value,
+  ].forEach((item) => {
+    const wellName = String(item?.well_name || '').trim()
+    const luId = String(item?.lu_id || '').trim()
+    const wellPadId = String(item?.well_pad_id || '').trim()
+    const key = `${luId}|${wellPadId}|${wellName}`
+    if (!wellName || seen.has(key)) return
+    seen.add(key)
+    values.push({
+      key,
+      well_name: wellName,
+      label: formatNizMatchOptionLabel({ well_name: wellName, lu_id: luId, well_pad_id: wellPadId }),
+    })
+  })
+  return values
+}
+const gtmMatchOptions = (row) => {
+  const seen = new Set()
+  const values = []
+  ;[
+    ...(row?.candidates || []),
+    ...gtmCandidateWellRows.value,
   ].forEach((item) => {
     const wellName = String(item?.well_name || '').trim()
     const luId = String(item?.lu_id || '').trim()
@@ -1291,6 +1411,75 @@ const nizMatchHierarchyRows = computed(() => {
   return result
 })
 const visibleNizMatchHierarchyRows = computed(() => buildVisibleHierarchyRows(nizMatchHierarchyRows.value, expandedNizMatchKeys.value))
+const gtmMatchHierarchyRows = computed(() => {
+  const luMap = new Map()
+  gtmWellMatchRows.value.forEach((row) => {
+    const luId = String(row.source_lu_id || '').trim() || 'Р‘РµР· LU'
+    const padId = String(row.source_well_pad_id || '').trim() || 'Р‘РµР· РєСѓСЃС‚Р°'
+    if (!luMap.has(luId)) {
+      luMap.set(luId, {
+        key: `gtm-match:lu:${luId}`,
+        depth: 0,
+        label: luId,
+        nodeType: 'lu',
+        parentKey: null,
+        children: new Map(),
+      })
+    }
+    const luNode = luMap.get(luId)
+    if (!luNode.children.has(padId)) {
+      luNode.children.set(padId, {
+        key: `gtm-match:pad:${luId}:${padId}`,
+        depth: 1,
+        label: padId,
+        nodeType: 'pad',
+        parentKey: luNode.key,
+        children: [],
+      })
+    }
+    const padNode = luNode.children.get(padId)
+    padNode.children.push({
+      key: `gtm-match:well:${luId}:${padId}:${row.row_number}`,
+      depth: 2,
+      label: row.source_well_name,
+      nodeType: 'well',
+      parentKey: padNode.key,
+      children: [],
+      matchRow: row,
+    })
+  })
+
+  const result = []
+  ;[...luMap.values()]
+    .sort((left, right) => left.label.localeCompare(right.label, 'ru'))
+    .forEach((luNode) => {
+      const padRows = [...luNode.children.values()].sort((left, right) => left.label.localeCompare(right.label, 'ru'))
+      result.push({
+        key: luNode.key,
+        depth: luNode.depth,
+        label: luNode.label,
+        nodeType: luNode.nodeType,
+        parentKey: luNode.parentKey,
+        children: padRows.map((row) => row.key),
+      })
+      padRows.forEach((padNode) => {
+        const wellRows = [...padNode.children].sort((left, right) => left.label.localeCompare(right.label, 'ru'))
+        result.push({
+          key: padNode.key,
+          depth: padNode.depth,
+          label: padNode.label,
+          nodeType: padNode.nodeType,
+          parentKey: padNode.parentKey,
+          children: wellRows.map((row) => row.key),
+        })
+        wellRows.forEach((wellNode) => {
+          result.push(wellNode)
+        })
+      })
+    })
+  return result
+})
+const visibleGtmMatchHierarchyRows = computed(() => buildVisibleHierarchyRows(gtmMatchHierarchyRows.value, expandedGtmMatchKeys.value))
 const buildCoverageIssue = (label, keys) => {
   const preview = keys.slice(0, 5).join(', ')
   const suffix = keys.length > 5 ? '...' : ''
@@ -1959,6 +2148,44 @@ const loadNizWellMatches = async () => {
   }
 }
 
+const loadGtmWellMatches = async () => {
+  if (
+    !showMappingModal.value
+    || selectedUploadSourceKind.value !== 'gtm'
+    || !inputFile.value?.file_id
+    || !normalizeColumns.well
+    || !normalizeColumns.lu
+    || !normalizeColumns.well_pad
+    || !gtmCandidateWellRows.value.length
+  ) {
+    gtmWellMatchRows.value = []
+    return
+  }
+  loadingGtmWellMatches.value = true
+  try {
+    const response = await request('/import/gtm-well-matches', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_id: inputFile.value.file_id,
+        sheet_name: inputFile.value.selected_sheet,
+        columns: compactObject({ ...normalizeColumns }),
+        candidate_wells: gtmCandidateWellRows.value,
+      }),
+    })
+    const payload = await response.json()
+    gtmWellMatchRows.value = (payload.rows || []).map((row) => ({
+      ...row,
+      matched_well_name: row.matched_well_name || '',
+    }))
+  } catch (error) {
+    gtmWellMatchRows.value = []
+    showMessage(error.message, 'error')
+  } finally {
+    loadingGtmWellMatches.value = false
+  }
+}
+
 const handleManualNizPaste = (event, startIndex, fieldName) => {
   const text = event.clipboardData?.getData('text/plain') || ''
   if (!text) return
@@ -2009,9 +2236,24 @@ const fetchDatasetDetail = async (reference) => {
 
 const setActiveDataset = async (reference) => {
   if (!reference) return
+  const previousKey = selectedDatasets[reference.dataset_type] ? datasetReferenceKey(selectedDatasets[reference.dataset_type]) : ''
   selectedDatasets[reference.dataset_type] = { ...reference }
   selectedDatasetKeys[reference.dataset_type] = datasetReferenceKey(reference)
   await fetchDatasetDetail(reference)
+  if (reference.dataset_type === 'wells' && previousKey && previousKey !== datasetReferenceKey(reference)) {
+    selectedDatasets.gtm = null
+    selectedDatasets.niz = null
+    selectedDatasetKeys.gtm = ''
+    selectedDatasetKeys.niz = ''
+    gtmWellMatchRows.value = []
+    nizWellMatchRows.value = []
+    manualNizRows.value = []
+  } else if (reference.dataset_type === 'gtm' && previousKey && previousKey !== datasetReferenceKey(reference)) {
+    selectedDatasets.niz = null
+    selectedDatasetKeys.niz = ''
+    nizWellMatchRows.value = []
+    manualNizRows.value = []
+  }
 }
 
 const selectDatasetByKey = async (type, key) => {
@@ -2124,6 +2366,14 @@ const loadPlannerRevisions = async (scenarioId) => {
 }
 
 const createScenario = async () => {
+  if (selectedUploadSourceKind.value === 'gtm' && !selectedDatasets.wells) {
+    showMessage('Сначала выберите или загрузите wells dataset, затем загружайте GTM.', 'error')
+    return
+  }
+  if (selectedUploadSourceKind.value === 'niz' && (!selectedDatasets.wells || !selectedDatasets.gtm)) {
+    showMessage('Сначала выберите или загрузите актуальные datasets wells и GTM, затем загружайте NIZ.', 'error')
+    return
+  }
   loading.value = true
   try {
     const response = await request('/scenarios', {
@@ -2143,9 +2393,31 @@ const createScenario = async () => {
   }
 }
 
+const createScenarioWithoutUploadValidation = async () => {
+  loading.value = true
+  try {
+    const response = await request('/scenarios', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildScenarioRequestPayload()),
+    })
+    const payload = await response.json()
+    selectedScenarioId.value = payload.scenario_id
+    await loadScenarios()
+    await loadScenarioDetail(payload.scenario_id)
+    showMessage('РЎС†РµРЅР°СЂРёР№ СЃРѕР·РґР°РЅ.', 'success')
+    return payload
+  } catch (error) {
+    showMessage(error.message, 'error')
+    return false
+  } finally {
+    loading.value = false
+  }
+}
+
 const saveScenarioContextAction = async () => {
   if (!selectedScenarioId.value) {
-    await createScenario()
+    await createScenarioWithoutUploadValidation()
     return
   }
   await saveActiveScenarioContext()
@@ -2230,6 +2502,14 @@ const normalizeDataset = async () => {
   }
   loading.value = true
   try {
+    if (selectedUploadSourceKind.value === 'gtm' && !selectedDatasets.wells) {
+      showMessage('Сначала выберите или загрузите wells dataset, затем загружайте GTM.', 'error')
+      return
+    }
+    if (selectedUploadSourceKind.value === 'niz' && (!selectedDatasets.wells || !selectedDatasets.gtm)) {
+      showMessage('Сначала выберите или загрузите актуальные datasets wells и GTM, затем загружайте NIZ.', 'error')
+      return
+    }
     const response = await request('/import/normalize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2242,6 +2522,11 @@ const normalizeDataset = async () => {
         columns: compactObject({ ...normalizeColumns }),
         niz_well_matches: selectedUploadSourceKind.value === 'niz'
           ? nizWellMatchRows.value
+            .filter((row) => row.matched_well_name)
+            .map((row) => ({ row_number: row.row_number, matched_well_name: row.matched_well_name }))
+          : [],
+        gtm_well_matches: selectedUploadSourceKind.value === 'gtm'
+          ? gtmWellMatchRows.value
             .filter((row) => row.matched_well_name)
             .map((row) => ({ row_number: row.row_number, matched_well_name: row.matched_well_name }))
           : [],
@@ -2263,6 +2548,20 @@ const normalizeDataset = async () => {
     lastNormalizedDatasetReference.value = payload.dataset_reference
     await loadDatasets()
     await setActiveDataset(payload.dataset_reference)
+    if (selectedUploadSourceKind.value === 'wells') {
+      selectedDatasets.gtm = null
+      selectedDatasets.niz = null
+      selectedDatasetKeys.gtm = ''
+      selectedDatasetKeys.niz = ''
+      gtmWellMatchRows.value = []
+      nizWellMatchRows.value = []
+      manualNizRows.value = []
+    } else if (selectedUploadSourceKind.value === 'gtm') {
+      selectedDatasets.niz = null
+      selectedDatasetKeys.niz = ''
+      nizWellMatchRows.value = []
+      manualNizRows.value = []
+    }
     datasetDetailKey.value = datasetReferenceKey(payload.dataset_reference)
     if (
       selectedScenarioId.value
@@ -3081,6 +3380,7 @@ watch(selectedUploadSourceKind, () => {
   resetNormalizeColumns()
   targetDatasetId.value = ''
   nizWellMatchRows.value = []
+  gtmWellMatchRows.value = []
   manualNizRows.value = []
   if (inputFile.value?.original_name) {
     datasetName.value = `${selectedUploadSourceKind.value}:${inputFile.value.original_name}`
@@ -3108,6 +3408,26 @@ watch(
     await loadNizWellMatches()
   },
 ) 
+
+watch(
+  [
+    showMappingModal,
+    selectedUploadSourceKind,
+    () => inputFile.value?.file_id || '',
+    () => inputFile.value?.selected_sheet || '',
+    () => normalizeColumns.well,
+    () => normalizeColumns.lu,
+    () => normalizeColumns.well_pad,
+    () => gtmCandidateWellRows.value.map((row) => `${row.lu_id}|${row.well_pad_id}|${row.well_name}`).join('||'),
+  ],
+  async ([modalOpen, sourceKind]) => {
+    if (!modalOpen || sourceKind !== 'gtm') {
+      gtmWellMatchRows.value = []
+      return
+    }
+    await loadGtmWellMatches()
+  },
+)
 
 watch(unmatchedNizWellRows, (rows) => {
   const existing = new Map(manualNizRows.value.map((row) => [row.well_name, row]))
@@ -3146,6 +3466,12 @@ watch(nizHierarchyRows, (rows) => {
 
 watch(nizMatchHierarchyRows, (rows) => {
   expandedNizMatchKeys.value = rows
+    .filter((row) => row.children?.length)
+    .map((row) => row.key)
+}, { immediate: true })
+
+watch(gtmMatchHierarchyRows, (rows) => {
+  expandedGtmMatchKeys.value = rows
     .filter((row) => row.children?.length)
     .map((row) => row.key)
 }, { immediate: true })
@@ -3292,32 +3618,32 @@ onMounted(async () => {
                   <span class="canvas-node-kicker">Module A + Manual Inputs</span>
                   <strong>Исходные данные</strong>
                   <small>Загрузка datasets и настройка ручных вводных.</small>
-                  <div class="input-mini-grid">
-                    <button type="button" class="input-mini-node" :class="[inputNodeStatuses.wells, { active: activeCanvasNode === 'wells' }]" @click="selectCanvasNode('wells')">
+                  <div class="input-mini-sequence">
+                    <button type="button" class="input-mini-node seq-wells" :class="[inputNodeStatuses.wells, { active: activeCanvasNode === 'wells' }]" @click="selectCanvasNode('wells')">
                       <span class="input-mini-label">Wells</span>
                       <span v-if="inputNodeStatuses.wells !== 'empty'" class="input-mini-status" :title="inputNodePartialReason('wells')">{{ inputNodeStatuses.wells === 'ready' ? '✓' : '−' }}</span>
                     </button>
-                    <button type="button" class="input-mini-node" :class="[inputNodeStatuses.niz, { active: activeCanvasNode === 'niz' }]" @click="selectCanvasNode('niz')">
+                    <button type="button" class="input-mini-node seq-niz" :class="[inputNodeStatuses.niz, { active: activeCanvasNode === 'niz' }]" @click="selectCanvasNode('niz')">
                       <span class="input-mini-label">NIZ</span>
                       <span v-if="inputNodeStatuses.niz !== 'empty'" class="input-mini-status" :title="inputNodePartialReason('niz')">{{ inputNodeStatuses.niz === 'ready' ? '✓' : '−' }}</span>
                     </button>
-                    <button type="button" class="input-mini-node" :class="[inputNodeStatuses.gtm, { active: activeCanvasNode === 'gtm' }]" @click="selectCanvasNode('gtm')">
+                    <button type="button" class="input-mini-node seq-gtm" :class="[inputNodeStatuses.gtm, { active: activeCanvasNode === 'gtm' }]" @click="selectCanvasNode('gtm')">
                       <span class="input-mini-label">ГТМ</span>
                       <span v-if="inputNodeStatuses.gtm !== 'empty'" class="input-mini-status" :title="inputNodePartialReason('gtm')">{{ inputNodeStatuses.gtm === 'ready' ? '✓' : '−' }}</span>
                     </button>
-                    <button type="button" class="input-mini-node" :class="[inputNodeStatuses.reservoir, { active: activeCanvasNode === 'reservoir' }]" @click="activeCanvasNode = 'reservoir'; currentInputsTab = 'reservoir'">
+                    <button type="button" class="input-mini-node seq-reservoir" :class="[inputNodeStatuses.reservoir, { active: activeCanvasNode === 'reservoir' }]" @click="activeCanvasNode = 'reservoir'; currentInputsTab = 'reservoir'">
                       <span class="input-mini-label">Вытеснение</span>
                       <span v-if="inputNodeStatuses.reservoir !== 'empty'" class="input-mini-status" :title="inputNodePartialReason('reservoir')">{{ inputNodeStatuses.reservoir === 'ready' ? '✓' : '−' }}</span>
                     </button>
-                    <button type="button" class="input-mini-node" :class="[inputNodeStatuses.economics, { active: activeCanvasNode === 'economics' }]" @click="activeCanvasNode = 'economics'; currentInputsTab = 'economics'">
+                    <button type="button" class="input-mini-node seq-economics" :class="[inputNodeStatuses.economics, { active: activeCanvasNode === 'economics' }]" @click="activeCanvasNode = 'economics'; currentInputsTab = 'economics'">
                       <span class="input-mini-label">Экономика</span>
                       <span v-if="inputNodeStatuses.economics !== 'empty'" class="input-mini-status" :title="inputNodePartialReason('economics')">{{ inputNodeStatuses.economics === 'ready' ? '✓' : '−' }}</span>
                     </button>
-                    <button type="button" class="input-mini-node" :class="[inputNodeStatuses.krs, { active: activeCanvasNode === 'krs' }]" @click="activeCanvasNode = 'krs'; currentInputsTab = 'brigades'">
+                    <button type="button" class="input-mini-node seq-krs" :class="[inputNodeStatuses.krs, { active: activeCanvasNode === 'krs' }]" @click="activeCanvasNode = 'krs'; currentInputsTab = 'brigades'">
                       <span class="input-mini-label">KRS огр.</span>
                       <span v-if="inputNodeStatuses.krs !== 'empty'" class="input-mini-status" :title="inputNodePartialReason('krs')">{{ inputNodeStatuses.krs === 'ready' ? '✓' : '−' }}</span>
                     </button>
-                    <button type="button" class="input-mini-node" :class="[inputNodeStatuses.infrastructure, { active: activeCanvasNode === 'infrastructure' }]" @click="selectCanvasNode('infrastructure')">
+                    <button type="button" class="input-mini-node seq-infrastructure" :class="[inputNodeStatuses.infrastructure, { active: activeCanvasNode === 'infrastructure' }]" @click="selectCanvasNode('infrastructure')">
                       <span class="input-mini-label">Infrastructure</span>
                       <span v-if="inputNodeStatuses.infrastructure !== 'empty'" class="input-mini-status" :title="inputNodePartialReason('infrastructure')">{{ inputNodeStatuses.infrastructure === 'ready' ? '✓' : '−' }}</span>
                     </button>
@@ -4671,6 +4997,56 @@ onMounted(async () => {
                 </tr>
               </tbody>
             </table>
+          </div>
+
+          <div v-if="selectedUploadSourceKind === 'gtm'" class="panel slim-panel">
+            <div class="toolbar between align-start">
+              <div>
+                <h3>Сопоставление скважин GTM</h3>
+                <p class="subtitle">Сначала загружается `wells`, затем `GTM`. Если строка `GTM` сопоставлена со скважиной из `wells`, она относится к базовому фонду. Если сопоставления нет, строка считается `ВНС / новая скважина`.</p>
+              </div>
+              <div v-if="loadingGtmWellMatches" class="subtitle">Подбор...</div>
+            </div>
+            <div v-if="!gtmCandidateWellRows.length" class="notice warning">
+              Сначала привяжите dataset `wells`, чтобы сопоставить `GTM` с базовым фондом.
+            </div>
+            <div v-else-if="visibleGtmMatchHierarchyRows.length" class="table-wrap medium-wrap">
+              <table class="hierarchy-table">
+                <thead>
+                  <tr>
+                    <th>LU / куст / скважина</th>
+                    <th>Строка</th>
+                    <th>Имя в GTM</th>
+                    <th>Сопоставить с wells</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in visibleGtmMatchHierarchyRows" :key="row.key" :class="`node-${row.nodeType}`">
+                    <td>
+                      <div class="node-cell" :style="{ paddingLeft: `${row.depth * 18}px` }">
+                        <button v-if="row.children.length" type="button" class="node-toggle" @click="toggleHierarchyExpand(expandedGtmMatchKeys, row.key)">{{ expandedGtmMatchKeys.includes(row.key) ? '−' : '+' }}</button>
+                        <span v-else class="node-spacer"></span>
+                        <strong>{{ row.label }}</strong>
+                      </div>
+                    </td>
+                    <td>{{ row.matchRow?.row_number || '' }}</td>
+                    <td>{{ row.matchRow?.source_well_name || '' }}</td>
+                    <td>
+                      <select v-if="row.matchRow" v-model="row.matchRow.matched_well_name" class="table-input">
+                        <option value="">ВНС / новая скважина</option>
+                        <option
+                          v-for="candidate in gtmMatchOptions(row.matchRow)"
+                          :key="`${row.matchRow.row_number}-${candidate.key}`"
+                          :value="candidate.well_name"
+                        >
+                          {{ candidate.label }}
+                        </option>
+                      </select>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <div v-if="selectedUploadSourceKind === 'niz'" class="panel slim-panel">
