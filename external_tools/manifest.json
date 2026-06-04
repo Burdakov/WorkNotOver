@@ -1,0 +1,37 @@
+{
+  "tools": [
+    {
+      "id": "opm-common",
+      "role": "Optional OPM/Eclipse deck conventions and property import reference",
+      "source_url": "https://github.com/OPM/opm-common",
+      "target_dir": "external_tools/opm-common",
+      "downloaded_revision": "1b0c149",
+      "required_for_base_tests": false
+    },
+    {
+      "id": "mrst",
+      "role": "Optional MRST Flow Diagnostics adapter source",
+      "source_url": "https://github.com/SINTEF-AppliedCompSci/MRST",
+      "target_dir": "external_tools/mrst",
+      "downloaded_revision": null,
+      "download_status": "pending_timeout",
+      "required_for_base_tests": false
+    },
+    {
+      "id": "pywaterflood",
+      "role": "Optional CRM and Buckley-Leverett helper",
+      "source_url": "https://github.com/frank1010111/pywaterflood",
+      "target_dir": "external_tools/pywaterflood",
+      "downloaded_revision": "3d73adf",
+      "required_for_base_tests": false
+    },
+    {
+      "id": "res2df",
+      "role": "Optional OPM/Eclipse result import helper",
+      "source_url": "https://github.com/equinor/res2df",
+      "target_dir": "external_tools/res2df",
+      "downloaded_revision": "3a25347",
+      "required_for_base_tests": false
+    }
+  ]
+}

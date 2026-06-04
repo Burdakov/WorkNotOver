@@ -41,6 +41,13 @@
 - `gtm`
 - `infrastructure`
 - `external_krs_schedule`
+- `production_history`
+- `injection_history`
+- `development_cells`
+- `waterflood_connections`
+- `reservoir_properties`
+- `forecast_model_config`
+- `forecast_scenarios`
 - другие документированные типы наборов данных
 
 ### Инварианты
@@ -205,13 +212,25 @@
 
 - `well_id: str`
 - `well_name: str`
+- `well_type: str | None`
 - `lu_id: str | None`
 - `sloy_id: str | None`
 - `well_pad_id: str | None`
+- `development_cell_id: str | None`
+- `region_id: str | None`
 - `infrastructure_object_id: str | None`
 - `fund_type: str | None`
 - `fund_state: str | None`
 - `status: str | None`
+- `x: float | None`
+- `y: float | None`
+- `z: float | None`
+- `coordinate_crs: str | None`
+- `trajectory_type: str | None`
+- `heel_x: float | None`
+- `heel_y: float | None`
+- `toe_x: float | None`
+- `toe_y: float | None`
 - `current_oil_rate: float | None`
 - `current_gas_rate: float | None`
 - `current_liquid_rate: float | None`
@@ -229,10 +248,19 @@
 - `Base`
 - `New wells`
 
+### Well Types
+
+- `producer`
+- `injector`
+
 ### Инварианты
 
 - `well_id` должен быть устойчивым во всех модулях;
+- для новой waterflood proxy методики `well_type`, `x` и `y` обязательны для всех скважин, участвующих в построении injector-producer связности;
+- `coordinate_crs` должен быть явно задан на уровне dataset metadata или строки; смешивание координатных систем без явной нормализации запрещено;
+- `well_type = producer` используется как добывающая скважина, `well_type = injector` используется как нагнетательная скважина;
 - `lu_id`, `sloy_id`, `well_pad_id` задают иерархию принадлежности скважины, если доступны;
+- `development_cell_id` и `region_id` связывают скважину с расчётной ячейкой / material-balance region для новой методики Module B;
 - `fund_type`, если задан, должен использовать канонические значения `Base` и `New wells`;
 - для `fund_type = Base` скважина считается частью базового фонда, и её baseline forecast строится от последнего фактического режима;
 - `fund_state` задаёт стартовое состояние базового фонда: при `fund_type = Base` и `fund_state = в работе` скважина участвует в первом расчётном шаге с входным дебитом из wells dataset;
@@ -374,6 +402,289 @@
 
 ---
 
+## Entity: ProductionHistoryPoint
+
+Описывает историческую точку добычи для калибровки новой waterflood proxy методики.
+
+### Поля
+
+- `date: str`
+- `producer_id: str`
+- `well_name: str | None`
+- `oil_rate: float`
+- `water_rate: float`
+- `liquid_rate: float | None`
+- `gas_rate: float | None`
+- `bhp: float | None`
+- `thp: float | None`
+- `reservoir_pressure: float | None`
+- `status: str | None`
+- `measurement_quality: str | None`
+- `metadata: dict[str, object] | None`
+
+### Инварианты
+
+- `producer_id` должен ссылаться на `WellState.well_id` с `well_type = producer`;
+- `date` хранится в ISO-формате;
+- `liquid_rate`, если отсутствует, может быть рассчитан как `oil_rate + water_rate`;
+- дебиты неотрицательны;
+- `reservoir_pressure` используется для history matching давления, если задано.
+
+---
+
+## Entity: InjectionHistoryPoint
+
+Описывает историческую точку закачки для нагнетательной скважины.
+
+### Поля
+
+- `date: str`
+- `injector_id: str`
+- `injection_agent: str`
+- `water_injection_rate: float | None`
+- `gas_injection_rate: float | None`
+- `bhp: float | None`
+- `whp: float | None`
+- `thp: float | None`
+- `status: str | None`
+- `measurement_quality: str | None`
+- `metadata: dict[str, object] | None`
+
+### Injection Agents
+
+- `water`
+- `gas`
+
+### Инварианты
+
+- `injector_id` должен ссылаться на `WellState.well_id` с `well_type = injector`;
+- `date` хранится в ISO-формате;
+- хотя бы один дебит закачки должен быть задан;
+- дебиты неотрицательны.
+
+---
+
+## Entity: DevelopmentCell
+
+Описывает расчётную ячейку разработки / material-balance cell.
+
+### Поля
+
+- `development_cell_id: str`
+- `region_id: str | None`
+- `lu_id: str | None`
+- `sloy_id: str | None`
+- `well_pad_id: str | None`
+- `pore_volume: float`
+- `ooip: float | None`
+- `initial_pressure: float`
+- `initial_water_saturation: float`
+- `initial_oil_saturation: float | None`
+- `initial_gas_saturation: float | None`
+- `total_compressibility: float | None`
+- `aquifer_index: float | None`
+- `area_m2: float | None`
+- `h_m: float | None`
+- `phi: float | None`
+- `ntg: float | None`
+- `geometry: dict[str, object] | None`
+- `metadata: dict[str, object] | None`
+
+### Инварианты
+
+- `development_cell_id` устойчив внутри dataset;
+- `pore_volume > 0`;
+- насыщенности должны быть в диапазоне `[0, 1]`;
+- если геометрия отсутствует, UI может отображать ячейку как карточку/агрегат, а не как геометрический полигон.
+
+---
+
+## Entity: WaterfloodConnection
+
+Описывает injector-producer связь новой proxy-модели заводнения.
+
+### Поля
+
+- `connection_id: str`
+- `injector_id: str`
+- `producer_id: str`
+- `development_cell_id: str | None`
+- `region_id: str | None`
+- `distance_m: float | None`
+- `inside_influence_radius: bool | None`
+- `active: bool`
+- `link_type: str`
+- `alpha_prior: float | None`
+- `alpha: float | None`
+- `eta_prior: float | None`
+- `eta: float | None`
+- `tau_prior_days: float | None`
+- `tau_days: float | None`
+- `pv_prior: float | None`
+- `pv: float | None`
+- `screen_factor: float | None`
+- `channel_factor: float | None`
+- `breakthrough_ipvi: float | None`
+- `displacement_efficiency: float | None`
+- `prior_source: str | None`
+- `prior_weight: float | None`
+- `metadata: dict[str, object] | None`
+
+### Link Types
+
+- `normal`
+- `screen`
+- `channel`
+- `unknown`
+
+### Инварианты
+
+- `injector_id` должен ссылаться на нагнетательную скважину;
+- `producer_id` должен ссылаться на добывающую скважину;
+- первичная связность должна строиться из координат скважин и радиуса влияния до применения MRST/CRM/manual priors;
+- `alpha_prior` нормализуется по нагнетательной скважине для активных связей;
+- `alpha`, `eta`, `tau_days` и `pv` могут быть результатом калибровки.
+
+---
+
+## Entity: RegionMap
+
+Связывает расчётные ячейки с PVT/SCAL/ROCK/FIP regions.
+
+### Поля
+
+- `development_cell_id: str`
+- `pvt_region: str`
+- `sat_region: str`
+- `rock_region: str`
+- `fip_region: str | None`
+- `region_name: str | None`
+- `formation: str | None`
+- `reservoir: str | None`
+- `zone: str | None`
+- `metadata: dict[str, object] | None`
+
+### Инварианты
+
+- каждая ячейка, участвующая в material-balance режиме, должна иметь однозначные region mappings.
+
+---
+
+## Entity: ReservoirPropertySet
+
+Описывает набор PVT/SCAL/ROCK-свойств для новой методики.
+
+### Поля
+
+- `property_set_id: str`
+- `density_rows: list[dict[str, object]]`
+- `water_pvt_rows: list[dict[str, object]]`
+- `oil_pvt_rows: list[dict[str, object]]`
+- `gas_pvt_rows: list[dict[str, object]] | None`
+- `rock_rows: list[dict[str, object]]`
+- `swof_rows: list[dict[str, object]]`
+- `sgof_rows: list[dict[str, object]] | None`
+- `region_map: list[RegionMap]`
+- `metadata: dict[str, object] | None`
+
+### Инварианты
+
+- production run новой методики не должен использовать молчаливые константные PVT/SCAL/ROCK-свойства;
+- extrapolation PVT/SCAL запрещён по умолчанию и допустим только при явной настройке с логированием события;
+- таблицы должны быть привязаны к region identifiers, совместимым с `PVTNUM/SATNUM/ROCKNUM/FIPNUM` по смыслу.
+
+---
+
+## Entity: ForecastModelConfig
+
+Описывает конфигурацию новой waterflood proxy методики.
+
+### Поля
+
+- `config_id: str`
+- `forecast_method: str`
+- `coordinates: dict[str, object]`
+- `geometry_initializer: dict[str, object]`
+- `link_type_multipliers: dict[str, float]`
+- `edge_pv_initializer: dict[str, object]`
+- `edge_displacement: dict[str, object]`
+- `properties: dict[str, object]`
+- `material_balance: dict[str, object]`
+- `calibration: dict[str, object]`
+- `adapters: dict[str, object] | None`
+- `reporting: dict[str, object] | None`
+- `metadata: dict[str, object] | None`
+
+### Forecast Methods
+
+- `waterflood_proxy_hm`
+- `legacy_decline_liquid`
+
+### Инварианты
+
+- `waterflood_proxy_hm` является целевой основной методикой Module B;
+- `legacy_decline_liquid` допускается как режим совместимости для старых сценариев и synthetic smoke tests;
+- координатная система должна быть задана явно.
+
+---
+
+## Entity: ForecastScenarioDefinition
+
+Описывает forecast scenario case в терминах новой методики.
+
+### Поля
+
+- `scenario_case_id: str`
+- `name: str`
+- `description: str | None`
+- `forecast_start_date: str`
+- `forecast_end_date: str`
+- `injection_multipliers: dict[str, object] | None`
+- `injection_schedule: list[dict[str, object]] | None`
+- `producer_constraints: dict[str, object] | None`
+- `shut_ins: list[dict[str, object]] | None`
+- `well_conversions: list[dict[str, object]] | None`
+- `link_changes: list[dict[str, object]] | None`
+- `pressure_constraints: dict[str, object] | None`
+- `property_multiplier_cases: dict[str, object] | None`
+- `output_aggregation_level: str | None`
+- `metadata: dict[str, object] | None`
+
+### Инварианты
+
+- forecast events из `GTM`, `KrsScheduleScenario` или `PlannerScheduleRevision` должны приводиться к этой модели событий перед запуском новой методики;
+- изменения связей не должны перетирать исходную distance-based диагностику, а должны сохраняться как сценарные overrides.
+
+---
+
+## Entity: CalibrationResult
+
+Описывает результат history matching новой proxy-модели.
+
+### Поля
+
+- `calibration_id: str`
+- `scenario_id: str`
+- `forecast_method: str`
+- `status: str`
+- `fitted_connections: list[WaterfloodConnection]`
+- `fitted_parameters: dict[str, object]`
+- `objective_components: dict[str, float]`
+- `train_metrics: dict[str, object]`
+- `validation_metrics: dict[str, object]`
+- `history_match_timeseries: list[ProductionPoint] | None`
+- `material_balance_by_cell: list[dict[str, object]] | None`
+- `diagnostic_artifacts: dict[str, object] | None`
+- `metadata: dict[str, object] | None`
+
+### Инварианты
+
+- результат калибровки должен быть воспроизводимым по входным datasets, config и random seed;
+- fitted parameters и train/validation metrics должны сохраняться как scenario-bound output;
+- калибровка может изменять distance-based priors, но не должна удалять исходные diagnostics.
+
+---
+
 ## Entity: BrigadeAvailabilityConfig
 
 Описывает ручной график доступности бригад КРС.
@@ -479,12 +790,25 @@
 - `date: str`
 - `scenario_id: str`
 - `well_id: str | None`
+- `development_cell_id: str | None`
+- `region_id: str | None`
+- `connection_id: str | None`
 - `oil_rate: float`
 - `gas_rate: float | None`
 - `liquid_rate: float`
 - `water_rate: float | None`
 - `gor: float | None`
 - `watercut: float | None`
+- `reservoir_pressure: float | None`
+- `bhp: float | None`
+- `thp: float | None`
+- `water_saturation: float | None`
+- `oil_saturation: float | None`
+- `gas_saturation: float | None`
+- `injected_water_received: float | None`
+- `injected_gas_received: float | None`
+- `effective_injection_by_edge: dict[str, float] | None`
+- `material_balance: dict[str, float] | None`
 - `oil_increment: float | None`
 - `gas_increment: float | None`
 - `liquid_increment: float | None`
@@ -521,6 +845,11 @@
 - `lu_id: str | None`
 - `sloy_id: str | None`
 - `well_pad_id: str | None`
+- `development_cell_id: str | None`
+- `region_id: str | None`
+- `forecast_method: str | None`
+- `calibration_status: str | None`
+- `calibration_quality: dict[str, object] | None`
 - `profile: list[ProductionPoint]`
 - `summary: dict[str, float | str | None]`
 
@@ -855,6 +1184,13 @@
 - `gtm_dataset: DatasetReference | None`
 - `infrastructure_dataset: DatasetReference | None`
 - `external_krs_schedule_dataset: DatasetReference | None`
+- `production_history_dataset: DatasetReference | None`
+- `injection_history_dataset: DatasetReference | None`
+- `development_cells_dataset: DatasetReference | None`
+- `waterflood_connections_dataset: DatasetReference | None`
+- `reservoir_properties_dataset: DatasetReference | None`
+- `forecast_model_config: DatasetReference | ManualInputReference | None`
+- `forecast_scenarios_dataset: DatasetReference | None`
 - `manual_input_set: ManualInputReference | None`
 
 ### Related Entity: ScenarioInputValidation
@@ -864,6 +1200,13 @@
 - `gtm_state: str`
 - `infrastructure_state: str`
 - `external_krs_schedule_state: str`
+- `production_history_state: str`
+- `injection_history_state: str`
+- `development_cells_state: str`
+- `waterflood_connections_state: str`
+- `reservoir_properties_state: str`
+- `forecast_model_config_state: str`
+- `forecast_scenarios_state: str`
 - `manual_input_set_state: str`
 - `is_forecast_ready: bool`
 - `issues: list[str]`
@@ -887,11 +1230,15 @@
 - для такого производного сценария `parent_scenario_id` указывает на исходный расчетный сценарий, а `metadata.scenario_role` должно иметь значение `pure_base`;
 - исходный сценарий с GTM может хранить в `metadata.pure_base_scenario_id` ссылку на автоматически сформированный связанный сценарий `чистая База`;
 - если сценарий собран по ветке `Загрузить существующий график КРС`, в `input_bindings.external_krs_schedule_dataset` должна присутствовать ссылка на dataset типа `external_krs_schedule`;
-- в `input_bindings.niz_dataset` должна присутствовать ссылка на dataset типа `niz`, если сценарий должен быть допущен к расчету добычи;
+- в `input_bindings.niz_dataset` должна присутствовать ссылка на dataset типа `niz`, если сценарий использует `metadata.forecast_method = legacy_decline_liquid` или явно задаёт `metadata.requires_niz = true`;
 - `input_bindings` описывают канонические привязки сценария к данным, а не временное состояние локального UI.
 - у сценария должно существовать каноническое состояние валидации входов `ScenarioInputValidation`, чтобы один и тот же статус полноты входных данных читался одинаково в `Сценарии`, `Добыча` и planner-side flows;
 - если сценарий использует `external_krs_schedule`, но wells или gtm datasets не покрывают все скважины из внешнего графика, соответствующие узлы должны считаться `partial`, а `is_forecast_ready` должно быть `false`;
-- если wells dataset или gtm dataset содержат скважины, для которых отсутствует `NIZ` в привязанном scenario-bound dataset `niz`, соответствующие узлы `wells`, `gtm` и `niz` должны считаться `partial`, а `is_forecast_ready` должно быть `false`;
+- если сценарий требует `NIZ`, а wells dataset или gtm dataset содержат скважины, для которых отсутствует `NIZ` в привязанном scenario-bound dataset `niz`, соответствующие узлы `wells`, `gtm` и `niz` должны считаться `partial`, а `is_forecast_ready` должно быть `false`;
+- для `metadata.forecast_method = waterflood_proxy_hm` сценарий должен иметь привязанные `production_history_dataset`, `injection_history_dataset`, `development_cells_dataset`, `reservoir_properties_dataset` и `forecast_model_config`;
+- для `metadata.forecast_method = waterflood_proxy_hm` `wells_dataset` должен содержать `well_type`, `x`, `y` и согласованную координатную систему для всех добывающих и нагнетательных скважин, участвующих в расчёте;
+- если `reservoir_properties_dataset` не содержит достаточные PVT/SCAL/ROCK-свойства или включает silent extrapolation, `is_forecast_ready` должно быть `false`;
+- `waterflood_connections_dataset` может отсутствовать до запуска distance-based initialization; в этом случае Module B обязан построить initial connections из координат и сохранить diagnostics как scenario-bound output;
 - сценарий с `is_forecast_ready = false` не может быть передан в расчет добычи `Module B`.
 
 ---

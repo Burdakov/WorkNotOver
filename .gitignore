@@ -1,1 +1,4 @@
 backend/storage/uploads/
+external_tools/*
+!external_tools/README.md
+!external_tools/manifest.json

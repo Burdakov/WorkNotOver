@@ -1,0 +1,4 @@
+pvt_region,pressure,bg,mug,pressure_unit,bg_unit,viscosity_unit
+1,100,0.0095,0.018,bar,rm3/sm3,cP
+1,200,0.0050,0.021,bar,rm3/sm3,cP
+1,300,0.0034,0.024,bar,rm3/sm3,cP

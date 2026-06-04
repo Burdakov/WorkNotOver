@@ -4,8 +4,8 @@
 
 `WorkNotOver` — это сценарная система для:
 
-- загрузки и нормализации исходных производственных данных;
-- расчёта базовой добычи нефти, газа, жидкости и эффекта ГТМ;
+- загрузки и нормализации исходных производственных данных из Excel/CSV/YAML;
+- расчёта добычи нефти, воды, газа, жидкости, обводнённости, `GOR` и пластового давления;
 - расчёта экономики;
 - построения и оптимизации графика КРС;
 - проверки инфраструктурных ограничений;
@@ -27,9 +27,15 @@
 
 ### 1. Контур данных
 
-- загрузка Excel;
+- загрузка Excel/CSV/YAML;
 - ручной ввод параметров и конфигураций;
 - загрузка отдельного dataset `NIZ` по скважинам;
+- загрузка истории добычи;
+- загрузка истории закачки;
+- загрузка ячеек разработки / material-balance cells;
+- загрузка PVT/SCAL/ROCK/region properties;
+- загрузка конфигурации waterflood proxy модели;
+- загрузка forecast scenario definitions;
 - ручной ввод коэффициентов отказности по `LU` и `SLOY`;
 - preview;
 - сопоставление колонок;
@@ -39,9 +45,12 @@
 
 ### 2. Расчётно-оптимизационный контур
 
-- расчёт базовой добычи;
-- расчёт добычи газа и `GOR`;
-- расчёт эффекта ГТМ;
+- построение injector-producer связности по координатам;
+- расчёт waterflood proxy модели;
+- history matching по обводнённости, пластовому давлению, rates и material balance;
+- расчёт пластового давления через PVT-aware material balance;
+- расчёт насыщенности, обводнённости, газа и `GOR`;
+- расчёт forecast scenarios;
 - расчёт экономики;
 - построение графика КРС;
 - проверка инфраструктурных ограничений;
@@ -72,11 +81,11 @@
 
 ## Список модулей
 
-## Module A: Загрузка и нормализация Excel
+## Module A: Загрузка и нормализация исходных файлов
 
 Зона ответственности:
 
-- загрузка Excel-файлов;
+- загрузка Excel/CSV/YAML-файлов;
 - приём ручных исходных вводных;
 - preview;
 - auto-mapping и manual mapping колонок;
@@ -91,9 +100,17 @@
 
 - normalized well dataset;
 - base wells in that dataset are imported with `fund_type = Base`;
+- wells for `waterflood_proxy_hm` carry `well_type`, metric coordinates and optional cell/region identifiers;
 - initial participation of each base well is controlled by scenario-bound field `fund_state` from the wells dataset;
-- canonical upload order inside Scenario UI is `wells -> gtm -> niz`;
-- inside the Scenario UI input chain the loading order must be visualized as `wells -> gtm -> niz -> displacement config -> KRS -> infrastructure -> economics`;
+- canonical upload order for legacy/GTM branch inside Scenario UI is `wells -> gtm -> niz`;
+- inside the legacy Scenario UI input chain the loading order must be visualized as `wells -> gtm -> niz -> displacement config -> KRS -> infrastructure -> economics`;
+- canonical upload order for `waterflood_proxy_hm` branch is `wells -> production history -> injection history -> development cells -> reservoir properties -> forecast model config -> forecast scenarios -> optional connection overrides`;
+- normalized production history dataset;
+- normalized injection history dataset;
+- normalized development cells dataset;
+- normalized reservoir properties dataset with PVT/SCAL/ROCK and region mappings;
+- normalized waterflood connection overrides dataset;
+- normalized forecast model config and forecast scenario definitions;
 - normalized NIZ dataset;
 - scenario-bound cumulative oil / gas values are also carried through the `niz` dataset and linked to wells by `well_name`;
 - normalized GTM dataset;
@@ -105,16 +122,19 @@
 
 ---
 
-## Module B: Расчёт базовой добычи и эффекта ГТМ
+## Module B: Waterflood proxy forecast, history matching и расчёт добычи
 
 Зона ответственности:
 
-- расчёт базового профиля нефти и жидкости;
-- применение scenario-bound `NIZ` по каждой скважине из `wells` и `gtm`;
-- включение базовой скважины в первый расчётный шаг только при `fund_state = в работе`;
-- расчёт базового профиля газа и `GOR`;
-- расчёт обводнённости;
-- расчёт эффекта ГТМ;
+- построение первичной injector-producer связности по координатам;
+- расчёт distance-based `alpha_prior`, `tau_prior` и `pv_prior`;
+- расчёт native waterflood proxy model;
+- PVT/SCAL/ROCK validation and evaluation;
+- расчёт material-balance pressure по cell/region;
+- расчёт насыщенности, обводнённости, газа и `GOR`;
+- history matching по watercut, `p_res`, rates и material balance;
+- расчёт forecast scenarios с injection schedules, producer constraints, shut-ins, conversions, link changes и pressure constraints;
+- legacy-режим `legacy_decline_liquid` для совместимости со старым контуром;
 - автоматическое формирование связанного сценария `чистая База` без GTM для сценарного сравнения и отображения слоя `БАЗА`;
 - расчёт инкрементальных и накопленных эффектов по нефти, газу и жидкости;
 - формирование `ProductionScenario`.
@@ -123,8 +143,20 @@
 
 - скважинные профили;
 - агрегированный профиль;
+- `CalibrationResult`;
+- `WaterfloodAnalysisPayload` для UI-диагностики ячеек, связей, насыщенности, давления и факт-расчёт аналитики;
+- fitted injector-producer connections;
+- material balance by cell/region;
+- history match diagnostics;
 - эффекты по мероприятиям;
 - результат расчётного сценария.
+
+Внешние open source инструменты:
+
+- optional source trees хранятся отдельно в `external_tools/` и описываются `external_tools/manifest.json`;
+- native `Module B` не должен требовать OPM, MRST, pywaterflood или res2df для базового запуска и базовых тестов;
+- external tools используются только optional adapters / validation path: OPM для deck/property conventions, MRST для flow diagnostics priors, pywaterflood для CRM/Buckley-Leverett helpers, res2df для импорта результатов;
+- код backend должен деградировать gracefully, если эти инструменты не установлены как runtime dependencies.
 
 ---
 
@@ -268,7 +300,7 @@ Planner является владельцем ручной календарно�
 ## Ключевой сценарный цикл
 
 ```text
-Excel / параметры
+Excel / CSV / YAML / параметры
   -> Module A
   -> Module B
   -> Module C
@@ -320,7 +352,7 @@ G -> C
 ## Расшифровка зависимостей
 
 - `A -> B`
-  Module B получает нормализованные скважины и ГТМ.
+  Module B получает нормализованные скважины, историю добычи/закачки, ячейки разработки, PVT/SCAL/ROCK properties, forecast config/scenarios и legacy inputs при необходимости.
 
 - `A -> D`
   Module D получает нормализованные мероприятия и правила планирования.

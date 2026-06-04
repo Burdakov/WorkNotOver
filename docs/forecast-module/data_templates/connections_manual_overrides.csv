@@ -1,0 +1,4 @@
+injector_id,producer_id,link_type,active,alpha_manual,eta_prior,tau_prior_days,pv_prior,prior_weight,notes
+INJ_001,PROD_001,normal,true,,1.0,,,1.0,"manual link type only"
+INJ_001,PROD_002,screen,true,,1.0,,,2.0,"suspected barrier/screen"
+INJ_002,PROD_002,channel,true,,1.0,,,2.0,"suspected preferential channel"

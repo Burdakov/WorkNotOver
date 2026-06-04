@@ -19,6 +19,15 @@ const PRODUCTION_METRICS = [
   { key: 'liquid', label: 'Жидкость', unit: 'т' },
   { key: 'gas', label: 'Газ', unit: 'м3' },
 ]
+const WATERFLOOD_AGGREGATE_LEVELS = [
+  { key: 'well', label: 'Скважина' },
+  { key: 'pad', label: 'Куст' },
+  { key: 'sloy', label: 'Слой' },
+  { key: 'lu', label: 'LU' },
+  { key: 'cell', label: 'Ячейка' },
+]
+const WATERFLOOD_NETWORK_WIDTH = 920
+const WATERFLOOD_NETWORK_HEIGHT = 300
 const DEFAULT_PLANNER_COLUMNS = {
   brigade: 'Бригада',
   area: 'Участок',
@@ -287,6 +296,11 @@ const getProductionPointMetricValue = (point, metric) => Number(point?.[producti
 const getProductionWellMetricTotal = (well, metric) => Number(well?.[productionMetricTotalField(metric)] || 0)
 
 const formatCompactNumber = (value) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Number(value || 0))
+const formatCompactDecimal = (value, digits = 1) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: digits }).format(Number(value || 0))
+const formatRatioPercent = (value, digits = 1) => {
+  const number = Number(value)
+  return Number.isFinite(number) ? `${(number * 100).toFixed(digits)}%` : '—'
+}
 const formatIncrement = (value) => (value && value > 0 ? Number(value).toFixed(1) : '0')
 const wellPrefix = (value) => String(value || '').trim().slice(0, 2).toUpperCase() || 'NA'
 const colorFromPrefix = (prefix) => {
@@ -551,7 +565,15 @@ const expandedProductionKeys = ref([])
 const selectedProductionKeys = ref([])
 const productionTimeMode = ref('month')
 const productionMetric = ref('oil')
+const productionSubsection = ref('forecast')
+const productionAnalysisGrouping = ref('pad')
+const selectedDevelopmentCellKey = ref('')
 const hoveredProductionBucketDate = ref('')
+const waterfloodAnalysis = ref(null)
+const waterfloodLoading = ref(false)
+const selectedWaterfloodCellId = ref('')
+const hoveredWaterfloodLinkId = ref('')
+const waterfloodAggregateLevel = ref('well')
 
 const plannerDatasetReference = ref(null)
 const plannerVersionName = ref('')
@@ -1845,6 +1867,238 @@ const productionTree = computed(() => {
   return { rows, nodeMap, totalNode, bucketOrder }
 })
 const activeScenarioWells = computed(() => Array.isArray(scenarioDetail.value?.wells) ? scenarioDetail.value.wells : [])
+const getLastProductionPoint = (well) => {
+  const points = Array.isArray(well?.points) ? well.points : []
+  return points.length ? points[points.length - 1] : null
+}
+const getWellDevelopmentCellId = (well) => (
+  well?.development_cell_id
+  || well?.cell_id
+  || well?.metadata?.development_cell_id
+  || well?.metadata?.cell_id
+  || well?.well_pad_id
+  || 'Без ячейки'
+)
+const normalizeProductionRatio = (value) => {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return null
+  return number > 1 ? number / 100 : number
+}
+const getProductionWatercutRatio = (well) => {
+  const point = getLastProductionPoint(well)
+  return normalizeProductionRatio(point?.watercut ?? well?.watercut)
+}
+const getProductionGor = (well) => {
+  const point = getLastProductionPoint(well)
+  const value = Number(point?.gor ?? well?.gor)
+  return Number.isFinite(value) ? value : null
+}
+const getProductionPressure = (well) => {
+  const point = getLastProductionPoint(well)
+  const value = Number(
+    point?.reservoir_pressure
+    ?? point?.formation_pressure
+    ?? point?.pressure
+    ?? point?.bottomhole_pressure
+    ?? well?.reservoir_pressure
+    ?? well?.formation_pressure
+    ?? well?.pressure
+  )
+  return Number.isFinite(value) && value > 0 ? value : null
+}
+const formatProductionPercent = (value) => {
+  const number = Number(value)
+  return Number.isFinite(number) ? `${(number * 100).toFixed(1)}%` : '—'
+}
+const formatPressureValue = (value) => {
+  const number = Number(value)
+  return Number.isFinite(number) ? new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(number) : '—'
+}
+const productionAnalysisHierarchy = computed(() => {
+  const createNode = ({ key, nodeType, depth, label, parentKey = null, luLabel = '' }) => ({
+    key,
+    nodeType,
+    depth,
+    label,
+    parentKey,
+    luLabel,
+    wellCount: 0,
+    oilRate: 0,
+    liquidRate: 0,
+    gasRate: 0,
+    watercutWeighted: 0,
+    watercutWeight: 0,
+    gorWeighted: 0,
+    gorWeight: 0,
+    pressureTotal: 0,
+    pressureCount: 0,
+    watercut: null,
+    gor: null,
+    pressure: null,
+    children: [],
+  })
+  const applyWellMetrics = (node, well) => {
+    const point = getLastProductionPoint(well)
+    const oilRate = getProductionPointMetricValue(point, 'oil')
+    const liquidRate = getProductionPointMetricValue(point, 'liquid')
+    const gasRate = getProductionPointMetricValue(point, 'gas')
+    const watercut = getProductionWatercutRatio(well)
+    const gor = getProductionGor(well)
+    const pressure = getProductionPressure(well)
+    node.wellCount += 1
+    node.oilRate += oilRate
+    node.liquidRate += liquidRate
+    node.gasRate += gasRate
+    if (watercut !== null) {
+      const watercutWeight = Math.max(liquidRate, 1)
+      node.watercutWeighted += watercut * watercutWeight
+      node.watercutWeight += watercutWeight
+    }
+    if (gor !== null) {
+      const gorWeight = Math.max(oilRate, 1)
+      node.gorWeighted += gor * gorWeight
+      node.gorWeight += gorWeight
+    }
+    if (pressure !== null) {
+      node.pressureTotal += pressure
+      node.pressureCount += 1
+    }
+  }
+  const finalizeNode = (node) => {
+    node.watercut = node.watercutWeight > 0 ? node.watercutWeighted / node.watercutWeight : null
+    node.gor = node.gorWeight > 0 ? node.gorWeighted / node.gorWeight : null
+    node.pressure = node.pressureCount > 0 ? node.pressureTotal / node.pressureCount : null
+    node.children.sort((left, right) => left.label.localeCompare(right.label, 'ru'))
+    node.children.forEach(finalizeNode)
+  }
+
+  const totalNode = createNode({ key: 'analysis:total', nodeType: 'total', depth: 0, label: 'Итого' })
+  const nodeMap = new Map([[totalNode.key, totalNode]])
+  const luMap = new Map()
+  const groupMap = new Map()
+
+  activeScenarioWells.value.forEach((well) => {
+    const luId = well.lu_id || 'Без LU'
+    const groupLabel = productionAnalysisGrouping.value === 'cell'
+      ? getWellDevelopmentCellId(well)
+      : (well.well_pad_id || 'Без куста')
+    const groupKind = productionAnalysisGrouping.value === 'cell' ? 'cell' : 'pad'
+    const wellKey = `analysis:${buildWellNodeKey(well)}`
+
+    let luNode = luMap.get(luId)
+    if (!luNode) {
+      luNode = createNode({ key: `analysis:lu:${luId}`, nodeType: 'lu', depth: 1, label: luId, parentKey: totalNode.key })
+      luMap.set(luId, luNode)
+      nodeMap.set(luNode.key, luNode)
+      totalNode.children.push(luNode)
+    }
+
+    const groupKey = `analysis:${groupKind}:${luId}:${groupLabel}`
+    let groupNode = groupMap.get(groupKey)
+    if (!groupNode) {
+      groupNode = createNode({ key: groupKey, nodeType: groupKind, depth: 2, label: groupLabel, parentKey: luNode.key, luLabel: luId })
+      groupMap.set(groupKey, groupNode)
+      nodeMap.set(groupNode.key, groupNode)
+      luNode.children.push(groupNode)
+    }
+
+    const wellNode = createNode({
+      key: wellKey,
+      nodeType: 'well',
+      depth: 3,
+      label: well.well_name || well.well_id || 'Скважина',
+      parentKey: groupNode.key,
+      luLabel: luId,
+    })
+    applyWellMetrics(wellNode, well)
+    ;[totalNode, luNode, groupNode].forEach((node) => applyWellMetrics(node, well))
+    nodeMap.set(wellNode.key, wellNode)
+    groupNode.children.push(wellNode)
+  })
+
+  finalizeNode(totalNode)
+  const rows = []
+  const flatten = (node) => {
+    rows.push(node)
+    node.children.forEach(flatten)
+  }
+  flatten(totalNode)
+  const groupCards = [...groupMap.values()]
+    .sort((left, right) => left.luLabel.localeCompare(right.luLabel, 'ru') || left.label.localeCompare(right.label, 'ru'))
+  return { totalNode, rows, groupCards, nodeMap }
+})
+const visibleProductionAnalysisRows = computed(() => {
+  if (!selectedDevelopmentCellKey.value) return productionAnalysisHierarchy.value.rows
+  const nodeMap = productionAnalysisHierarchy.value.nodeMap
+  const selectedGroup = nodeMap.get(selectedDevelopmentCellKey.value)
+  if (!selectedGroup) return productionAnalysisHierarchy.value.rows
+  const parentLu = nodeMap.get(selectedGroup.parentKey)
+  return [
+    productionAnalysisHierarchy.value.totalNode,
+    parentLu,
+    selectedGroup,
+    ...selectedGroup.children,
+  ].filter(Boolean)
+})
+const waterfloodCells = computed(() => Array.isArray(waterfloodAnalysis.value?.cells) ? waterfloodAnalysis.value.cells : [])
+const waterfloodWells = computed(() => Array.isArray(waterfloodAnalysis.value?.wells) ? waterfloodAnalysis.value.wells : [])
+const waterfloodLinks = computed(() => Array.isArray(waterfloodAnalysis.value?.links) ? waterfloodAnalysis.value.links : [])
+const selectedWaterfloodCell = computed(() => waterfloodCells.value.find((item) => item.cell_id === selectedWaterfloodCellId.value) || null)
+const visibleWaterfloodLinks = computed(() => {
+  if (!selectedWaterfloodCellId.value) return waterfloodLinks.value
+  return waterfloodLinks.value.filter((item) => item.cell_id === selectedWaterfloodCellId.value)
+})
+const visibleWaterfloodWellIds = computed(() => {
+  const ids = new Set()
+  visibleWaterfloodLinks.value.forEach((link) => {
+    ids.add(link.injector_id)
+    ids.add(link.producer_id)
+  })
+  if (!selectedWaterfloodCellId.value) return ids
+  waterfloodWells.value
+    .filter((well) => well.cell_id === selectedWaterfloodCellId.value)
+    .forEach((well) => ids.add(well.well_id))
+  return ids
+})
+const waterfloodNetworkNodes = computed(() => {
+  const nodes = waterfloodWells.value.filter((well) => visibleWaterfloodWellIds.value.has(well.well_id))
+  if (!nodes.length) return []
+  const xValues = nodes.map((well) => Number(well.x || 0))
+  const yValues = nodes.map((well) => Number(well.y || 0))
+  const minX = Math.min(...xValues)
+  const maxX = Math.max(...xValues)
+  const minY = Math.min(...yValues)
+  const maxY = Math.max(...yValues)
+  const spanX = Math.max(1, maxX - minX)
+  const spanY = Math.max(1, maxY - minY)
+  return nodes.map((well) => ({
+    ...well,
+    viewX: 54 + ((Number(well.x || 0) - minX) / spanX) * (WATERFLOOD_NETWORK_WIDTH - 108),
+    viewY: 44 + ((Number(well.y || 0) - minY) / spanY) * (WATERFLOOD_NETWORK_HEIGHT - 88),
+  }))
+})
+const waterfloodNetworkNodeMap = computed(() => new Map(waterfloodNetworkNodes.value.map((node) => [node.well_id, node])))
+const waterfloodNetworkLinks = computed(() => visibleWaterfloodLinks.value
+  .map((link) => ({
+    ...link,
+    injector: waterfloodNetworkNodeMap.value.get(link.injector_id),
+    producer: waterfloodNetworkNodeMap.value.get(link.producer_id),
+    strokeWidth: 1.5 + Number(link.alpha || 0) * 8,
+    saturationColor: `hsl(${205 - Number(link.sw || 0) * 96} 78% 48%)`,
+  }))
+  .filter((link) => link.injector && link.producer))
+const activeWaterfloodLink = computed(() => waterfloodLinks.value.find((item) => item.link_id === hoveredWaterfloodLinkId.value) || visibleWaterfloodLinks.value[0] || null)
+const waterfloodAggregateRows = computed(() => waterfloodAnalysis.value?.aggregates?.[waterfloodAggregateLevel.value] || [])
+const waterfloodCalibration = computed(() => waterfloodAnalysis.value?.calibration || null)
+const waterfloodSaturationBarStyle = (value) => ({
+  width: `${Math.max(4, Math.min(100, Number(value || 0) * 100))}%`,
+})
+const waterfloodDeltaClass = (value) => {
+  const number = Number(value || 0)
+  if (Math.abs(number) < 0.001) return 'neutral'
+  return number > 0 ? 'positive' : 'negative'
+}
+const waterfloodAggregateLevelLabel = computed(() => WATERFLOOD_AGGREGATE_LEVELS.find((item) => item.key === waterfloodAggregateLevel.value)?.label || 'Скважина')
 const activeScenarioRole = computed(() => scenarioDetail.value?.scenario?.metadata?.scenario_role || '')
 const baseScenarioWells = computed(() => {
   if (activeScenarioRole.value === 'pure_base') {
@@ -2997,6 +3251,27 @@ const calculateForecast = async () => {
   }
 }
 
+const loadWaterfloodAnalysis = async ({ silent = false } = {}) => {
+  waterfloodLoading.value = true
+  try {
+    const query = selectedScenarioId.value ? `?scenario_id=${encodeURIComponent(selectedScenarioId.value)}` : ''
+    const response = await request(`/forecast/waterflood/mock-analysis${query}`)
+    waterfloodAnalysis.value = await response.json()
+    if (!selectedWaterfloodCellId.value && waterfloodAnalysis.value?.cells?.length) {
+      selectedWaterfloodCellId.value = waterfloodAnalysis.value.cells[0].cell_id
+    }
+    if (!silent) {
+      showMessage('Waterflood proxy analysis обновлен.', 'success')
+    }
+  } catch (error) {
+    if (!silent) {
+      showMessage(error.message, 'error')
+    }
+  } finally {
+    waterfloodLoading.value = false
+  }
+}
+
 const loadScenarioDetail = async (scenarioId) => {
   if (!scenarioId) return
   loading.value = true
@@ -3025,9 +3300,13 @@ const loadScenarioDetail = async (scenarioId) => {
     const luKeys = [...new Set((scenarioDetail.value.wells || []).map((item) => item.lu_id || 'Без LU'))].map((item) => `lu:${item}`)
     expandedProductionKeys.value = ['total', ...luKeys]
     selectedProductionKeys.value = []
+    selectedDevelopmentCellKey.value = ''
     hoveredProductionBucketDate.value = ''
     await loadPlannerRevisions(scenarioDetail.value.scenario?.parent_scenario_id || scenarioDetail.value.scenario?.scenario_id || '')
     selectedPlannerRevisionId.value = scenarioDetail.value.scenario?.metadata?.planner_revision_id || selectedPlannerRevisionId.value
+    if (currentSection.value === 'production') {
+      await loadWaterfloodAnalysis({ silent: true })
+    }
   } catch (error) {
     showMessage(error.message, 'error')
   } finally {
@@ -3357,10 +3636,19 @@ watch(currentSection, async (section) => {
   if (section === 'planner') {
     await syncPlannerWithActiveScenario({ silent: true })
   }
+  if (section === 'production') {
+    await loadWaterfloodAnalysis({ silent: true })
+  }
 })
 
 watch(productionTimeMode, () => {
   hoveredProductionBucketDate.value = ''
+})
+
+watch(productionSubsection, async (section) => {
+  if (currentSection.value === 'production' && section === 'analysis' && !waterfloodAnalysis.value) {
+    await loadWaterfloodAnalysis({ silent: true })
+  }
 })
 
 watch([fullScheduleBounds], ([bounds]) => {
@@ -3993,7 +4281,8 @@ onMounted(async () => {
 
             <div v-if="inputFile?.preview?.length" class="panel preview-panel">
               <h2>Preview исходного Excel</h2>
-              <div class="table-wrap preview-wrap">
+              <div class="preview-clip">
+                <div class="table-wrap preview-wrap">
                 <div class="preview-scroll-shell">
                   <table class="preview-table">
                     <thead>
@@ -4005,6 +4294,7 @@ onMounted(async () => {
                       </tr>
                     </tbody>
                   </table>
+                  </div>
                 </div>
               </div>
             </div>
@@ -4492,7 +4782,25 @@ onMounted(async () => {
               <h2>Сценарий расчета</h2>
               <p class="subtitle">Раздел читает сохраненные outputs Module B. UI только агрегирует и фильтрует их по иерархии.</p>
             </div>
-            <div class="toolbar">
+            <div class="production-toolbar-actions">
+              <div class="mode-toggle production-subsection-toggle">
+                <button
+                  type="button"
+                  class="mode-toggle-button"
+                  :class="{ active: productionSubsection === 'analysis' }"
+                  @click="productionSubsection = 'analysis'"
+                >
+                  Анализ и настройка
+                </button>
+                <button
+                  type="button"
+                  class="mode-toggle-button"
+                  :class="{ active: productionSubsection === 'forecast' }"
+                  @click="productionSubsection = 'forecast'"
+                >
+                  Прогноз
+                </button>
+              </div>
               <select v-model="selectedScenarioId" class="compact-dropdown">
                 <option value="">Выберите сценарий</option>
                 <option v-for="scenario in userVisibleScenarios" :key="scenario.scenario_id" :value="scenario.scenario_id">
@@ -4515,7 +4823,273 @@ onMounted(async () => {
             <div class="stat-card"><span>Жидкость по выборке</span><strong>{{ formatCompactNumber(selectedProductionSummary.totalLiquid) }}</strong></div>
           </div>
 
-          <div class="panel production-panel">
+          <div v-if="productionSubsection === 'analysis'" class="production-analysis-stack">
+            <div class="panel waterflood-overview-panel">
+              <div class="toolbar between align-start">
+                <div>
+                  <h2>Waterflood proxy: автоадаптация</h2>
+                  <p class="subtitle">Native MVP строит первичную связность по координатам, подбирает mock alpha/pressure/watercut и готовит базу для будущего production history matching.</p>
+                </div>
+                <div class="toolbar-actions">
+                  <span class="status-pill" :class="waterfloodCalibration?.status === 'mock_calibrated' ? 'ready' : 'pending'">
+                    {{ waterfloodCalibration?.status || 'нет расчета' }}
+                  </span>
+                  <button class="button ghost" :disabled="waterfloodLoading" @click="loadWaterfloodAnalysis()">
+                    {{ waterfloodLoading ? 'Обновление...' : 'Обновить waterflood' }}
+                  </button>
+                </div>
+              </div>
+              <div class="waterflood-method-grid">
+                <div class="waterflood-method-card">
+                  <span>Радиус влияния</span>
+                  <strong>{{ formatCompactNumber(waterfloodAnalysis?.model?.influence_radius_m) }} м</strong>
+                  <small>Первичная связность строится до MRST/CRM/OPM.</small>
+                </div>
+                <div class="waterflood-method-card">
+                  <span>MAE обводненности</span>
+                  <strong>{{ formatRatioPercent(waterfloodCalibration?.metrics?.watercut_mae, 1) }}</strong>
+                  <small>Факт-расчет по history tail mock.</small>
+                </div>
+                <div class="waterflood-method-card">
+                  <span>MAE давления</span>
+                  <strong>{{ formatCompactDecimal(waterfloodCalibration?.metrics?.pressure_mae_bar, 1) }} бар</strong>
+                  <small>Матбаланс-ориентированная диагностика.</small>
+                </div>
+                <div class="waterflood-method-card">
+                  <span>Связей</span>
+                  <strong>{{ waterfloodLinks.length }}</strong>
+                  <small>Каждая связь имеет alpha, PV, IPVI и насыщенность.</small>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel waterflood-network-panel">
+              <div class="toolbar between align-start">
+                <div>
+                  <h2>Ячейки, запасы и 1D связи</h2>
+                  <p class="subtitle">Выберите ячейку: схема показывает связи нагнетательных и добывающих, насыщенность воды и расчетное давление на proxy-линиях.</p>
+                </div>
+                <button v-if="selectedWaterfloodCellId" type="button" class="button ghost" @click="selectedWaterfloodCellId = ''">Все ячейки</button>
+              </div>
+              <div class="waterflood-layout">
+                <div class="waterflood-cell-list">
+                  <button
+                    v-for="cell in waterfloodCells"
+                    :key="cell.cell_id"
+                    type="button"
+                    class="waterflood-cell-card"
+                    :class="{ active: selectedWaterfloodCellId === cell.cell_id }"
+                    @click="selectedWaterfloodCellId = selectedWaterfloodCellId === cell.cell_id ? '' : cell.cell_id"
+                  >
+                    <span>{{ cell.lu_id }} / {{ cell.sloy_id }}</span>
+                    <strong>{{ cell.cell_id }}</strong>
+                    <div class="waterflood-cell-metrics">
+                      <em>Ост. запасы {{ formatCompactNumber(cell.reserves_remaining) }}</em>
+                      <em>Рпл {{ formatCompactDecimal(cell.pressure_calc, 1) }} бар</em>
+                      <em>Sw {{ formatRatioPercent(cell.sw, 0) }}</em>
+                    </div>
+                    <div class="saturation-strip">
+                      <i class="water" :style="waterfloodSaturationBarStyle(cell.sw)"></i>
+                    </div>
+                  </button>
+                </div>
+                <div class="waterflood-network-card">
+                  <svg
+                    v-if="waterfloodNetworkNodes.length"
+                    class="waterflood-network"
+                    :viewBox="`0 0 ${WATERFLOOD_NETWORK_WIDTH} ${WATERFLOOD_NETWORK_HEIGHT}`"
+                  >
+                    <defs>
+                      <marker id="waterflood-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+                        <path d="M0,0 L8,4 L0,8 z" fill="#3f7fb8" />
+                      </marker>
+                    </defs>
+                    <line
+                      v-for="link in waterfloodNetworkLinks"
+                      :key="link.link_id"
+                      :x1="link.injector.viewX"
+                      :y1="link.injector.viewY"
+                      :x2="link.producer.viewX"
+                      :y2="link.producer.viewY"
+                      :stroke="link.saturationColor"
+                      :stroke-width="link.strokeWidth"
+                      class="waterflood-edge"
+                      marker-end="url(#waterflood-arrow)"
+                      @mouseenter="hoveredWaterfloodLinkId = link.link_id"
+                      @mouseleave="hoveredWaterfloodLinkId = ''"
+                    />
+                    <g
+                      v-for="node in waterfloodNetworkNodes"
+                      :key="node.well_id"
+                      :class="['waterflood-node', node.well_type]"
+                    >
+                      <circle :cx="node.viewX" :cy="node.viewY" :r="node.well_type === 'injector' ? 13 : 11" />
+                      <text :x="node.viewX + 16" :y="node.viewY + 5">{{ node.well_name }}</text>
+                    </g>
+                  </svg>
+                  <div v-else class="empty-inline">Нет связей для отображения.</div>
+                  <div v-if="activeWaterfloodLink" class="waterflood-link-inspector">
+                    <strong>{{ activeWaterfloodLink.injector_name }} → {{ activeWaterfloodLink.producer_name }}</strong>
+                    <span>alpha {{ formatCompactDecimal(activeWaterfloodLink.alpha, 3) }} / prior {{ formatCompactDecimal(activeWaterfloodLink.alpha_prior, 3) }}</span>
+                    <span>Sw {{ formatRatioPercent(activeWaterfloodLink.sw, 1) }} · IPVI {{ formatCompactDecimal(activeWaterfloodLink.ipvi, 2) }}</span>
+                    <span>PV {{ formatCompactDecimal(activeWaterfloodLink.pv, 0) }} · tau {{ formatCompactDecimal(activeWaterfloodLink.tau_days, 0) }} сут</span>
+                    <span>Рпл факт/расч {{ formatCompactDecimal(activeWaterfloodLink.pressure_actual, 1) }} / {{ formatCompactDecimal(activeWaterfloodLink.pressure_calc, 1) }} бар</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel waterflood-comparison-panel">
+              <div class="toolbar between align-start">
+                <div>
+                  <h2>Факт-расчет аналитика</h2>
+                  <p class="subtitle">Сравнение по скважинам и агрегатам: куст, слой, LU, ячейка. Выбранный уровень: {{ waterfloodAggregateLevelLabel }}.</p>
+                </div>
+                <div class="mode-toggle">
+                  <button
+                    v-for="level in WATERFLOOD_AGGREGATE_LEVELS"
+                    :key="level.key"
+                    type="button"
+                    class="mode-toggle-button"
+                    :class="{ active: waterfloodAggregateLevel === level.key }"
+                    @click="waterfloodAggregateLevel = level.key"
+                  >
+                    {{ level.label }}
+                  </button>
+                </div>
+              </div>
+              <div class="table-wrap waterflood-comparison-wrap">
+                <table class="waterflood-comparison-table">
+                  <thead>
+                    <tr>
+                      <th>{{ waterfloodAggregateLevelLabel }}</th>
+                      <th>Скв.</th>
+                      <th>Нефть факт</th>
+                      <th>Нефть расч</th>
+                      <th>Δ нефть</th>
+                      <th>Жидк. факт</th>
+                      <th>Жидк. расч</th>
+                      <th>Обв. факт</th>
+                      <th>Обв. расч</th>
+                      <th>Рпл факт</th>
+                      <th>Рпл расч</th>
+                      <th>Ост. запасы</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in waterfloodAggregateRows" :key="`${waterfloodAggregateLevel}:${row.name}`">
+                      <td><strong>{{ row.name }}</strong></td>
+                      <td>{{ row.well_count }}</td>
+                      <td>{{ formatCompactNumber(row.oil_rate_actual) }}</td>
+                      <td>{{ formatCompactNumber(row.oil_rate_calc) }}</td>
+                      <td :class="['delta-cell', waterfloodDeltaClass(row.oil_rate_delta)]">{{ formatCompactDecimal(row.oil_rate_delta, 1) }}</td>
+                      <td>{{ formatCompactNumber(row.liquid_rate_actual) }}</td>
+                      <td>{{ formatCompactNumber(row.liquid_rate_calc) }}</td>
+                      <td>{{ formatRatioPercent(row.watercut_actual, 1) }}</td>
+                      <td>{{ formatRatioPercent(row.watercut_calc, 1) }}</td>
+                      <td>{{ formatCompactDecimal(row.pressure_actual, 1) }}</td>
+                      <td>{{ formatCompactDecimal(row.pressure_calc, 1) }}</td>
+                      <td>{{ formatCompactNumber(row.reserves_remaining) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="panel production-analysis-panel">
+              <div class="toolbar between align-start">
+                <div>
+                  <h2>Карта ячеек разработки</h2>
+                  <p class="subtitle">Агрегация сохраненных outputs Module B по полной иерархии LU → Куст/Ячейка → скважина.</p>
+                </div>
+                <div class="toolbar-actions">
+                  <button v-if="selectedDevelopmentCellKey" type="button" class="button ghost" @click="selectedDevelopmentCellKey = ''">Показать все</button>
+                  <div class="mode-toggle">
+                    <button
+                      type="button"
+                      class="mode-toggle-button"
+                      :class="{ active: productionAnalysisGrouping === 'pad' }"
+                      @click="productionAnalysisGrouping = 'pad'; selectedDevelopmentCellKey = ''"
+                    >
+                      Куст
+                    </button>
+                    <button
+                      type="button"
+                      class="mode-toggle-button"
+                      :class="{ active: productionAnalysisGrouping === 'cell' }"
+                      @click="productionAnalysisGrouping = 'cell'; selectedDevelopmentCellKey = ''"
+                    >
+                      Ячейка
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div v-if="productionAnalysisHierarchy.groupCards.length" class="development-map-grid">
+                <button
+                  v-for="card in productionAnalysisHierarchy.groupCards"
+                  :key="card.key"
+                  type="button"
+                  class="development-cell-card"
+                  :class="{ active: selectedDevelopmentCellKey === card.key }"
+                  @click="selectedDevelopmentCellKey = selectedDevelopmentCellKey === card.key ? '' : card.key"
+                >
+                  <span class="development-cell-lu">{{ card.luLabel }}</span>
+                  <strong>{{ card.label }}</strong>
+                  <em>{{ card.wellCount }} скв.</em>
+                  <div class="development-cell-metrics">
+                    <span><small>Нефть</small><b>{{ formatCompactNumber(card.oilRate) }}</b></span>
+                    <span><small>Обводн.</small><b>{{ formatProductionPercent(card.watercut) }}</b></span>
+                    <span><small>Давл.</small><b>{{ formatPressureValue(card.pressure) }}</b></span>
+                  </div>
+                </button>
+              </div>
+              <div v-else class="empty-inline">Нет сохраненных скважин в выбранном сценарии.</div>
+            </div>
+
+            <div class="panel">
+              <div class="toolbar between align-start">
+                <div>
+                  <h2>Характеристики разработки и давления</h2>
+                  <p class="subtitle">Показатели считаются по последней сохраненной точке скважины; давление отображается, если оно присутствует в output.</p>
+                </div>
+              </div>
+              <div class="table-wrap hierarchy-wrap production-analysis-wrap">
+                <table class="hierarchy-table production-analysis-table">
+                  <thead>
+                    <tr>
+                      <th>Узел</th>
+                      <th>Скважин</th>
+                      <th>Нефть, т/сут</th>
+                      <th>Жидкость, т/сут</th>
+                      <th>Газ, м3/сут</th>
+                      <th>Обводненность</th>
+                      <th>GOR</th>
+                      <th>Пластовое давление</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in visibleProductionAnalysisRows" :key="row.key" :class="`node-${row.nodeType}`">
+                      <td>
+                        <div class="node-cell" :style="{ paddingLeft: `${row.depth * 18}px` }">
+                          <span class="node-spacer"></span>
+                          <strong>{{ row.label }}</strong>
+                        </div>
+                      </td>
+                      <td>{{ row.wellCount }}</td>
+                      <td>{{ formatCompactNumber(row.oilRate) }}</td>
+                      <td>{{ formatCompactNumber(row.liquidRate) }}</td>
+                      <td>{{ formatCompactNumber(row.gasRate) }}</td>
+                      <td>{{ formatProductionPercent(row.watercut) }}</td>
+                      <td>{{ row.gor === null ? '—' : formatCompactNumber(row.gor) }}</td>
+                      <td>{{ formatPressureValue(row.pressure) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="productionSubsection === 'forecast'" class="panel production-panel">
             <div class="toolbar between">
               <div>
                 <h2>{{ productionChartTitle }}</h2>
@@ -4665,7 +5239,7 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div class="panel">
+          <div v-if="productionSubsection === 'forecast'" class="panel">
             <div class="toolbar between">
               <div>
                 <h2>Иерархия профиля</h2>
@@ -5345,6 +5919,22 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.page-stack > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.scenarios-page,
+.scenario-workspace,
+.workbench-shell {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .tabs,
@@ -5424,6 +6014,9 @@ onMounted(async () => {
 
 .panel {
   min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
   padding: 16px;
   border: 1px solid rgba(35, 50, 68, 0.08);
   border-radius: 18px;
@@ -5771,44 +6364,62 @@ textarea:disabled {
 }
 
 .table-wrap {
+  display: block;
   overflow: auto;
   min-width: 0;
+  width: 100%;
   max-width: 100%;
   border: 1px solid rgba(35, 50, 68, 0.08);
   border-radius: 16px;
 }
 
+.preview-clip {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
 .preview-wrap {
+  display: block;
   max-height: 360px;
   min-width: 0;
+  width: 100%;
   max-width: 100%;
   overflow: hidden;
 }
 
 .preview-panel {
   min-width: 0;
+  width: 100%;
   max-width: 100%;
   overflow-x: hidden;
 }
 
 .preview-scroll-shell {
+  display: flex;
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  overflow-x: auto;
+  contain: inline-size layout;
+  overflow-x: auto !important;
   overflow-y: hidden;
 }
 
 .preview-table {
-  width: max-content;
-  min-width: 100%;
+  display: inline-table;
+  flex: 0 0 auto;
+  width: auto !important;
+  min-width: 100% !important;
+  max-width: none;
   table-layout: auto;
 }
 
 .preview-table th,
 .preview-table td {
   white-space: nowrap;
-  max-width: 220px;
+  max-width: 140px;
+  min-width: 80px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -6063,6 +6674,370 @@ th {
 
 .production-panel {
   gap: 14px;
+}
+
+.production-toolbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.production-subsection-toggle {
+  flex: 0 0 auto;
+}
+
+.production-analysis-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.production-analysis-panel {
+  gap: 14px;
+}
+
+.development-map-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.development-cell-card {
+  display: grid;
+  gap: 8px;
+  min-height: 132px;
+  padding: 14px;
+  border: 1px solid rgba(35, 50, 68, 0.1);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(47, 128, 255, 0.12), transparent 34%),
+    linear-gradient(180deg, #ffffff, #f8fbff);
+  color: #1d2f42;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.development-cell-card:hover,
+.development-cell-card.active {
+  border-color: rgba(47, 128, 255, 0.38);
+  box-shadow: 0 14px 34px rgba(33, 73, 126, 0.12);
+  transform: translateY(-1px);
+}
+
+.development-cell-card.active {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(47, 128, 255, 0.2), transparent 36%),
+    linear-gradient(180deg, #f7fbff, #eef6ff);
+}
+
+.development-cell-lu {
+  color: #6b7d93;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.development-cell-card strong {
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.development-cell-card em {
+  color: #68798d;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.development-cell-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.development-cell-metrics span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.development-cell-metrics small {
+  color: #73849a;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.development-cell-metrics b {
+  overflow: hidden;
+  color: #1b2c40;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.production-analysis-wrap {
+  max-height: 520px;
+}
+
+.production-analysis-table {
+  min-width: 920px;
+}
+
+.production-analysis-table th,
+.production-analysis-table td {
+  white-space: nowrap;
+}
+
+.production-analysis-table td:not(:first-child),
+.production-analysis-table th:not(:first-child) {
+  text-align: right;
+}
+
+.waterflood-overview-panel,
+.waterflood-network-panel,
+.waterflood-comparison-panel {
+  overflow: hidden;
+}
+
+.waterflood-method-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.waterflood-method-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(29, 47, 66, 0.08);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff, #f8fbff);
+}
+
+.waterflood-method-card span,
+.waterflood-cell-card span {
+  color: #71839a;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.waterflood-method-card strong {
+  color: #17263a;
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.waterflood-method-card small {
+  color: #6d7f96;
+  font-weight: 650;
+}
+
+.waterflood-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.waterflood-cell-list {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.waterflood-cell-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(35, 50, 68, 0.1);
+  border-radius: 16px;
+  background: #ffffff;
+  color: #1d2f42;
+  text-align: left;
+  cursor: pointer;
+}
+
+.waterflood-cell-card.active {
+  border-color: rgba(47, 128, 255, 0.48);
+  background: linear-gradient(180deg, #f7fbff, #edf6ff);
+  box-shadow: 0 14px 34px rgba(33, 73, 126, 0.12);
+}
+
+.waterflood-cell-card strong {
+  overflow: hidden;
+  color: #17263a;
+  font-size: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.waterflood-cell-metrics {
+  display: grid;
+  gap: 3px;
+}
+
+.waterflood-cell-metrics em {
+  color: #53667d;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.saturation-strip {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf2f7;
+}
+
+.saturation-strip .water {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #4fb7ff, #2f80ff);
+}
+
+.waterflood-network-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(35, 50, 68, 0.08);
+  border-radius: 18px;
+  background:
+    linear-gradient(rgba(22, 63, 105, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(22, 63, 105, 0.04) 1px, transparent 1px),
+    #ffffff;
+  background-size: 24px 24px;
+}
+
+.waterflood-network {
+  width: 100%;
+  min-width: 0;
+  height: 300px;
+}
+
+.waterflood-edge {
+  opacity: 0.78;
+  cursor: pointer;
+  fill: none;
+  transition: opacity 0.16s ease, stroke-width 0.16s ease;
+}
+
+.waterflood-edge:hover {
+  opacity: 1;
+}
+
+.waterflood-node circle {
+  stroke: #ffffff;
+  stroke-width: 4px;
+}
+
+.waterflood-node.producer circle {
+  fill: #27384d;
+}
+
+.waterflood-node.injector circle {
+  fill: #2f80ff;
+}
+
+.waterflood-node text {
+  fill: #1d2f42;
+  font-size: 13px;
+  font-weight: 800;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.86);
+  stroke-width: 4px;
+}
+
+.waterflood-link-inspector {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: inset 0 0 0 1px rgba(35, 50, 68, 0.08);
+}
+
+.waterflood-link-inspector strong,
+.waterflood-link-inspector span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.waterflood-link-inspector span {
+  color: #63768f;
+  font-weight: 700;
+}
+
+.waterflood-comparison-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.waterflood-comparison-table {
+  min-width: 1120px;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.waterflood-comparison-table th,
+.waterflood-comparison-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(35, 50, 68, 0.08);
+  white-space: nowrap;
+}
+
+.waterflood-comparison-table th {
+  color: #6f8096;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.waterflood-comparison-table td:not(:first-child),
+.waterflood-comparison-table th:not(:first-child) {
+  text-align: right;
+}
+
+.delta-cell {
+  font-weight: 800;
+}
+
+.delta-cell.positive {
+  color: #0a8a50;
+}
+
+.delta-cell.negative {
+  color: #b42318;
+}
+
+.delta-cell.neutral {
+  color: #6f8096;
+}
+
+@media (max-width: 1180px) {
+  .waterflood-layout,
+  .waterflood-network-card {
+    grid-template-columns: 1fr;
+  }
 }
 
 .legend {

@@ -1,0 +1,7 @@
+date,producer_id,q_oil,q_water,q_liq,q_gas,bhp,thp,p_res,status,measurement_quality
+2018-01-01,PROD_001,120,20,140,1000,180,40,245,active,good
+2018-01-01,PROD_002,95,30,125,800,175,38,242,active,good
+2018-01-01,PROD_003,70,15,85,500,170,35,240,active,good
+2018-02-01,PROD_001,118,22,140,980,179,40,244,active,good
+2018-02-01,PROD_002,93,32,125,790,174,38,241,active,good
+2018-02-01,PROD_003,69,16,85,495,170,35,239,active,good

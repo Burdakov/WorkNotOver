@@ -1,0 +1,5 @@
+date,injector_id,q_water_inj,bhp,whp,thp,status,measurement_quality
+2018-01-01,INJ_001,180,260,120,120,active,good
+2018-01-01,INJ_002,160,255,115,115,active,good
+2018-02-01,INJ_001,185,262,121,121,active,good
+2018-02-01,INJ_002,155,253,114,114,active,good

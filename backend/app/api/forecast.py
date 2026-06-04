@@ -10,6 +10,7 @@ from app.repositories.scenario_repository import ScenarioRepository
 from app.schemas.common import DatasetReference, ManualInputReference
 from app.schemas.forecast_models import ForecastCalculateRequest, ForecastCalculateResponse, ScenarioModelResponse
 from app.services.forecast_service import ForecastService
+from app.services.waterflood_proxy_service import WaterfloodProxyService
 
 router = APIRouter(prefix="/api/forecast", tags=["module-b"])
 
@@ -290,3 +291,8 @@ def get_scenario(scenario_id: str, db: Session = Depends(get_db)) -> dict:
         "metadata": result.metadata_json,
         "result_created_at": result.created_at.isoformat(),
     }
+
+
+@router.get("/waterflood/mock-analysis")
+def get_waterflood_mock_analysis(scenario_id: str | None = None) -> dict:
+    return WaterfloodProxyService().build_mock_analysis(scenario_id=scenario_id)

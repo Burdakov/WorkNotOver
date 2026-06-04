@@ -1091,21 +1091,32 @@ th {
   gap: 10px;
   align-items: end;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .upload-compact-row > * {
   min-width: 0;
+  max-width: 100%;
 }
 
 .upload-compact-row .compact-field {
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .upload-compact-row input,
 .upload-compact-row select {
+  display: block;
   width: 100%;
   min-width: 0;
   max-width: 100%;
+  inline-size: 100%;
+  field-sizing: fixed;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .upload-compact-row select {

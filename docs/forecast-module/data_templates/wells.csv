@@ -1,0 +1,6 @@
+well_id,well_type,x,y,z,cell_id,region_id,start_date,end_date,status,trajectory_type,heel_x,heel_y,toe_x,toe_y
+INJ_001,injector,534200,6678100,,CELL_01,R01,2018-01-01,,active,vertical,,,,
+INJ_002,injector,536900,6677900,,CELL_02,R01,2018-01-01,,active,vertical,,,,
+PROD_001,producer,535100,6678500,,CELL_01,R01,2018-01-01,,active,vertical,,,,
+PROD_002,producer,537500,6678200,,CELL_02,R01,2018-01-01,,active,vertical,,,,
+PROD_003,producer,540500,6679000,,CELL_03,R02,2018-01-01,,active,vertical,,,,

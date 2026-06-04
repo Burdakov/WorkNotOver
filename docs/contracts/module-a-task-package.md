@@ -2,13 +2,13 @@
 
 ## Модуль
 
-`Module A: Загрузка и нормализация Excel`
+`Module A: Загрузка и нормализация исходных файлов`
 
 ---
 
 ## Название задачи
 
-Реализовать нормализованный pipeline входных данных для Excel-источников и ручных конфигурационных вводов.
+Реализовать нормализованный pipeline входных данных для Excel/CSV/YAML-источников и ручных конфигурационных вводов.
 
 ---
 
@@ -16,7 +16,7 @@
 
 Создать первую production-ready версию import layer, которая:
 
-- принимает исходные Excel-файлы;
+- принимает исходные Excel/CSV/YAML-файлы;
 - принимает ручные вводные данные через UI-формы;
 - автоматически определяет или вручную сопоставляет нужные колонки;
 - валидирует входящие данные;
@@ -25,7 +25,7 @@
 - формирует warnings и validation details;
 - публикует стабильные контракты для downstream-модулей.
 
-`Module A` является единственной точкой входа структурированных исходных данных. Excel в нём рассматривается как `exchange format`, а ручные параметры — как `manual input configs`. Каноническое operational storage для `normalized datasets` и `manual inputs` — persistence layer проекта на `Postgres`. Нормализованные наборы данных и ручные вводные сохраняются в storage layer и затем используются `Module B`, `Module D` и `Module E`. В сценарном контуре эти данные косвенно доходят до `Module F: Planner` и `Module G: Сценарный UI и обратный пересчёт`, но сам `Module A` не должен знать их внутреннюю логику.
+`Module A` является единственной точкой входа структурированных исходных данных. Excel, CSV и YAML в нём рассматриваются как `exchange formats`, а ручные параметры — как `manual input configs`. Каноническое operational storage для `normalized datasets` и `manual inputs` — persistence layer проекта на `Postgres`. Нормализованные наборы данных и ручные вводные сохраняются в storage layer и затем используются `Module B`, `Module D` и `Module E`. В сценарном контуре эти данные косвенно доходят до `Module F: Planner` и `Module G: Сценарный UI и обратный пересчёт`, но сам `Module A` не должен знать их внутреннюю логику.
 
 ---
 
@@ -33,8 +33,15 @@
 
 ### Входит в задачу
 
-- загрузка и чтение Excel-файлов для:
+- загрузка и чтение Excel/CSV/YAML-файлов для:
   - текущего режима скважин;
+  - истории добычи;
+  - истории закачки;
+  - ячеек разработки / material-balance cells;
+  - PVT/SCAL/ROCK/region properties;
+  - ручных overrides injector-producer связей;
+  - конфигурации proxy-модели прогноза;
+  - forecast scenario definitions;
   - графика ГТМ / кандидатных мероприятий;
   - инфраструктурных ограничений;
   - внешнего готового графика КРС;
@@ -52,6 +59,13 @@
   - `WellPad`
 - формирование:
   - `NormalizedWellDataset`;
+  - `ProductionHistoryDataset`;
+  - `InjectionHistoryDataset`;
+  - `DevelopmentCellDataset`;
+  - `ReservoirPropertyDataset`;
+  - `WaterfloodConnectionOverrideDataset`;
+  - `ForecastModelConfigDataset`;
+  - `ForecastScenarioDefinitionDataset`;
   - `NormalizedGtmDataset`;
   - `NormalizedInfrastructureDataset`;
   - `ImportedKrsSchedulePayload`;
@@ -114,11 +128,141 @@ Excel-файл текущего режима скважин.
 - current liquid rate
 - current watercut
 
+Дополнительно обязательные для сценариев с `forecast_method = waterflood_proxy_hm`:
+
+- `well_type`: `producer` или `injector`
+- `x`
+- `y`
+- координатная система в dataset metadata или в конфигурации сценария
+
 Необязательные, но допустимые к загрузке:
 
 - current gas rate
 - current GOR
 - SLOY
+- `z`
+- `development_cell_id` / `cell_id`
+- `region_id`
+- `trajectory_type`
+- `heel_x`, `heel_y`, `toe_x`, `toe_y`
+
+### Входной источник 1A
+
+Файл истории добычи.
+
+Ожидаемые логические поля:
+
+- date
+- producer identifier
+- oil rate
+- water rate
+- liquid rate, если доступно
+- gas rate, если доступно
+- bottomhole pressure, если доступно
+- tubing/head pressure, если доступно
+- reservoir pressure `p_res`, если доступно
+- status
+- measurement quality
+
+Результат должен сохраняться как dataset с `dataset_type = production_history` и нормализоваться в `ProductionHistoryPoint[]`.
+
+### Входной источник 1B
+
+Файл истории закачки.
+
+Ожидаемые логические поля:
+
+- date
+- injector identifier
+- injection agent (`water` / `gas`)
+- water injection rate или gas injection rate
+- bottomhole / wellhead / tubing pressure, если доступно
+- status
+- measurement quality
+
+Результат должен сохраняться как dataset с `dataset_type = injection_history` и нормализоваться в `InjectionHistoryPoint[]`.
+
+### Входной источник 1C
+
+Файл ячеек разработки / material-balance cells.
+
+Ожидаемые логические поля:
+
+- development cell identifier
+- region identifier
+- pore volume
+- OOIP, если доступно
+- initial pressure
+- initial water saturation
+- initial oil saturation, если доступно
+- initial gas saturation, если доступно
+- total compressibility, если доступно
+- aquifer index, если доступно
+- area, thickness, porosity, NTG, если доступны
+
+Результат должен сохраняться как dataset с `dataset_type = development_cells` и нормализоваться в `DevelopmentCell[]`.
+
+### Входной источник 1D
+
+Файлы PVT/SCAL/ROCK/region properties.
+
+Поддерживаемые нормализованные шаблоны должны соответствовать `docs/forecast-module/data_templates/properties/`:
+
+- `density.csv`
+- `water_pvt.csv`
+- `oil_pvt.csv`
+- `gas_pvt.csv`
+- `rock.csv`
+- `swof.csv`
+- `sgof.csv`
+- `region_map.csv`
+
+Результат должен сохраняться как dataset с `dataset_type = reservoir_properties` и нормализоваться в `ReservoirPropertySet`.
+
+Правила:
+
+- Module A не должен молча создавать синтетические PVT/SCAL/ROCK свойства для production run;
+- extrapolation policy должна сохраняться в metadata и по умолчанию быть `error`;
+- region mappings должны быть валидированы до запуска Module B.
+
+### Входной источник 1E
+
+Файл ручных overrides injector-producer связей.
+
+Ожидаемые логические поля:
+
+- injector identifier
+- producer identifier
+- link type (`normal`, `screen`, `channel`, `unknown`)
+- active flag
+- manual alpha, если доступно
+- eta prior, если доступно
+- tau prior days, если доступно
+- PV prior, если доступно
+- prior weight
+- notes
+
+Результат должен сохраняться как dataset с `dataset_type = waterflood_connections`.
+
+### Входной источник 1F
+
+Файл конфигурации proxy-модели прогноза.
+
+Ожидаемый формат:
+
+- YAML/JSON или нормализованная табличная форма, совместимая по смыслу с `docs/forecast-module/config.example.yaml`.
+
+Результат должен сохраняться как `ForecastModelConfig` через `DatasetReference` или `ManualInputReference`.
+
+### Входной источник 1G
+
+Файл forecast scenarios.
+
+Ожидаемый формат:
+
+- YAML/JSON или нормализованная табличная форма, совместимая по смыслу с `docs/forecast-module/scenarios.example.yaml`.
+
+Результат должен сохраняться как dataset с `dataset_type = forecast_scenarios` и нормализоваться в `ForecastScenarioDefinition[]`.
 
 ### Входной источник 2
 
@@ -238,17 +382,59 @@ Excel-файл внешнего готового графика КРС.
 
 ### Выход 2
 
+`ProductionHistoryDataset`
+
+Содержит валидированный набор `ProductionHistoryPoint[]` для history matching.
+
+### Выход 3
+
+`InjectionHistoryDataset`
+
+Содержит валидированный набор `InjectionHistoryPoint[]` для расчёта закачки и history matching.
+
+### Выход 4
+
+`DevelopmentCellDataset`
+
+Содержит валидированный набор `DevelopmentCell[]`.
+
+### Выход 5
+
+`ReservoirPropertyDataset`
+
+Содержит `ReservoirPropertySet` с нормализованными PVT/SCAL/ROCK таблицами и `RegionMap`.
+
+### Выход 6
+
+`WaterfloodConnectionOverrideDataset`
+
+Содержит ручные overrides injector-producer связей. Первичная distance-based связность строится `Module B`, а не импортируется как единственный источник истины.
+
+### Выход 7
+
+`ForecastModelConfigReference`
+
+Содержит ссылку на сохранённый `ForecastModelConfig`.
+
+### Выход 8
+
+`ForecastScenarioDefinitionDataset`
+
+Содержит `ForecastScenarioDefinition[]`.
+
+### Выход 9
+
 `NizDataset`
 
 Содержит валидированный набор scenario-bound сущностей `NizByWell`, пригодных для связывания `well_name -> NIZ`, `well_name -> current_cumulative_oil` и `well_name -> current_cumulative_gas` внутри активного сценария.
 
-### Выход 3
+### Выход 10
 
 `NormalizedGtmDataset`
 
 Содержит валидированный набор нормализованных сущностей `GtmCandidate` c reference-полями иерархии `LU`, `SLOY`, `WellPad`.
 
-### Выход 4
+### Выход 11
 
 `NormalizedInfrastructureDataset`
 
@@ -257,7 +443,7 @@ Excel-файл внешнего готового графика КРС.
 - `InfrastructureObject[]`
 - `InfrastructureConnection[]`
 
-### Выход 5
+### Выход 12
 
 `ImportValidationReport`
 
@@ -270,19 +456,19 @@ Excel-файл внешнего готового графика КРС.
 - warnings;
 - fatal validation errors, если есть.
 
-### Выход 6
+### Выход 13
 
 `DatasetReference` / metadata сохранённого набора данных
 
 Должен позволять downstream-модулям и сценарному контуру работать уже с сохранённым dataset, а не с raw Excel-файлом.
 
-### Выход 7
+### Выход 14
 
 `ImportedKrsSchedulePayload`
 
 Должен позволять `Module F: Planner` открыть внешний график КРС как готовую planner-compatible schedule model без обязательного прохождения через `Module D`.
 
-### Выход 8
+### Выход 15
 
 `ManualInputReference`
 
@@ -317,7 +503,12 @@ Excel-файл внешнего готового графика КРС.
 11. `Module A` не должен вшивать forecast-, economics-, planner- или scenario-assumptions.
 12. Внешний готовый график КРС после нормализации должен сохраняться как `Dataset` / `DatasetVersion` с `dataset_type = external_krs_schedule` и иметь извлекаемую структуру `KrsScheduleScenario`.
 13. Ручной коэффициент отказности должен сохраняться как отдельная конфигурационная сущность в составе `ManualInputSet`, а не как неструктурированное поле UI.
-14. Dataset типа `niz` должен позволять построить полное scenario-bound отображение `well_name -> NIZ` для всех скважин, которые downstream-сценарий привяжет из `wells` и `gtm`; если такого покрытия нет, сценарный контур должен маркировать входы как неполные.
+14. Dataset типа `niz` должен позволять построить полное scenario-bound отображение `well_name -> NIZ` для всех скважин, которые downstream-сценарий привяжет из `wells` и `gtm`; если сценарий использует `legacy_decline_liquid` или явно требует `NIZ`, отсутствие такого покрытия должно маркировать входы как неполные.
+15. Для `forecast_method = waterflood_proxy_hm` `wells` dataset должен содержать добывающие и нагнетательные скважины с координатами `x/y` и явной координатной системой.
+16. Для `forecast_method = waterflood_proxy_hm` Module A должен валидировать production history, injection history, development cells и reservoir properties как отдельные dataset types.
+17. Module A не строит fitted participation coefficients и не выполняет history matching; он только нормализует ручные overrides и исходные данные для Module B.
+18. PVT/SCAL/ROCK таблицы не должны допускать silent extrapolation как нормальное состояние; extrapolation policy должна быть явно сохранена и учтена validation report.
+19. Forecast scenarios из YAML/JSON должны нормализоваться в structured `ForecastScenarioDefinition[]`, а не передаваться в Module B как raw text.
 
 ---
 
@@ -464,7 +655,7 @@ Excel-файл внешнего готового графика КРС.
 12. Ни raw Excel-, ни pandas-структуры, ни raw form-state не выходят за границы import layer.
 13. Unit- или service-level tests покрывают основные успешные, ошибочные, hierarchy-, gas-, external-krs- и persistence-сценарии.
 14. Документация по контракту `Module A` обновляется в той же задаче, что и реализация.
-15. Dataset `niz` может быть привязан к сценарию как отдельный вход и использоваться downstream-модулями как канонический источник `NIZ`.
+15. Dataset `niz` может быть привязан к сценарию как отдельный вход и использоваться downstream-модулями как канонический источник `NIZ`; для `waterflood_proxy_hm` он не заменяет PVT/SCAL/ROCK, history и material-balance inputs.
 
 ---
 
