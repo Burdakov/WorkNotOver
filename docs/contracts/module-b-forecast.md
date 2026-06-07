@@ -2,12 +2,14 @@
 
 ## Модуль
 
-`Module B: Waterflood proxy forecast, history matching и расчёт добычи`
+`Module B: OPM Flow hydrodynamic forecast и расчёт добычи`
 
 ## Назначение
 
-`Module B` владеет расчётной логикой прогноза добычи нефти, воды, жидкости, газа, `GOR`, обводнённости, пластового давления и material-balance diagnostics.
-Модуль формирует `ProductionScenario`, `WellForecastResult[]`, scenario-level результаты калибровки и совместимые outputs для downstream-модулей.
+`Module B` владеет расчётным контуром прогноза добычи нефти, воды, жидкости, газа, `GOR`, обводнённости, пластового давления, насыщенностей и material-balance diagnostics.
+Новая production-логика модуля строится вокруг внешнего гидродинамического симулятора `OPM Flow`: модуль подготавливает OPM/Eclipse-compatible case, запускает симулятор, импортирует raw results и сохраняет scenario-bound нормализованные результаты для downstream-модулей.
+
+Прежняя внутренняя liquid-decline / waterflood-proxy логика не является production-ядром. Она может оставаться только как legacy/reduced-order diagnostic path с явным `forecast_method`, чтобы не подменять результаты гидродинамического расчёта.
 
 ## Методические исходники для новой версии
 
@@ -32,6 +34,15 @@
 
 Основной контрактный метод расчёта:
 
+- `forecast_method = opm_flow_blackoil`
+- `Module B` формирует из нормализованных данных `Module A` расчётный OPM case: `RUNSPEC`, `GRID`, `PROPS`, `REGIONS`, `SOLUTION`, `SCHEDULE`, `SUMMARY`;
+- `Module B` запускает внешний `flow` executable, если он доступен в runtime environment;
+- raw OPM artifacts сохраняются неизменяемо в scenario/run storage;
+- importer переводит raw artifacts в нормализованные scenario-bound tables: well/field/group time series, grid static state, grid dynamic state, material balance by region/FIPNUM, RFT/connection diagnostics;
+- UI и downstream-модули читают только нормализованные результаты `SimulationRun`, а не выполняют forecast math повторно.
+
+Legacy/optional методика:
+
 - `forecast_method = waterflood_proxy_hm`
 - directed waterflood graph: нагнетательные скважины -> добывающие скважины;
 - первичная injector-producer связность строится по координатам скважин и радиусу влияния 3000 м;
@@ -53,11 +64,23 @@ Legacy-режим совместимости:
 - для новых скважин (`New wells`) liquid increment применяется по той же логике, что и для `Base`: на дату события к жидкости на дату прибавляется `expected_liquid_increment`; для события запуска этот инкремент может быть равен стартовому дебиту, если так задано входными сценарными данными.
 - если в `wells` dataset отсутствуют новые скважины, но они присутствуют в `gtm`, `Module B` обязан синтезировать для них прогнозные `WellState` внутри сценарного расчета и считать их как `New wells` от даты соответствующего GTM-события.
 
-Legacy-режим должен быть явно обозначен как `forecast_method = legacy_decline_liquid` в scenario metadata/result metadata и не должен подменять основную методику `waterflood_proxy_hm`.
+Legacy/proxy-режим должен быть явно обозначен как `forecast_method = legacy_decline_liquid` или `forecast_method = waterflood_proxy_hm` в scenario metadata/result metadata и не должен подменять основную методику `opm_flow_blackoil`.
 
 ## Входы
 
-Обязательные входы для основной методики `forecast_method = waterflood_proxy_hm`:
+Обязательные входы для основной production-методики `forecast_method = opm_flow_blackoil`:
+
+- `NormalizedWellDataset` со скважинами `producer` и `injector`, координатами и/или привязками к grid completions, достаточными для `WELSPECS`/`COMPDAT`;
+- `ProductionHistoryDataset`;
+- `InjectionHistoryDataset`;
+- `DevelopmentCellDataset` или полноценное grid/cell представление;
+- `ReservoirPropertyDataset` с PVT/SCAL/ROCK tables и `RegionMap`, совместимыми с `PROPS`/`REGIONS`;
+- `ForecastModelConfig` с настройками OPM case builder, runner и import policy;
+- `ForecastScenarioDefinition[]`;
+- schedule source: `NormalizedGtmDataset`, `KrsScheduleScenario`, `external_krs_schedule` или `PlannerScheduleRevision`;
+- optional `NizDataset` для отчетных/экономических разрезов, если сценарий требует NIZ.
+
+Входы optional/reduced-order режима `forecast_method = waterflood_proxy_hm`:
 
 - `NormalizedWellDataset` со скважинами `producer` и `injector`, координатами `x/y`, `cell_id`/`region_id` при наличии и явной координатной системой;
 - `ProductionHistoryDataset`;
@@ -82,6 +105,7 @@ Legacy-режим должен быть явно обозначен как `fore
 Шаблоны и смысл дополнительных входов описаны в `docs/forecast-module/PROMPT_MASTER.md`, `docs/forecast-module/config.example.yaml` и `docs/forecast-module/data_templates/`.
 
 Перед запуском расчета `Module B` сценарий должен пройти проверку полноты входов.
+Для `opm_flow_blackoil` отсутствие wells/completions, production history, injection history, grid/cells, PVT/SCAL/ROCK/regions, forecast config или schedule source должно блокировать production run.
 Для `waterflood_proxy_hm` отсутствие координат, production history, injection history, development cells, PVT/SCAL/ROCK properties или forecast config должно блокировать расчёт.
 Если у сценария с `external_krs_schedule` есть скважины, которые отсутствуют в `NormalizedWellDataset` или `NormalizedGtmDataset`, такой сценарий считается недозаполненным и в расчет не допускается.
 Для `legacy_decline_liquid` или сценариев, где `metadata.requires_niz = true`, отсутствие scenario-bound dataset типа `niz` или отсутствие значений `NIZ` для всех релевантных скважин считается недозаполненностью и в расчет не допускается.
@@ -92,6 +116,10 @@ Legacy-режим должен быть явно обозначен как `fore
 - `ProductionScenario`
 - `WellForecastResult[]`
 - `ScenarioProductionSummary`
+- `SimulationRun`
+- `OpmCaseManifest`
+- `SimulationArtifact[]`
+- `OpmImportResult`
 - `CalibrationResult`
 - `WaterfloodAnalysisPayload` для UI/diagnostics
 - fitted injector-producer connections / fitted edges
@@ -132,11 +160,26 @@ Legacy-режим должен быть явно обозначен как `fore
 
 - `GET /api/forecast/waterflood/mock-analysis?scenario_id=<id>`
 - возвращает synthetic `WaterfloodAnalysisPayload` для проверки UI и формы результата;
-- не является production run и должен быть заменён чтением сохранённого scenario-bound результата после полной реализации `waterflood_proxy_hm`.
+- не является production run и должен быть заменён чтением сохранённого scenario-bound результата после полной реализации `opm_flow_blackoil`.
+
+Template synthetic endpoint для раздела `Добыча -> Анализ и настройка`:
+
+- `POST /api/forecast/opm-flow/templates/synthetic-history`
+- принимает параметры `scenario_id`, `case_name`, `forecast_start_date`, `forecast_end_date`, `history_match_iterations`, `influence_radius_m`, веса `pressure_weight`, `watercut_weight`, `rate_weight`, `summary_vectors`, `run_external_flow`;
+- читает `docs/forecast-module/data_templates` (`wells.csv`, `production.csv`, `injection.csv`, `cells.csv`) или встроенный fallback в backend-контейнере;
+- создаёт `SimulationRun` и synthetic OPM/Eclipse-compatible include-файлы;
+- при `run_external_flow = true` вызывает внешний `flow` через `OPM_FLOW_EXECUTABLE`, сохраняет `stdout.txt`/`stderr.txt` в `SimulationRun.output_dir` и возвращает статус runner;
+- возвращает `simulation_run` и `WaterfloodAnalysisPayload` с `cells[]`, `wells[]`, `links[]`, `aggregates` для проверки связей, насыщенности, давления, запасов и факт-расчёт аналитики;
+- статус такого запуска должен явно маркироваться как synthetic/template diagnostic, пока отсутствует установленный OPM Flow runtime и полностью заполненный deck.
 
 ## Зона ответственности
 
 - data readiness validation для forecast inputs основной методики;
+- подготовка OPM/Eclipse-compatible case;
+- запуск `OPM Flow`;
+- импорт raw OPM artifacts в нормализованные результаты;
+- сохранение `SimulationRun`, raw artifacts и normalized artifacts;
+- формирование `ProductionScenario` из импортированных OPM summary/restart results;
 - coordinate-based injector-producer connectivity initialization;
 - расчёт distance-based `alpha_prior`, `tau_prior` и `pv_prior`;
 - применение manual/MRST/CRM priors как уточнений, а не замены обязательной координатной инициализации;
@@ -173,13 +216,24 @@ Legacy-режим должен быть явно обозначен как `fore
 
 ## Методика расчёта
 
-Основная методика Module B должна соответствовать `docs/forecast-module/PROMPT_MASTER.md`.
+Основная production-методика Module B должна соответствовать новой OPM-first архитектуре, основанной на `docs/forecast-module/PROMPT_MASTER.md`, но с явным изменением приоритета: внешний `OPM Flow` является расчетным ядром, а native/proxy модель является optional diagnostic/legacy path.
 Текущая жидкостная decline-методика ниже сохраняется как `legacy_decline_liquid` для совместимости со старыми сценариями и synthetic smoke tests.
 
 ### 1. Data contracts and validation
 
 Module B не читает raw Excel/CSV/YAML напрямую.
 Все входы приходят из Module A как normalized datasets, references или сохранённые manual/config entities.
+
+Для `opm_flow_blackoil` validation должна проверять:
+
+- наличие добывающих и нагнетательных скважин;
+- наличие grid/cell representation или достаточных данных для генерации `GRID`/`COMPDAT`;
+- наличие production history и injection history;
+- наличие PVT/SCAL/ROCK properties и region mapping;
+- наличие schedule source и forecast horizon;
+- возможность сформировать секции `RUNSPEC`, `GRID`, `PROPS`, `REGIONS`, `SOLUTION`, `SCHEDULE`, `SUMMARY`;
+- запрет silent defaults для критичных свойств флюидов, породы, насыщенности и регионов;
+- доступность `flow` executable для production run или явный режим `case_build_only`.
 
 Для `waterflood_proxy_hm` validation должна проверять:
 
@@ -477,3 +531,41 @@ Forecast scenarios должны поддерживать:
 19. При расчёте сценария с GTM `Module B` должен одновременно формировать связанный производный сценарий без GTM с именем `чистая База`, использовать те же scenario input bindings и временное окно и связывать его с исходным сценарием через `parent_scenario_id` и scenario metadata.
 20. Для сценарного UI слой `БАЗА` в разделе `Добыча` должен браться из сохранённых результатов связанного сценария `чистая База`, а не вычисляться в UI как `oil_rate - oil_increment`.
 21. Для сценарного UI слой `ГТМ` в разделе `Добыча` должен определяться как разница между сохранёнными результатами активного сценария и связанного сценария `чистая База` по фонду, отличному от `New wells`.
+
+---
+
+## Целевая схема новой версии: trajectory/perforation -> 1D OPM models
+
+Новая методическая ветка `Module B` строится как подготовка и пакетный запуск множества 1D OPM Flow моделей, привязанных к сценарию.
+
+Обязательная последовательность:
+
+1. `Module A` нормализует исходные datasets: `well_groups` / GRUP, `well_trajectories` / TRAJ, `perforations` / PERF, `production_history`, `injection_history`, начальные геологические запасы / `NIZ`, поровые объемы и свойства пласта.
+2. `Module B` пересекает траектории и перфорации и формирует `ContactInterval[]`; если в PERF нет LU/SLOY/well_pad, иерархия заполняется из `well_groups` по `well_name`.
+3. `Module B` строит первичную матрицу дренирования `Drainage1DConnection[]` между нагнетательными и добывающими скважинами.
+4. Первая догадка связности строится в радиусе `3000 m`; CRM / pywaterflood допускается только как optional adapter для уточнения prior.
+5. Начальные геологические запасы и поровый объем распределяются между связанными скважинами пропорционально `alpha` / `alpha_prior`.
+6. Закачка каждой нагнетательной скважины распределяется между связанными добывающими скважинами пропорционально `alpha` / `alpha_prior`.
+7. Для каждой связи injector-producer строится отдельная 1D OPM model spec, например `Ya_123 -> Ya_142`.
+8. Минимальная геометрия 1D модели: прямолинейный коридор между центрами контактных интервалов, `dx = 50 m`, `dy = 50 m`, `dz = 5 m`, `nx = ceil(distance / dx)`.
+9. После запуска набора OPM моделей выполняется автоадаптация по скважинам и агрегатам: факт/расчет по добыче, обводненности, давлениям и material balance.
+10. Если расчетное давление в добывающей скважине ниже факта, коэффициент участия соответствующих связей увеличивается; если выше факта — уменьшается.
+11. Если расчетная обводненность выше факта, параметры относительных фазовых проницаемостей / Corey multipliers корректируются в сторону замедления водного фронта; если ниже факта — в сторону ускорения.
+
+Формат исходных файлов для первичного загрузчика:
+
+- `GRUP_*.txt` нормализуется в `well_groups`; команда `GROUp <hierarchy...> <well_name>` хранит `well_name` в uppercase, последний hierarchy token мапится в `well_pad_id`, предыдущий при наличии — в `sloy_id`, уровни выше — в `lu_id` / infrastructure context.
+- `TRAJ_*.txt` нормализуется в `well_trajectories`; порядок числовых колонок строго `X, Y, Z, MD`.
+- `PERF_*.txt` нормализуется в `perforations`; строки `PERF` дают `top_md`, `bottom_md`, `diameter`, `skin`, `multiplier`, `flow_direction`; точные дубли интервалов пропускаются.
+- `Hist_Prod.xlsx` нормализуется в два dataset: `production_history` по положительным добычным объемам и `injection_history` по положительной закачке воды.
+- Все объемы истории принимаются в `m3`, давления в `bar`, `Кэкспл` нормализуется как `wefac`.
+- Все `well_name` и иерархические идентификаторы нормализуются в uppercase.
+
+Техническая граница текущего backend:
+
+- endpoint подготовки без запуска OPM: `POST /api/forecast/opm-flow/scenarios/{scenario_id}/drainage-1d/prepare`;
+- scenario-bound endpoint подготовки без запуска OPM: `POST /api/forecast/opm-flow/scenarios/{scenario_id}/drainage-1d/prepare-from-context`;
+- вход: нормализованные строки `well_groups`, `trajectories`, `perforations`, `production_history`, `injection_history`, optional reserves / pore volumes;
+- для `prepare-from-context` входные строки берутся из `ScenarioInputBindings`: `well_groups_dataset`, `well_trajectories_dataset`, `perforations_dataset`, `production_history_dataset`, `injection_history_dataset`, optional `niz_dataset`;
+- выход: `ContactInterval[]`, `Drainage1DConnection[]`, `Drainage1DModelSpec[]`, `diagnostics`;
+- запуск batch OPM и итерационная автоадаптация являются следующим слоем поверх подготовленных `Drainage1DModelSpec`.

@@ -104,7 +104,10 @@
 - initial participation of each base well is controlled by scenario-bound field `fund_state` from the wells dataset;
 - canonical upload order for legacy/GTM branch inside Scenario UI is `wells -> gtm -> niz`;
 - inside the legacy Scenario UI input chain the loading order must be visualized as `wells -> gtm -> niz -> displacement config -> KRS -> infrastructure -> economics`;
-- canonical upload order for `waterflood_proxy_hm` branch is `wells -> production history -> injection history -> development cells -> reservoir properties -> forecast model config -> forecast scenarios -> optional connection overrides`;
+- canonical upload order for `waterflood_proxy_hm` / drainage-1D branch is `wells -> well_groups / GRUP -> well trajectories / TRAJ -> perforations / PERF -> production history -> injection history -> NIZ / pore volumes -> reservoir properties -> forecast model config -> forecast scenarios -> optional connection overrides`;
+- `well_groups / GRUP` maps group hierarchy to `well_pad`; if a layer is present in GRUP it is mapped to `sloy_id` between field/LU and well_pad, and preparation/processing objects in the same hierarchy are mapped to infrastructure context;
+- `TRAJ` text order is fixed as `X, Y, Z, MD`; all normalized well names and hierarchy identifiers in the drainage-1D branch must be uppercase;
+- production / injection volumes are normalized as `m3`, pressure as `bar`; `Кэкспл` is normalized as `wefac` and represents worked time divided by calendar month time;
 - normalized production history dataset;
 - normalized injection history dataset;
 - normalized development cells dataset;
@@ -122,41 +125,44 @@
 
 ---
 
-## Module B: Waterflood proxy forecast, history matching и расчёт добычи
+## Module B: OPM Flow hydrodynamic forecast и расчёт добычи
 
 Зона ответственности:
 
-- построение первичной injector-producer связности по координатам;
-- расчёт distance-based `alpha_prior`, `tau_prior` и `pv_prior`;
-- расчёт native waterflood proxy model;
-- PVT/SCAL/ROCK validation and evaluation;
-- расчёт material-balance pressure по cell/region;
-- расчёт насыщенности, обводнённости, газа и `GOR`;
-- history matching по watercut, `p_res`, rates и material balance;
-- расчёт forecast scenarios с injection schedules, producer constraints, shut-ins, conversions, link changes и pressure constraints;
+- подготовка OPM/Eclipse-compatible case из нормализованных данных `Module A`;
+- генерация `RUNSPEC`, `GRID`, `PROPS`, `REGIONS`, `SOLUTION`, `SCHEDULE`, `SUMMARY`;
+- запуск внешнего симулятора `OPM Flow` через `flow` executable;
+- сохранение raw OPM artifacts как неизменяемого scenario/run evidence;
+- импорт `.EGRID`, `.INIT`, `.SMSPEC`, `.UNSMRY`, `.UNRST`, `.RFT`, `.PRT/.LOG` в нормализованные scenario-bound результаты;
+- формирование well/field/group time series, grid static state, grid dynamic state, material balance by region/FIPNUM и diagnostics;
+- расчёт forecast scenarios с injection schedules, producer constraints, shut-ins, conversions, link changes и pressure constraints через schedule/deck;
+- optional reduced-order diagnostics по waterflood proxy, если явно включены;
 - legacy-режим `legacy_decline_liquid` для совместимости со старым контуром;
 - автоматическое формирование связанного сценария `чистая База` без GTM для сценарного сравнения и отображения слоя `БАЗА`;
 - расчёт инкрементальных и накопленных эффектов по нефти, газу и жидкости;
-- формирование `ProductionScenario`.
+- формирование `SimulationRun` и `ProductionScenario` на основании импортированных результатов OPM.
 
 Выход:
 
 - скважинные профили;
 - агрегированный профиль;
-- `CalibrationResult`;
-- `WaterfloodAnalysisPayload` для UI-диагностики ячеек, связей, насыщенности, давления и факт-расчёт аналитики;
-- fitted injector-producer connections;
-- material balance by cell/region;
-- history match diagnostics;
+- `SimulationRun`;
+- `SimulationArtifact[]`;
+- `OpmCaseManifest`;
+- `OpmImportResult`;
+- `WaterfloodAnalysisPayload` / `ReservoirSimulationAnalysisPayload` для UI-диагностики ячеек, связей, насыщенности, давления и факт-расчёт аналитики;
+- material balance by cell/region/FIPNUM;
+- history/forecast diagnostics;
 - эффекты по мероприятиям;
 - результат расчётного сценария.
 
 Внешние open source инструменты:
 
 - optional source trees хранятся отдельно в `external_tools/` и описываются `external_tools/manifest.json`;
-- native `Module B` не должен требовать OPM, MRST, pywaterflood или res2df для базового запуска и базовых тестов;
-- external tools используются только optional adapters / validation path: OPM для deck/property conventions, MRST для flow diagnostics priors, pywaterflood для CRM/Buckley-Leverett helpers, res2df для импорта результатов;
-- код backend должен деградировать gracefully, если эти инструменты не установлены как runtime dependencies.
+- production path `Module B` требует доступного `OPM Flow` runtime для реального гидродинамического расчёта;
+- backend должен уметь валидировать и готовить case без запуска `flow`, чтобы base tests не требовали внешнего симулятора;
+- `res2df` / `opm.io` используются как optional importer layer для OPM/Eclipse results;
+- MRST и pywaterflood не являются расчетным ядром; они могут использоваться только как optional diagnostics/prior adapters.
 
 ---
 
@@ -346,6 +352,28 @@ F -> G
 G -> B
 G -> C
 ```
+
+### Module B: новая drainage-1D ветка
+
+Внутри `A -> B` для новой версии прогноза добычи действует дополнительная подготовительная цепочка:
+
+```text
+well trajectories
+  + perforations
+  + production history
+  + injection history
+  + reserves / pore volumes / properties
+  -> ContactInterval
+  -> Drainage1DConnection matrix
+  -> Drainage1DModelSpec[]
+  -> batch OPM Flow runs
+  -> history matching / calibration
+  -> normalized scenario-bound production outputs
+```
+
+Эта ветка остается частью `Module B`.
+CRM / pywaterflood и аналогичные инструменты являются optional adapters для формирования или уточнения prior-матрицы связности, но не заменяют scenario-bound подготовку данных и запуск OPM Flow.
+Scenario-bound подготовка запускается через `POST /api/forecast/opm-flow/scenarios/{scenario_id}/drainage-1d/prepare-from-context`, который читает нормализованные входы из `ScenarioInputBindings`.
 
 ---
 

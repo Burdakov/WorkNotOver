@@ -31,6 +31,7 @@ router = APIRouter(prefix="/api/scenarios", tags=["scenarios"])
 _SCENARIO_CONTEXT_KEY = "scenario_context"
 _PURE_BASE_SCENARIO_NAME = "чистая База"
 _PURE_BASE_SCENARIO_ROLE = "pure_base"
+_NEW_FORECAST_METHODS = {"waterflood_proxy_hm", "opm_flow_blackoil", "opm_flow_1d_drainage"}
 
 
 def get_db():
@@ -44,11 +45,16 @@ def get_db():
 def _context_to_response(context: dict[str, Any] | None) -> ScenarioContextResponse:
     context = context or {}
     return ScenarioContextResponse(
+        well_groups_dataset=DatasetReference(**context["well_groups_dataset"]) if context.get("well_groups_dataset") else None,
         wells_dataset=DatasetReference(**context["wells_dataset"]) if context.get("wells_dataset") else None,
         niz_dataset=DatasetReference(**context["niz_dataset"]) if context.get("niz_dataset") else None,
         gtm_dataset=DatasetReference(**context["gtm_dataset"]) if context.get("gtm_dataset") else None,
         infrastructure_dataset=DatasetReference(**context["infrastructure_dataset"]) if context.get("infrastructure_dataset") else None,
         external_krs_schedule_dataset=DatasetReference(**context["external_krs_schedule_dataset"]) if context.get("external_krs_schedule_dataset") else None,
+        well_trajectories_dataset=DatasetReference(**context["well_trajectories_dataset"]) if context.get("well_trajectories_dataset") else None,
+        perforations_dataset=DatasetReference(**context["perforations_dataset"]) if context.get("perforations_dataset") else None,
+        production_history_dataset=DatasetReference(**context["production_history_dataset"]) if context.get("production_history_dataset") else None,
+        injection_history_dataset=DatasetReference(**context["injection_history_dataset"]) if context.get("injection_history_dataset") else None,
         manual_input_set=ManualInputReference(**context["manual_input_set"]) if context.get("manual_input_set") else None,
     )
 
@@ -241,6 +247,7 @@ def _extract_external_schedule_items(payload: Any) -> list[dict[str, Any]]:
 
 def _build_input_validation_legacy(db: Session, scenario, context: ScenarioContextResponse) -> ScenarioInputValidationResponse:
     validation = ScenarioInputValidationResponse(
+        well_groups=_make_input_node_validation("ready" if context.well_groups_dataset else "empty"),
         wells=_make_input_node_validation("ready" if context.wells_dataset else "empty"),
         gtm=_make_input_node_validation("ready" if context.gtm_dataset else "empty"),
         infrastructure=_make_input_node_validation("ready" if context.infrastructure_dataset else "empty"),
@@ -314,34 +321,55 @@ def _build_input_validation_legacy(db: Session, scenario, context: ScenarioConte
 
 def _build_input_validation(db: Session, scenario, context: ScenarioContextResponse) -> ScenarioInputValidationResponse:
     validation = ScenarioInputValidationResponse(
+        well_groups=_make_input_node_validation("ready" if context.well_groups_dataset else "empty"),
         wells=_make_input_node_validation("ready" if context.wells_dataset else "empty"),
         niz=_make_input_node_validation("ready" if context.niz_dataset else "empty"),
         gtm=_make_input_node_validation("ready" if context.gtm_dataset else "empty"),
         infrastructure=_make_input_node_validation("ready" if context.infrastructure_dataset else "empty"),
         external_krs_schedule=_make_input_node_validation("ready" if context.external_krs_schedule_dataset else "empty"),
+        well_trajectories=_make_input_node_validation("ready" if context.well_trajectories_dataset else "empty"),
+        perforations=_make_input_node_validation("ready" if context.perforations_dataset else "empty"),
+        production_history=_make_input_node_validation("ready" if context.production_history_dataset else "empty"),
+        injection_history=_make_input_node_validation("ready" if context.injection_history_dataset else "empty"),
         manual_input_set=_make_input_node_validation("ready" if context.manual_input_set else "empty"),
     )
 
-    scenario_mode = str((scenario.metadata_json or {}).get("scenario_source_mode") or "")
+    metadata = scenario.metadata_json or {}
+    forecast_method = str(metadata.get("forecast_method") or "legacy_decline_liquid")
+    is_new_forecast_method = forecast_method in _NEW_FORECAST_METHODS
+    scenario_mode = str(metadata.get("scenario_source_mode") or "")
     requires_external = scenario_mode == "existing_krs"
 
     issues: list[str] = []
-    if validation.wells.state != "ready":
+    if validation.wells.state != "ready" and forecast_method != "opm_flow_1d_drainage":
         issue = "Не привязан dataset wells."
         _add_node_issue(validation.wells, issue)
         issues.append(issue)
-    if validation.niz.state != "ready":
+    if validation.niz.state != "ready" and forecast_method != "opm_flow_1d_drainage":
         issue = "Не привязан dataset NIZ."
         _add_node_issue(validation.niz, issue)
         issues.append(issue)
-    if validation.gtm.state != "ready":
-        issue = "Не привязан dataset GTM."
-        _add_node_issue(validation.gtm, issue)
-        issues.append(issue)
-    if validation.manual_input_set.state != "ready":
-        issue = "Не привязан ManualInputSet."
-        _add_node_issue(validation.manual_input_set, issue)
-        issues.append(issue)
+    if is_new_forecast_method:
+        required_new_nodes = [
+            (validation.well_groups, "Не привязан dataset well_groups."),
+            (validation.well_trajectories, "Не привязан dataset well_trajectories."),
+            (validation.perforations, "Не привязан dataset perforations."),
+            (validation.production_history, "Не привязан dataset production_history."),
+            (validation.injection_history, "Не привязан dataset injection_history."),
+        ]
+        for node, issue in required_new_nodes:
+            if node.state != "ready":
+                _add_node_issue(node, issue)
+                issues.append(issue)
+    else:
+        if validation.gtm.state != "ready":
+            issue = "Не привязан dataset GTM."
+            _add_node_issue(validation.gtm, issue)
+            issues.append(issue)
+        if validation.manual_input_set.state != "ready":
+            issue = "Не привязан ManualInputSet."
+            _add_node_issue(validation.manual_input_set, issue)
+            issues.append(issue)
     if requires_external and validation.external_krs_schedule.state != "ready":
         issue = "Для сценария с внешним графиком КРС должен быть привязан dataset external_krs_schedule."
         _add_node_issue(validation.external_krs_schedule, issue)
@@ -538,6 +566,12 @@ def _build_context_from_request(
     context = dict(existing_context or {})
     if bindings.wells is not None:
         context["wells_dataset"] = _resolve_dataset_reference(db, bindings.wells, expected_type="wells").model_dump()
+    if bindings.well_groups is not None:
+        context["well_groups_dataset"] = _resolve_dataset_reference(
+            db,
+            bindings.well_groups,
+            expected_type="well_groups",
+        ).model_dump()
     if bindings.niz is not None:
         context["niz_dataset"] = _resolve_dataset_reference(db, bindings.niz, expected_type="niz").model_dump()
     if bindings.gtm is not None:
@@ -549,6 +583,30 @@ def _build_context_from_request(
             db,
             bindings.external_krs_schedule,
             expected_type="external_krs_schedule",
+        ).model_dump()
+    if bindings.well_trajectories is not None:
+        context["well_trajectories_dataset"] = _resolve_dataset_reference(
+            db,
+            bindings.well_trajectories,
+            expected_type="well_trajectories",
+        ).model_dump()
+    if bindings.perforations is not None:
+        context["perforations_dataset"] = _resolve_dataset_reference(
+            db,
+            bindings.perforations,
+            expected_type="perforations",
+        ).model_dump()
+    if bindings.production_history is not None:
+        context["production_history_dataset"] = _resolve_dataset_reference(
+            db,
+            bindings.production_history,
+            expected_type="production_history",
+        ).model_dump()
+    if bindings.injection_history is not None:
+        context["injection_history_dataset"] = _resolve_dataset_reference(
+            db,
+            bindings.injection_history,
+            expected_type="injection_history",
         ).model_dump()
     if bindings.manual_input_set_id is not None:
         context["manual_input_set"] = _resolve_manual_input_reference(db, bindings.manual_input_set_id).model_dump()

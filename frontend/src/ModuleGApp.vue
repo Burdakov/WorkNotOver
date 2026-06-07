@@ -28,6 +28,45 @@ const WATERFLOOD_AGGREGATE_LEVELS = [
 ]
 const WATERFLOOD_NETWORK_WIDTH = 920
 const WATERFLOOD_NETWORK_HEIGHT = 300
+const OPM_ANALYSIS_MAP_WIDTH = 1100
+const OPM_ANALYSIS_MAP_HEIGHT = 520
+const OPM_ANALYSIS_PROPERTIES = [
+  { key: 'pressure', label: 'Давление', kind: 'dynamic', unit: 'бар' },
+  { key: 'saturation', label: 'Насыщенность', kind: 'dynamic', unit: 'д. ед.' },
+  { key: 'pore_volume', label: 'Поровый объем', kind: 'static', unit: 'м3' },
+  { key: 'permeability', label: 'Проницаемость', kind: 'static', unit: 'мД' },
+]
+const OPM_ANALYSIS_GROUP_LEVELS = [
+  { key: 'lu', label: 'LU' },
+  { key: 'pad', label: 'Куст' },
+  { key: 'well', label: 'Скважина' },
+]
+const HISTORY_CHART_WIDTH = 1280
+const HISTORY_CHART_HEIGHT = 360
+const HISTORY_CHART_LEFT = 84
+const HISTORY_CHART_RIGHT = 260
+const HISTORY_CHART_TOP = 26
+const HISTORY_CHART_BOTTOM = 58
+const HISTORY_METRIC_OPTIONS = [
+  { key: 'q_oil', label: 'Нефть', unit: 'м3/мес', color: '#166534', aggregate: 'sum', axis: 'liquid' },
+  { key: 'q_water', label: 'Вода добыча', unit: 'м3/мес', color: '#0284c7', aggregate: 'sum', axis: 'liquid' },
+  { key: 'q_liq', label: 'Жидкость', unit: 'м3/мес', color: '#0f766e', aggregate: 'sum', axis: 'liquid' },
+  { key: 'q_gas', label: 'Газ', unit: 'м3/мес', color: '#9333ea', aggregate: 'sum', axis: 'gas' },
+  { key: 'q_water_inj', label: 'Закачка воды', unit: 'м3/мес', color: '#2563eb', aggregate: 'sum', axis: 'liquid' },
+  { key: 'watercut', label: 'Обводненность', unit: '%', color: '#f97316', aggregate: 'ratio', axis: 'watercut' },
+  { key: 'bhp', label: 'BHP', unit: 'бар', color: '#dc2626', aggregate: 'avg', axis: 'pressure' },
+  { key: 'thp', label: 'THP', unit: 'бар', color: '#ea580c', aggregate: 'avg', axis: 'pressure' },
+  { key: 'whp', label: 'WHP', unit: 'бар', color: '#ca8a04', aggregate: 'avg', axis: 'pressure' },
+  { key: 'p_res', label: 'Рпл', unit: 'бар', color: '#0891b2', aggregate: 'avg', axis: 'pressure' },
+  { key: 'wefac', label: 'WEFAC', unit: 'д. ед.', color: '#475569', aggregate: 'avg', axis: 'wefac' },
+]
+const HISTORY_AXIS_CONFIGS = [
+  { key: 'liquid', label: 'Объемы', unit: 'м3/мес', side: 'left', color: '#0f766e', zeroBase: true },
+  { key: 'gas', label: 'Газ', unit: 'м3/мес', side: 'right', color: '#9333ea', zeroBase: true },
+  { key: 'pressure', label: 'Давления', unit: 'бар', side: 'right', color: '#dc2626', zeroBase: false },
+  { key: 'watercut', label: 'Обводненность', unit: '%', side: 'right', color: '#f97316', zeroBase: true, defaultMin: 0, defaultMax: 100 },
+  { key: 'wefac', label: 'WEFAC', unit: 'д. ед.', side: 'right', color: '#475569', zeroBase: true, defaultMin: 0, defaultMax: 1 },
+]
 const DEFAULT_PLANNER_COLUMNS = {
   brigade: 'Бригада',
   area: 'Участок',
@@ -55,6 +94,31 @@ const SOURCE_KIND_META = {
     description: 'Формирует dataset типа wells для Module B.',
     fields: ['well', 'lu', 'well_pad', 'fund_state', 'oil_rate', 'liquid_rate', 'watercut', 'gas_rate', 'gor', 'sloy'],
   },
+  well_groups: {
+    title: 'GRUP / группы скважин',
+    description: 'TXT GRUP: иерархия скважин. Последний group перед скважиной мапится в well_pad, предыдущий уровень в SLOY, уровни выше в LU / infrastructure.',
+    fields: ['group', 'lu', 'sloy', 'well_pad', 'well', 'object_name', 'object_type', 'parent_object'],
+  },
+  well_trajectories: {
+    title: 'Well trajectories',
+    description: 'Normalized well trajectory points for Module B contact interval and 1D model preparation.',
+    fields: ['well', 'trajectory_point_id', 'md', 'x', 'y', 'z'],
+  },
+  perforations: {
+    title: 'Perforations',
+    description: 'Normalized perforation intervals used to intersect wells with reservoir contact intervals.',
+    fields: ['well', 'perforation_id', 'lu', 'sloy', 'well_pad', 'top_md', 'bottom_md', 'start_date', 'end_date'],
+  },
+  production_history: {
+    title: 'Production history',
+    description: 'Normalized production history for Module B history matching.',
+    fields: ['date', 'well', 'producer_id', 'q_oil', 'q_water', 'q_liq', 'q_gas', 'bhp', 'thp', 'p_res', 'wefac'],
+  },
+  injection_history: {
+    title: 'Injection history',
+    description: 'Normalized injection history for injector-producer allocation and 1D model preparation.',
+    fields: ['date', 'well', 'injector_id', 'q_water_inj', 'bhp', 'whp', 'thp', 'p_res', 'wefac'],
+  },
   niz: {
     title: 'Р—Р°РіСЂСѓР·РёС‚СЊ NIZ РїРѕ СЃРєРІР°Р¶РёРЅР°Рј',
     description: 'Р¤РѕСЂРјРёСЂСѓРµС‚ scenario-bound dataset С‚РёРїР° niz. РљР°Р¶РґР°СЏ СЃРєРІР°Р¶РёРЅР° РёР· wells Рё GTM РґРѕР»Р¶РЅР° РёРјРµС‚СЊ СЃРІРѕС‘ Р·РЅР°С‡РµРЅРёРµ NIZ.',
@@ -77,6 +141,7 @@ SOURCE_KIND_META.niz.description = 'Формирует scenario-bound dataset т
 
 const MAPPING_LABELS = {
   well: 'Скважина',
+  group: 'Group / GRUP',
   area: 'Участок',
   lu: 'LU',
   sloy: 'SLOY',
@@ -110,9 +175,31 @@ const MAPPING_LABELS = {
   capacity_water: 'Мощность по воде',
   connection_well: 'Связанная скважина',
   parent_object: 'Родительский объект',
+  date: 'Date',
+  producer_id: 'Producer',
+  injector_id: 'Injector',
+  q_oil: 'Oil rate',
+  q_water: 'Water rate',
+  q_liq: 'Liquid rate',
+  q_gas: 'Gas rate',
+  q_water_inj: 'Water injection',
+  bhp: 'BHP',
+  thp: 'THP',
+  whp: 'WHP',
+  p_res: 'Reservoir pressure',
+  wefac: 'Кэкспл / WEFAC',
+  md: 'Measured depth',
+  top_md: 'Top MD',
+  bottom_md: 'Bottom MD',
+  x: 'X',
+  y: 'Y',
+  z: 'Z/TVD',
+  trajectory_point_id: 'Trajectory point ID',
+  perforation_id: 'Perforation ID',
 }
 const FRONTEND_MAPPING_HINTS = {
   well: ['скв', 'скваж', 'well'],
+  group: ['group', 'grup'],
   area: ['участок', 'area'],
   lu: ['участок недр', 'лу', 'lu'],
   sloy: ['слой', 'пласт', 'sloy'],
@@ -146,19 +233,50 @@ const FRONTEND_MAPPING_HINTS = {
   capacity_water: ['мощн', 'вода'],
   connection_well: ['связанная скважина', 'скв'],
   parent_object: ['родител', 'parent'],
+  date: ['date', 'дата'],
+  producer_id: ['producer'],
+  injector_id: ['injector'],
+  q_oil: ['q_oil', 'oil', 'дебит нефти'],
+  q_water: ['q_water', 'water', 'дебит воды'],
+  q_liq: ['q_liq', 'liquid', 'дебит жидкости'],
+  q_gas: ['q_gas', 'gas', 'дебит газа'],
+  q_water_inj: ['inj', 'water injection', 'закачка воды'],
+  bhp: ['bhp', 'рзаб'],
+  thp: ['thp'],
+  whp: ['whp', 'wellhead'],
+  p_res: ['p_res', 'рпл'],
+  wefac: ['кэкспл', 'wefac'],
+  md: ['md', 'measured depth'],
+  top_md: ['top md'],
+  bottom_md: ['bottom md'],
+  x: ['x'],
+  y: ['y'],
+  z: ['z', 'tvd'],
+  trajectory_point_id: ['trajectory', 'point id'],
+  perforation_id: ['perforation', 'perf'],
 }
 const REQUIRED_MAPPING_FIELDS = {
   wells: ['well', 'lu', 'well_pad', 'fund_state', 'oil_rate', 'liquid_rate', 'watercut'],
+  well_groups: ['well', 'well_pad'],
   niz: ['well', 'lu', 'well_pad', 'niz'],
   gtm: ['well', 'lu', 'sloy', 'well_pad', 'gtm_type', 'start_date', 'end_date', 'increment', 'liquid_increment'],
   infrastructure: ['object_name', 'object_type'],
   external_krs_schedule: ['brigade', 'well', 'start_date', 'end_date', 'planned_work'],
+  well_trajectories: ['well', 'md', 'x', 'y', 'z'],
+  perforations: ['well', 'top_md', 'bottom_md'],
+  production_history: ['date', 'well', 'q_oil'],
+  injection_history: ['date', 'well', 'q_water_inj'],
 }
 const DATASET_REQUIRED_VALUE_FIELDS = {
   wells: ['well_name', 'lu_id', 'well_pad_id', 'fund_state', 'current_oil_rate', 'current_liquid_rate', 'current_watercut'],
+  well_groups: ['well_name', 'well_pad_id'],
   niz: ['well_name', 'lu_id', 'well_pad_id', 'niz'],
   gtm: ['well_name', 'lu_id', 'sloy_id', 'well_pad_id', 'gtm_type', 'start_date', 'end_date', 'increment', 'liquid_increment'],
   infrastructure: ['object_name', 'object_type'],
+  well_trajectories: ['well_name', 'md', 'x', 'y', 'z'],
+  perforations: ['well_name', 'top_md', 'bottom_md'],
+  production_history: ['date', 'well_name', 'q_oil'],
+  injection_history: ['date', 'well_name', 'q_water_inj'],
 }
 const DATASET_NUMERIC_FIELDS = new Set([
   'current_oil_rate',
@@ -171,6 +289,21 @@ const DATASET_NUMERIC_FIELDS = new Set([
   'capacity_gas',
   'capacity_liquid',
   'capacity_water',
+  'md',
+  'top_md',
+  'bottom_md',
+  'x',
+  'y',
+  'z',
+  'q_oil',
+  'q_water',
+  'q_liq',
+  'q_gas',
+  'q_water_inj',
+  'bhp',
+  'thp',
+  'whp',
+  'p_res',
 ])
 const DATASET_FIELD_LABEL_KEYS = {
   well_name: 'well',
@@ -470,22 +603,33 @@ const manualNizRows = ref([])
 
 const selectedDatasets = reactive({
   wells: null,
+  well_groups: null,
   niz: null,
   gtm: null,
   infrastructure: null,
   external_krs_schedule: null,
+  well_trajectories: null,
+  perforations: null,
+  production_history: null,
+  injection_history: null,
 })
 const selectedDatasetKeys = reactive({
   wells: '',
+  well_groups: '',
   niz: '',
   gtm: '',
   infrastructure: '',
   external_krs_schedule: '',
+  well_trajectories: '',
+  perforations: '',
+  production_history: '',
+  injection_history: '',
 })
 const wellsFundStateFilter = ref('all')
 
 const normalizeColumns = reactive({
   well: '',
+  group: '',
   area: '',
   lu: '',
   sloy: '',
@@ -519,6 +663,27 @@ const normalizeColumns = reactive({
   capacity_water: '',
   connection_well: '',
   parent_object: '',
+  date: '',
+  producer_id: '',
+  injector_id: '',
+  q_oil: '',
+  q_water: '',
+  q_liq: '',
+  q_gas: '',
+  q_water_inj: '',
+  bhp: '',
+  thp: '',
+  whp: '',
+  p_res: '',
+  wefac: '',
+  md: '',
+  top_md: '',
+  bottom_md: '',
+  x: '',
+  y: '',
+  z: '',
+  trajectory_point_id: '',
+  perforation_id: '',
 })
 
 const manualInputName = ref(`Вводные ${isoToday()}`)
@@ -571,6 +736,30 @@ const selectedDevelopmentCellKey = ref('')
 const hoveredProductionBucketDate = ref('')
 const waterfloodAnalysis = ref(null)
 const waterfloodLoading = ref(false)
+const opmSimulationLoading = ref(false)
+const opmSimulationRun = ref(null)
+const drainagePreparationLoading = ref(false)
+const drainagePreparation = ref(null)
+const opmAnalysisProperty = ref('pressure')
+const opmAnalysisGroupLevel = ref('well')
+const selectedDrainageConnectionId = ref('')
+const selectedDrainageMatrixKey = ref('drainage:total')
+const expandedDrainageKeys = ref([])
+const selectedHistoryMetricKeys = ref(HISTORY_METRIC_OPTIONS.map((item) => item.key))
+const historyDateFrom = ref('')
+const historyDateTo = ref('')
+const historyAxisRanges = reactive(Object.fromEntries(HISTORY_AXIS_CONFIGS.map((axis) => [axis.key, { min: '', max: '' }])))
+const opmSimulationForm = reactive({
+  case_name: 'data_templates_opm_synthetic',
+  forecast_start_date: '2018-01-01',
+  forecast_end_date: '2018-03-01',
+  history_match_iterations: 12,
+  influence_radius_m: 3000,
+  pressure_weight: 0.45,
+  watercut_weight: 0.35,
+  rate_weight: 0.2,
+  summary_vectors: 'FOPR, FWPR, FGPR, WOPR, WWPR, WBHP, WWCT',
+})
 const selectedWaterfloodCellId = ref('')
 const hoveredWaterfloodLinkId = ref('')
 const waterfloodAggregateLevel = ref('well')
@@ -596,7 +785,18 @@ const availableColumns = computed(() => inputFile.value?.columns_info || [])
 const availableColumnNames = computed(() => availableColumns.value.map((column) => column.name))
 const previewColumns = computed(() => Object.keys(inputFile.value?.preview?.[0] || {}))
 const datasetTypes = computed(() => {
-  const groups = { wells: [], niz: [], gtm: [], infrastructure: [], external_krs_schedule: [] }
+  const groups = {
+    wells: [],
+    well_groups: [],
+    niz: [],
+    gtm: [],
+    infrastructure: [],
+    external_krs_schedule: [],
+    well_trajectories: [],
+    perforations: [],
+    production_history: [],
+    injection_history: [],
+  }
   datasets.value.forEach((item) => {
     const type = item.dataset_reference.dataset_type
     if (groups[type]) groups[type].push(item)
@@ -689,10 +889,15 @@ const plannerDerivedScenarioMap = computed(() => Object.fromEntries(
 ))
 const scenarioContextReferenceByType = computed(() => ({
   wells: selectedScenarioContext.value?.wells_dataset || null,
+  well_groups: selectedScenarioContext.value?.well_groups_dataset || null,
   niz: selectedScenarioContext.value?.niz_dataset || null,
   gtm: selectedScenarioContext.value?.gtm_dataset || null,
   infrastructure: selectedScenarioContext.value?.infrastructure_dataset || null,
   external_krs_schedule: selectedScenarioContext.value?.external_krs_schedule_dataset || null,
+  well_trajectories: selectedScenarioContext.value?.well_trajectories_dataset || null,
+  perforations: selectedScenarioContext.value?.perforations_dataset || null,
+  production_history: selectedScenarioContext.value?.production_history_dataset || null,
+  injection_history: selectedScenarioContext.value?.injection_history_dataset || null,
 }))
 const selectedDatasetMatchesScenarioContext = (type) => {
   const selectedReference = selectedDatasets[type]
@@ -704,6 +909,9 @@ const scenarioContextStatus = computed(() => ({
   wells: selectedDatasetMatchesScenarioContext('wells')
     ? (selectedScenarioValidation.value?.wells?.state || (selectedDatasets.wells ? 'ready' : 'empty'))
     : (selectedDatasets.wells ? 'ready' : 'empty'),
+  well_groups: selectedDatasetMatchesScenarioContext('well_groups')
+    ? (selectedScenarioValidation.value?.well_groups?.state || (selectedDatasets.well_groups ? 'ready' : 'empty'))
+    : (selectedDatasets.well_groups ? 'ready' : 'empty'),
   niz: selectedDatasetMatchesScenarioContext('niz')
     ? (selectedScenarioValidation.value?.niz?.state || (selectedDatasets.niz ? 'ready' : 'empty'))
     : localNizCoverageValidation.value.state,
@@ -721,6 +929,18 @@ const scenarioContextStatus = computed(() => ({
         : (selectedDatasets.external_krs_schedule ? 'ready' : 'empty')
     )
     : 'ready',
+  well_trajectories: selectedDatasetMatchesScenarioContext('well_trajectories')
+    ? (selectedScenarioValidation.value?.well_trajectories?.state || (selectedDatasets.well_trajectories ? 'ready' : 'empty'))
+    : (selectedDatasets.well_trajectories ? 'ready' : 'empty'),
+  perforations: selectedDatasetMatchesScenarioContext('perforations')
+    ? (selectedScenarioValidation.value?.perforations?.state || (selectedDatasets.perforations ? 'ready' : 'empty'))
+    : (selectedDatasets.perforations ? 'ready' : 'empty'),
+  production_history: selectedDatasetMatchesScenarioContext('production_history')
+    ? (selectedScenarioValidation.value?.production_history?.state || (selectedDatasets.production_history ? 'ready' : 'empty'))
+    : (selectedDatasets.production_history ? 'ready' : 'empty'),
+  injection_history: selectedDatasetMatchesScenarioContext('injection_history')
+    ? (selectedScenarioValidation.value?.injection_history?.state || (selectedDatasets.injection_history ? 'ready' : 'empty'))
+    : (selectedDatasets.injection_history ? 'ready' : 'empty'),
 }))
 const reservoirInputStatus = computed(() => resolveTouchedStatus(
   reservoirConfigs.value,
@@ -771,24 +991,39 @@ const krsInputStatus = computed(() => {
 })
 const localDatasetStatuses = computed(() => ({
   wells: datasetValidationForType('wells'),
+  well_groups: datasetValidationForType('well_groups'),
   niz: datasetValidationForType('niz'),
   gtm: datasetValidationForType('gtm'),
   infrastructure: datasetValidationForType('infrastructure'),
+  well_trajectories: datasetValidationForType('well_trajectories'),
+  perforations: datasetValidationForType('perforations'),
+  production_history: datasetValidationForType('production_history'),
+  injection_history: datasetValidationForType('injection_history'),
 }))
 const inputNodeStatuses = computed(() => ({
   wells: localDatasetStatuses.value.wells.state,
+  well_groups: localDatasetStatuses.value.well_groups.state,
   niz: localDatasetStatuses.value.niz.state,
   gtm: localDatasetStatuses.value.gtm.state,
   infrastructure: localDatasetStatuses.value.infrastructure.state,
+  well_trajectories: localDatasetStatuses.value.well_trajectories.state,
+  perforations: localDatasetStatuses.value.perforations.state,
+  production_history: localDatasetStatuses.value.production_history.state,
+  injection_history: localDatasetStatuses.value.injection_history.state,
   reservoir: reservoirInputStatus.value,
   economics: economicsInputStatus.value,
   krs: krsInputStatus.value,
 }))
 const inputNodePartialIssues = computed(() => ({
   wells: localDatasetStatuses.value.wells.issue,
+  well_groups: localDatasetStatuses.value.well_groups.issue,
   niz: localDatasetStatuses.value.niz.issue,
   gtm: localDatasetStatuses.value.gtm.issue,
   infrastructure: localDatasetStatuses.value.infrastructure.issue,
+  well_trajectories: localDatasetStatuses.value.well_trajectories.issue,
+  perforations: localDatasetStatuses.value.perforations.issue,
+  production_history: localDatasetStatuses.value.production_history.issue,
+  injection_history: localDatasetStatuses.value.injection_history.issue,
   reservoir: reservoirInputStatus.value === 'partial' ? 'Есть незаполненные обязательные поля в характеристике вытеснения.' : '',
   economics: economicsInputStatus.value === 'partial' ? 'Есть незаполненные обязательные поля в экономических вводных.' : '',
   krs: krsInputStatus.value === 'partial' ? 'Есть незаполненные обязательные поля в ограничениях КРС.' : '',
@@ -820,13 +1055,23 @@ const scenarioReadiness = computed(() => {
       : scenarioFlowMode.value === 'planner'
         ? (isPlannerDerivedScenario.value || plannerRevisions.value.length > 0)
         : true
-  const hasInputs = Boolean(
+  const forecastMethod = String(selectedScenario?.metadata?.forecast_method || 'opm_flow_1d_drainage')
+  const isDrainage1D = forecastMethod === 'opm_flow_1d_drainage'
+  const hasLegacyInputs = Boolean(
     scenarioContextStatus.value.wells === 'ready'
     && scenarioContextStatus.value.niz === 'ready'
     && scenarioContextStatus.value.gtm === 'ready'
     && scenarioContextStatus.value.manual_input === 'ready'
     && (scenarioFlowMode.value !== 'external' || scenarioContextStatus.value.external_krs_schedule === 'ready'),
   )
+  const hasDrainageInputs = Boolean(
+    scenarioContextStatus.value.well_groups === 'ready'
+    && scenarioContextStatus.value.well_trajectories === 'ready'
+    && scenarioContextStatus.value.perforations === 'ready'
+    && scenarioContextStatus.value.production_history === 'ready'
+    && scenarioContextStatus.value.injection_history === 'ready',
+  )
+  const hasInputs = isDrainage1D ? hasDrainageInputs : hasLegacyInputs
   const hasResult = Boolean(scenarioDetail.value?.production_summary)
   const isPlannerDerived = isPlannerDerivedScenario.value
   const hasPlannerVersion = Boolean(activeVersion.value)
@@ -873,7 +1118,9 @@ const workflowSteps = computed(() => {
     {
       key: 'inputs',
       label: '3. Входы сценария',
-      description: hasInputs ? 'Wells, NIZ, GTM и ManualInputSet привязаны.' : 'Нужно привязать Wells, NIZ, GTM и ManualInputSet.',
+      description: isDrainage1D
+        ? (hasInputs ? 'GRUP, TRAJ, PERF, production/injection history привязаны.' : 'Нужно привязать GRUP, TRAJ, PERF, production_history и injection_history.')
+        : (hasInputs ? 'Wells, NIZ, GTM и ManualInputSet привязаны.' : 'Нужно привязать Wells, NIZ, GTM и ManualInputSet.'),
       ready: hasInputs,
     },
     {
@@ -1743,6 +1990,7 @@ const nodeInspectorTitle = computed(() => {
   switch (activeCanvasNode.value) {
     case 'scenario': return scenarioFlowMode.value === 'external' ? 'Внешний график КРС' : 'Сценарий'
     case 'wells': return 'Wells'
+    case 'well_groups': return 'GRUP'
     case 'gtm': return 'ГТМ'
     case 'infrastructure': return 'Infrastructure'
     case 'reservoir': return 'Характеристика вытеснения'
@@ -2099,6 +2347,713 @@ const waterfloodDeltaClass = (value) => {
   return number > 0 ? 'positive' : 'negative'
 }
 const waterfloodAggregateLevelLabel = computed(() => WATERFLOOD_AGGREGATE_LEVELS.find((item) => item.key === waterfloodAggregateLevel.value)?.label || 'Скважина')
+const opmAnalysisPropertyOption = computed(() => OPM_ANALYSIS_PROPERTIES.find((item) => item.key === opmAnalysisProperty.value) || OPM_ANALYSIS_PROPERTIES[0])
+const drainageContacts = computed(() => Array.isArray(drainagePreparation.value?.contact_intervals) ? drainagePreparation.value.contact_intervals : [])
+const drainageConnections = computed(() => Array.isArray(drainagePreparation.value?.connections) ? drainagePreparation.value.connections : [])
+const drainageModelSpecs = computed(() => Array.isArray(drainagePreparation.value?.model_specs) ? drainagePreparation.value.model_specs : [])
+const drainageDiagnostics = computed(() => drainagePreparation.value?.diagnostics || {})
+const drainageModelSpecByConnectionId = computed(() => new Map(drainageModelSpecs.value.map((model) => [model.connection_id, model])))
+const drainageWellMap = computed(() => {
+  const wells = new Map()
+  drainageContacts.value.forEach((contact) => {
+    const wellName = String(contact.well_name || '').trim()
+    if (!wellName) return
+    if (!wells.has(wellName)) {
+      wells.set(wellName, {
+        well_name: wellName,
+        lu_id: contact.lu_id || '',
+        sloy_id: contact.sloy_id || '',
+        well_pad_id: contact.well_pad_id || '',
+        role: 'producer',
+        xSum: 0,
+        ySum: 0,
+        zSum: 0,
+        coordCount: 0,
+        contactCount: 0,
+      })
+    }
+    const well = wells.get(wellName)
+    well.lu_id = well.lu_id || contact.lu_id || ''
+    well.sloy_id = well.sloy_id || contact.sloy_id || ''
+    well.well_pad_id = well.well_pad_id || contact.well_pad_id || ''
+    well.contactCount += 1
+    const x = Number(contact.center_x)
+    const y = Number(contact.center_y)
+    const z = Number(contact.center_z)
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      well.xSum += x
+      well.ySum += y
+      well.zSum += Number.isFinite(z) ? z : 0
+      well.coordCount += 1
+    }
+  })
+  drainageConnections.value.forEach((connection) => {
+    const injectorName = String(connection.injector_name || '').trim()
+    const producerName = String(connection.producer_name || '').trim()
+    if (injectorName && wells.has(injectorName)) wells.get(injectorName).role = 'injector'
+    if (producerName && wells.has(producerName) && wells.get(producerName).role !== 'injector') wells.get(producerName).role = 'producer'
+  })
+  wells.forEach((well) => {
+    well.x = well.coordCount ? well.xSum / well.coordCount : null
+    well.y = well.coordCount ? well.ySum / well.coordCount : null
+    well.z = well.coordCount ? well.zSum / well.coordCount : null
+  })
+  return wells
+})
+const drainageMapBounds = computed(() => {
+  const coords = [...drainageWellMap.value.values()].filter((well) => Number.isFinite(well.x) && Number.isFinite(well.y))
+  if (!coords.length) return { minX: 0, maxX: 1, minY: 0, maxY: 1, spanX: 1, spanY: 1 }
+  const xValues = coords.map((well) => Number(well.x))
+  const yValues = coords.map((well) => Number(well.y))
+  const minX = Math.min(...xValues)
+  const maxX = Math.max(...xValues)
+  const minY = Math.min(...yValues)
+  const maxY = Math.max(...yValues)
+  return {
+    minX,
+    maxX,
+    minY,
+    maxY,
+    spanX: Math.max(1, maxX - minX),
+    spanY: Math.max(1, maxY - minY),
+  }
+})
+const drainageMapPoint = (x, y) => {
+  const bounds = drainageMapBounds.value
+  return {
+    viewX: 56 + ((Number(x || 0) - bounds.minX) / bounds.spanX) * (OPM_ANALYSIS_MAP_WIDTH - 112),
+    viewY: OPM_ANALYSIS_MAP_HEIGHT - 56 - ((Number(y || 0) - bounds.minY) / bounds.spanY) * (OPM_ANALYSIS_MAP_HEIGHT - 112),
+  }
+}
+const clamp01 = (value) => Math.max(0, Math.min(1, Number(value || 0)))
+const drainagePropertyValue = (connection, model, ratio = 0.5) => {
+  const alpha = Number(connection?.alpha || 0)
+  const pv = Number(model?.pore_volume || connection?.pv || 0)
+  if (opmAnalysisProperty.value === 'pressure') return 245 + alpha * 42 - ratio * 58
+  if (opmAnalysisProperty.value === 'saturation') return clamp01(0.18 + (1 - ratio) * 0.52 + alpha * 0.18)
+  if (opmAnalysisProperty.value === 'pore_volume') return pv / Math.max(1, Number(model?.nx || 1))
+  if (opmAnalysisProperty.value === 'permeability') return 75 + alpha * 420
+  return 0
+}
+const drainagePropertyColor = (value) => {
+  let ratio = 0
+  if (opmAnalysisProperty.value === 'pressure') ratio = clamp01((Number(value || 0) - 180) / 120)
+  if (opmAnalysisProperty.value === 'saturation') ratio = clamp01(Number(value || 0))
+  if (opmAnalysisProperty.value === 'pore_volume') ratio = clamp01(Math.log10(Math.max(1, Number(value || 0))) / 5)
+  if (opmAnalysisProperty.value === 'permeability') ratio = clamp01((Number(value || 0) - 50) / 450)
+  return `hsl(${210 - ratio * 170} 76% ${52 - ratio * 10}%)`
+}
+const drainageMapWells = computed(() => [...drainageWellMap.value.values()]
+  .filter((well) => Number.isFinite(well.x) && Number.isFinite(well.y))
+  .map((well) => ({
+    ...well,
+    ...drainageMapPoint(well.x, well.y),
+  })))
+const drainageMapWellByName = computed(() => new Map(drainageMapWells.value.map((well) => [well.well_name, well])))
+const drainageMapConnections = computed(() => drainageConnections.value
+  .map((connection) => {
+    const injector = drainageMapWellByName.value.get(connection.injector_name)
+    const producer = drainageMapWellByName.value.get(connection.producer_name)
+    const model = drainageModelSpecByConnectionId.value.get(connection.connection_id)
+    const value = drainagePropertyValue(connection, model, 0.5)
+    return {
+      ...connection,
+      injector,
+      producer,
+      model,
+      propertyValue: value,
+      propertyColor: drainagePropertyColor(value),
+      strokeWidth: 1.5 + clamp01(connection.alpha) * 8,
+    }
+  })
+  .filter((connection) => connection.injector && connection.producer))
+const selectedDrainageConnection = computed(() => (
+  drainageConnections.value.find((connection) => connection.connection_id === selectedDrainageConnectionId.value)
+  || drainageConnections.value[0]
+  || null
+))
+const selectedDrainageModelSpec = computed(() => selectedDrainageConnection.value ? drainageModelSpecByConnectionId.value.get(selectedDrainageConnection.value.connection_id) : null)
+const selectedDrainageMapConnection = computed(() => selectedDrainageConnection.value
+  ? drainageMapConnections.value.find((connection) => connection.connection_id === selectedDrainageConnection.value.connection_id)
+  : null)
+const drainageGridCells = computed(() => {
+  const connection = selectedDrainageMapConnection.value
+  const model = selectedDrainageModelSpec.value
+  if (!connection?.injector || !connection?.producer || !model) return []
+  const nx = Math.max(1, Number(model.nx || 1))
+  const visibleCount = Math.min(nx, 96)
+  const step = nx / visibleCount
+  return Array.from({ length: visibleCount }, (_, index) => {
+    const cellIndex = Math.floor(index * step)
+    const ratio = (cellIndex + 0.5) / nx
+    const x = connection.injector.viewX + (connection.producer.viewX - connection.injector.viewX) * ratio
+    const y = connection.injector.viewY + (connection.producer.viewY - connection.injector.viewY) * ratio
+    const value = drainagePropertyValue(connection, model, ratio)
+    return {
+      key: `${connection.connection_id}:cell:${cellIndex}`,
+      index: cellIndex + 1,
+      x,
+      y,
+      value,
+      color: drainagePropertyColor(value),
+    }
+  })
+})
+const opmOutputArtifacts = computed(() => {
+  const artifacts = Array.isArray(opmSimulationRun.value?.artifacts) ? opmSimulationRun.value.artifacts : []
+  return artifacts.filter((artifact) => {
+    const text = `${artifact.artifact_type || ''} ${artifact.path || ''} ${artifact.name || ''}`.toLowerCase()
+    return text.includes('output') || text.includes('.smspec') || text.includes('.unsmry') || text.includes('.egrid') || text.includes('.init') || text.includes('.x')
+  })
+})
+const drainageStatusCards = computed(() => [
+  { label: 'Контакты пласт-скважина', value: drainageContacts.value.length },
+  { label: 'Связи injector-producer', value: drainageConnections.value.length },
+  { label: 'Активные 1D модели', value: drainageModelSpecs.value.length },
+  { label: 'OPM output files', value: opmOutputArtifacts.value.length },
+])
+const drainageGraphRows = computed(() => {
+  const rows = new Map()
+  drainageConnections.value.forEach((connection) => {
+    const producer = drainageWellMap.value.get(connection.producer_name) || {}
+    const injector = drainageWellMap.value.get(connection.injector_name) || {}
+    const key = opmAnalysisGroupLevel.value === 'lu'
+      ? (producer.lu_id || injector.lu_id || 'Без LU')
+      : opmAnalysisGroupLevel.value === 'pad'
+        ? (producer.well_pad_id || injector.well_pad_id || 'Без куста')
+        : (connection.producer_name || 'Без скважины')
+    if (!rows.has(key)) {
+      rows.set(key, {
+        key,
+        label: key,
+        connectionCount: 0,
+        alphaSum: 0,
+        pv: 0,
+        distance: 0,
+        wells: new Set(),
+        connectionId: connection.connection_id,
+      })
+    }
+    const row = rows.get(key)
+    row.connectionId = row.connectionId || connection.connection_id
+    row.connectionCount += 1
+    row.alphaSum += Number(connection.alpha || 0)
+    row.pv += Number(connection.pv || 0)
+    row.distance += Number(connection.distance_m || 0)
+    if (connection.injector_name) row.wells.add(connection.injector_name)
+    if (connection.producer_name) row.wells.add(connection.producer_name)
+  })
+  return [...rows.values()]
+    .map((row) => ({
+      ...row,
+      wellCount: row.wells.size,
+      avgDistance: row.connectionCount ? row.distance / row.connectionCount : 0,
+    }))
+    .sort((left, right) => right.pv - left.pv)
+    .slice(0, 24)
+})
+const maxDrainageGraphPv = computed(() => Math.max(1, ...drainageGraphRows.value.map((row) => Number(row.pv || 0))))
+const maxDrainageGraphAlpha = computed(() => Math.max(0.001, ...drainageGraphRows.value.map((row) => Number(row.alphaSum || 0))))
+const drainageMatrixRows = computed(() => {
+  const nodes = new Map()
+  const makeNode = ({ key, label, nodeType, depth, parentKey = '' }) => {
+    if (!nodes.has(key)) {
+      nodes.set(key, {
+        key,
+        label,
+        nodeType,
+        depth,
+        parentKey,
+        children: [],
+        connectionIds: new Set(),
+        injectorNames: new Set(),
+        producerNames: new Set(),
+        alphaByProducer: new Map(),
+      })
+      if (parentKey && nodes.has(parentKey)) nodes.get(parentKey).children.push(nodes.get(key))
+    }
+    return nodes.get(key)
+  }
+  const root = makeNode({ key: 'drainage:total', label: 'Итого', nodeType: 'total', depth: 0 })
+  drainageConnections.value.forEach((connection) => {
+    const producer = drainageWellMap.value.get(connection.producer_name) || {}
+    const injector = drainageWellMap.value.get(connection.injector_name) || {}
+    const lu = producer.lu_id || injector.lu_id || 'Без LU'
+    const luNode = makeNode({ key: `drainage:lu:${lu}`, label: lu, nodeType: 'lu', depth: 1, parentKey: root.key })
+    const injectorName = connection.injector_name || 'Без нагнетательной'
+    const producerName = connection.producer_name || 'Без добывающей'
+    const injectorNode = makeNode({ key: `drainage:injector:${lu}:${injectorName}`, label: injectorName, nodeType: 'injector', depth: 2, parentKey: luNode.key })
+    const producerNode = makeNode({
+      key: `drainage:producer:${lu}:${injectorName}:${producerName}`,
+      label: producerName,
+      nodeType: 'producer',
+      depth: 3,
+      parentKey: injectorNode.key,
+    })
+    ;[root, luNode, injectorNode, producerNode].forEach((node) => {
+      node.connectionIds.add(connection.connection_id)
+      if (connection.injector_name) node.injectorNames.add(connection.injector_name)
+      if (connection.producer_name) node.producerNames.add(connection.producer_name)
+      if (connection.producer_name) {
+        node.alphaByProducer.set(
+          connection.producer_name,
+          (node.alphaByProducer.get(connection.producer_name) || 0) + Number(connection.alpha || 0),
+        )
+      }
+    })
+  })
+  return [...nodes.values()].map((node) => buildDrainageMatrixMetrics(node))
+})
+const visibleDrainageMatrixRows = computed(() => buildVisibleHierarchyRows(drainageMatrixRows.value, expandedDrainageKeys.value))
+const selectedDrainageMatrixRow = computed(() => (
+  drainageMatrixRows.value.find((row) => row.key === selectedDrainageMatrixKey.value)
+  || drainageMatrixRows.value.find((row) => row.key === 'drainage:total')
+  || null
+))
+const scenarioProductionHistoryRows = computed(() => {
+  const reference = selectedScenarioContext.value?.production_history_dataset
+  const payload = reference ? datasetDetails[datasetReferenceKey(reference)]?.normalized_payload : null
+  return Array.isArray(payload) ? payload : []
+})
+const scenarioInjectionHistoryRows = computed(() => {
+  const reference = selectedScenarioContext.value?.injection_history_dataset
+  const payload = reference ? datasetDetails[datasetReferenceKey(reference)]?.normalized_payload : null
+  return Array.isArray(payload) ? payload : []
+})
+const historyWellName = (row) => String(row?.well_name || row?.well_id || row?.producer_id || row?.injector_id || '').trim()
+const historyDateKey = (row) => String(row?.date || '').slice(0, 10)
+const numberOrNull = (value) => {
+  if (value === null || value === undefined || value === '') return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+const reservoirConditionFluidVolume = (liquid, gas) => Number(liquid || 0) + Number(gas || 0) / 1000
+const resetCurrentProductionStats = (stat, date) => {
+  stat.latestDate = date
+  stat.currentOil = 0
+  stat.currentWater = 0
+  stat.currentLiquid = 0
+  stat.currentGas = 0
+  stat.pResFactWeighted = 0
+  stat.pResFactWeight = 0
+  stat.bhpFactWeighted = 0
+  stat.bhpFactWeight = 0
+}
+const resetCurrentInjectionStats = (stat, date) => {
+  stat.latestDate = date
+  stat.currentInjection = 0
+}
+const productionStatsByWell = computed(() => {
+  const stats = new Map()
+  scenarioProductionHistoryRows.value.forEach((row) => {
+    const wellName = historyWellName(row)
+    const date = historyDateKey(row)
+    if (!wellName || !date) return
+    if (!stats.has(wellName)) {
+      stats.set(wellName, {
+        wellName,
+        latestDate: '',
+        currentOil: 0,
+        currentWater: 0,
+        currentLiquid: 0,
+        currentGas: 0,
+        cumulativeOil: 0,
+        cumulativeWater: 0,
+        cumulativeLiquid: 0,
+        cumulativeGas: 0,
+        pResFactWeighted: 0,
+        pResFactWeight: 0,
+        bhpFactWeighted: 0,
+        bhpFactWeight: 0,
+      })
+    }
+    const stat = stats.get(wellName)
+    const oil = numberOrNull(row.q_oil) || 0
+    const water = numberOrNull(row.q_water) || 0
+    const liquid = numberOrNull(row.q_liq) || 0
+    const gas = numberOrNull(row.q_gas) || 0
+    stat.cumulativeOil += oil
+    stat.cumulativeWater += water
+    stat.cumulativeLiquid += liquid
+    stat.cumulativeGas += gas
+    if (date > stat.latestDate) resetCurrentProductionStats(stat, date)
+    if (date === stat.latestDate) {
+      stat.currentOil += oil
+      stat.currentWater += water
+      stat.currentLiquid += liquid
+      stat.currentGas += gas
+      const weight = Math.max(1, liquid)
+      const pRes = numberOrNull(row.p_res)
+      const bhp = numberOrNull(row.bhp)
+      if (pRes !== null && pRes > 0) {
+        stat.pResFactWeighted += pRes * weight
+        stat.pResFactWeight += weight
+      }
+      if (bhp !== null && bhp > 0) {
+        stat.bhpFactWeighted += bhp * weight
+        stat.bhpFactWeight += weight
+      }
+    }
+  })
+  stats.forEach((stat) => {
+    stat.currentReservoirFluid = reservoirConditionFluidVolume(stat.currentLiquid, stat.currentGas)
+    stat.cumulativeReservoirFluid = reservoirConditionFluidVolume(stat.cumulativeLiquid, stat.cumulativeGas)
+    stat.watercut = stat.currentLiquid > 0 ? stat.currentWater / stat.currentLiquid : null
+    stat.pResFact = stat.pResFactWeight > 0 ? stat.pResFactWeighted / stat.pResFactWeight : null
+    stat.bhpFact = stat.bhpFactWeight > 0 ? stat.bhpFactWeighted / stat.bhpFactWeight : null
+  })
+  return stats
+})
+const injectionStatsByWell = computed(() => {
+  const stats = new Map()
+  scenarioInjectionHistoryRows.value.forEach((row) => {
+    const wellName = historyWellName(row)
+    const date = historyDateKey(row)
+    if (!wellName || !date) return
+    if (!stats.has(wellName)) {
+      stats.set(wellName, {
+        wellName,
+        latestDate: '',
+        currentInjection: 0,
+        cumulativeInjection: 0,
+      })
+    }
+    const stat = stats.get(wellName)
+    const injection = numberOrNull(row.q_water_inj) || 0
+    stat.cumulativeInjection += injection
+    if (date > stat.latestDate) resetCurrentInjectionStats(stat, date)
+    if (date === stat.latestDate) stat.currentInjection += injection
+  })
+  return stats
+})
+const aggregateProductionStats = (producerNames) => {
+  const names = [...producerNames]
+  const result = {
+    currentOil: 0,
+    currentWater: 0,
+    currentLiquid: 0,
+    currentGas: 0,
+    cumulativeLiquid: 0,
+    cumulativeGas: 0,
+    currentReservoirFluid: 0,
+    cumulativeReservoirFluid: 0,
+    pResFactWeighted: 0,
+    pResFactWeight: 0,
+    bhpFactWeighted: 0,
+    bhpFactWeight: 0,
+  }
+  names.forEach((name) => {
+    const stat = productionStatsByWell.value.get(name)
+    if (!stat) return
+    result.currentOil += stat.currentOil
+    result.currentWater += stat.currentWater
+    result.currentLiquid += stat.currentLiquid
+    result.currentGas += stat.currentGas
+    result.cumulativeLiquid += stat.cumulativeLiquid
+    result.cumulativeGas += stat.cumulativeGas
+    result.currentReservoirFluid += stat.currentReservoirFluid
+    result.cumulativeReservoirFluid += stat.cumulativeReservoirFluid
+    const weight = Math.max(1, stat.currentLiquid)
+    if (stat.pResFact !== null && stat.pResFact !== undefined) {
+      result.pResFactWeighted += stat.pResFact * weight
+      result.pResFactWeight += weight
+    }
+    if (stat.bhpFact !== null && stat.bhpFact !== undefined) {
+      result.bhpFactWeighted += stat.bhpFact * weight
+      result.bhpFactWeight += weight
+    }
+  })
+  return {
+    ...result,
+    watercut: result.currentLiquid > 0 ? result.currentWater / result.currentLiquid : null,
+    pResFact: result.pResFactWeight > 0 ? result.pResFactWeighted / result.pResFactWeight : null,
+    bhpFact: result.bhpFactWeight > 0 ? result.bhpFactWeighted / result.bhpFactWeight : null,
+  }
+}
+const aggregateInjectionStats = (injectorNames) => {
+  const result = { currentInjection: 0, cumulativeInjection: 0 }
+  ;[...injectorNames].forEach((name) => {
+    const stat = injectionStatsByWell.value.get(name)
+    if (!stat) return
+    result.currentInjection += stat.currentInjection
+    result.cumulativeInjection += stat.cumulativeInjection
+  })
+  return result
+}
+const connectionPressureEstimate = (connection, ratio = 0.5) => 245 + Number(connection?.alpha || 0) * 42 - ratio * 58
+const aggregateConnectionStats = (connectionIds) => {
+  const result = {
+    poreVolume: 0,
+    pResCalcWeighted: 0,
+    pResCalcWeight: 0,
+    bhpCalcWeighted: 0,
+    bhpCalcWeight: 0,
+  }
+  ;[...connectionIds].forEach((connectionId) => {
+    const connection = drainageConnections.value.find((item) => item.connection_id === connectionId)
+    if (!connection) return
+    const model = drainageModelSpecByConnectionId.value.get(connectionId)
+    const pv = Number(model?.pore_volume || connection.pv || 0)
+    result.poreVolume += pv
+    const weight = Math.max(1, pv)
+    result.pResCalcWeighted += connectionPressureEstimate(connection, 0.5) * weight
+    result.pResCalcWeight += weight
+    result.bhpCalcWeighted += connectionPressureEstimate(connection, 0.95) * weight
+    result.bhpCalcWeight += weight
+  })
+  return {
+    poreVolume: result.poreVolume,
+    pResCalc: result.pResCalcWeight > 0 ? result.pResCalcWeighted / result.pResCalcWeight : null,
+    bhpCalc: result.bhpCalcWeight > 0 ? result.bhpCalcWeighted / result.bhpCalcWeight : null,
+  }
+}
+const buildDrainageMatrixMetrics = (node) => {
+  const production = aggregateProductionStats(node.producerNames)
+  const injection = aggregateInjectionStats(node.injectorNames)
+  const connection = aggregateConnectionStats(node.connectionIds)
+  const alphaValues = [...node.alphaByProducer.values()]
+  const alpha = alphaValues.length ? alphaValues.reduce((sum, value) => sum + value, 0) / alphaValues.length : null
+  return {
+    ...node,
+    connectionCount: node.connectionIds.size,
+    injectorCount: node.injectorNames.size,
+    producerCount: node.producerNames.size,
+    connectionId: [...node.connectionIds][0] || '',
+    currentInjection: injection.currentInjection,
+    cumulativeInjection: injection.cumulativeInjection,
+    poreVolume: connection.poreVolume,
+    injectedPoreVolume: connection.poreVolume > 0 ? injection.cumulativeInjection / connection.poreVolume : null,
+    pResFact: production.pResFact,
+    pResCalc: connection.pResCalc,
+    currentCompensation: production.currentReservoirFluid > 0 ? injection.currentInjection / production.currentReservoirFluid : null,
+    cumulativeCompensation: production.cumulativeReservoirFluid > 0 ? injection.cumulativeInjection / production.cumulativeReservoirFluid : null,
+    currentOil: production.currentOil,
+    currentLiquid: production.currentLiquid,
+    watercut: production.watercut,
+    alpha,
+    bhpFact: production.bhpFact,
+    bhpCalc: connection.bhpCalc,
+  }
+}
+const selectedHistoryWellSets = computed(() => {
+  const row = selectedDrainageMatrixRow.value
+  return {
+    producers: new Set(row?.producerNames ? [...row.producerNames] : []),
+    injectors: new Set(row?.injectorNames ? [...row.injectorNames] : []),
+  }
+})
+const historyCategoryLabel = computed(() => selectedDrainageMatrixRow.value?.label || 'Итого')
+const categoryProductionHistoryRows = computed(() => {
+  const producers = selectedHistoryWellSets.value.producers
+  if (!producers.size) return scenarioProductionHistoryRows.value
+  return scenarioProductionHistoryRows.value.filter((row) => producers.has(historyWellName(row)))
+})
+const categoryInjectionHistoryRows = computed(() => {
+  const injectors = selectedHistoryWellSets.value.injectors
+  if (!injectors.size) return scenarioInjectionHistoryRows.value
+  return scenarioInjectionHistoryRows.value.filter((row) => injectors.has(historyWellName(row)))
+})
+const historyAvailableDateBounds = computed(() => {
+  const dates = [
+    ...categoryProductionHistoryRows.value.map(historyDateKey),
+    ...categoryInjectionHistoryRows.value.map(historyDateKey),
+  ].filter(Boolean).sort()
+  return {
+    min: dates[0] || '',
+    max: dates[dates.length - 1] || '',
+  }
+})
+const addAverageValue = (bucket, key, value) => {
+  const parsed = numberOrNull(value)
+  if (parsed === null) return
+  bucket[`${key}Sum`] = (bucket[`${key}Sum`] || 0) + parsed
+  bucket[`${key}Count`] = (bucket[`${key}Count`] || 0) + 1
+}
+const historyBuckets = computed(() => {
+  const buckets = new Map()
+  const ensureBucket = (date) => {
+    if (!buckets.has(date)) {
+      buckets.set(date, {
+        date,
+        q_oil: 0,
+        q_water: 0,
+        q_liq: 0,
+        q_gas: 0,
+        q_water_inj: 0,
+      })
+    }
+    return buckets.get(date)
+  }
+  categoryProductionHistoryRows.value.forEach((row) => {
+    const date = historyDateKey(row)
+    if (!date) return
+    const bucket = ensureBucket(date)
+    bucket.q_oil += numberOrNull(row.q_oil) || 0
+    bucket.q_water += numberOrNull(row.q_water) || 0
+    bucket.q_liq += numberOrNull(row.q_liq) || 0
+    bucket.q_gas += numberOrNull(row.q_gas) || 0
+    addAverageValue(bucket, 'bhp', row.bhp)
+    addAverageValue(bucket, 'thp', row.thp)
+    addAverageValue(bucket, 'p_res', row.p_res)
+    addAverageValue(bucket, 'wefac', row.wefac)
+  })
+  categoryInjectionHistoryRows.value.forEach((row) => {
+    const date = historyDateKey(row)
+    if (!date) return
+    const bucket = ensureBucket(date)
+    bucket.q_water_inj += numberOrNull(row.q_water_inj) || 0
+    addAverageValue(bucket, 'bhp', row.bhp)
+    addAverageValue(bucket, 'thp', row.thp)
+    addAverageValue(bucket, 'whp', row.whp)
+    addAverageValue(bucket, 'p_res', row.p_res)
+    addAverageValue(bucket, 'wefac', row.wefac)
+  })
+  return [...buckets.values()]
+    .map((bucket) => ({
+      ...bucket,
+      watercut: bucket.q_liq > 0 ? bucket.q_water / bucket.q_liq : null,
+      bhp: bucket.bhpCount ? bucket.bhpSum / bucket.bhpCount : null,
+      thp: bucket.thpCount ? bucket.thpSum / bucket.thpCount : null,
+      whp: bucket.whpCount ? bucket.whpSum / bucket.whpCount : null,
+      p_res: bucket.p_resCount ? bucket.p_resSum / bucket.p_resCount : null,
+      wefac: bucket.wefacCount ? bucket.wefacSum / bucket.wefacCount : null,
+    }))
+    .sort((left, right) => left.date.localeCompare(right.date))
+})
+const filteredHistoryBuckets = computed(() => historyBuckets.value.filter((bucket) => {
+  if (historyDateFrom.value && bucket.date < historyDateFrom.value) return false
+  if (historyDateTo.value && bucket.date > historyDateTo.value) return false
+  return true
+}))
+const selectedHistoryMetrics = computed(() => HISTORY_METRIC_OPTIONS.filter((metric) => selectedHistoryMetricKeys.value.includes(metric.key)))
+const historyMetricValue = (bucket, metricKey) => {
+  const value = bucket?.[metricKey]
+  if (value === null || value === undefined) return null
+  return metricKey === 'watercut' ? Number(value) * 100 : Number(value)
+}
+const historyAxisConfigByKey = computed(() => Object.fromEntries(HISTORY_AXIS_CONFIGS.map((axis) => [axis.key, axis])))
+const visibleHistoryAxes = computed(() => {
+  const activeAxes = new Set(selectedHistoryMetrics.value.map((metric) => metric.axis))
+  return HISTORY_AXIS_CONFIGS.filter((axis) => activeAxes.has(axis.key))
+})
+const historyPlotRight = computed(() => HISTORY_CHART_WIDTH - HISTORY_CHART_RIGHT)
+const historyAxisBounds = computed(() => {
+  const result = {}
+  HISTORY_AXIS_CONFIGS.forEach((axis) => {
+    const axisMetrics = selectedHistoryMetrics.value.filter((metric) => metric.axis === axis.key)
+    const values = []
+    filteredHistoryBuckets.value.forEach((bucket) => {
+      axisMetrics.forEach((metric) => {
+        const value = historyMetricValue(bucket, metric.key)
+        if (Number.isFinite(value)) values.push(value)
+      })
+    })
+    let min = Number.isFinite(Number(axis.defaultMin)) ? Number(axis.defaultMin) : 0
+    let max = Number.isFinite(Number(axis.defaultMax)) ? Number(axis.defaultMax) : 1
+    if (values.length) {
+      const rawMin = Math.min(...values)
+      const rawMax = Math.max(...values)
+      const baseSpan = Math.max(1, rawMax - rawMin)
+      min = axis.zeroBase && rawMin >= 0 ? 0 : rawMin - baseSpan * 0.08
+      max = rawMax + baseSpan * 0.08
+      if (Number.isFinite(Number(axis.defaultMin))) min = Math.min(Number(axis.defaultMin), min)
+      if (Number.isFinite(Number(axis.defaultMax))) max = Math.max(Number(axis.defaultMax), max)
+    }
+    const manualMin = numberOrNull(historyAxisRanges[axis.key]?.min)
+    const manualMax = numberOrNull(historyAxisRanges[axis.key]?.max)
+    if (manualMin !== null) min = manualMin
+    if (manualMax !== null) max = manualMax
+    if (max <= min) max = min + 1
+    result[axis.key] = { min, max, span: Math.max(1e-9, max - min) }
+  })
+  return result
+})
+const historyGraphDateRange = computed(() => {
+  const dates = filteredHistoryBuckets.value.map((bucket) => bucket.date).filter(Boolean)
+  const minTime = dates.length ? Date.parse(dates[0]) : 0
+  const maxTime = dates.length ? Date.parse(dates[dates.length - 1]) : minTime + 86400000
+  return { minTime, maxTime: Math.max(maxTime, minTime + 86400000), span: Math.max(86400000, maxTime - minTime) }
+})
+const historyGraphX = (date) => {
+  const range = historyGraphDateRange.value
+  const time = Date.parse(date)
+  return HISTORY_CHART_LEFT + ((time - range.minTime) / range.span) * (historyPlotRight.value - HISTORY_CHART_LEFT)
+}
+const historyGraphY = (value, axisKey) => {
+  const bounds = historyAxisBounds.value[axisKey] || { min: 0, max: 1, span: 1 }
+  return HISTORY_CHART_TOP + (1 - ((Number(value || 0) - bounds.min) / bounds.span)) * (HISTORY_CHART_HEIGHT - HISTORY_CHART_TOP - HISTORY_CHART_BOTTOM)
+}
+const historyGraphSeries = computed(() => selectedHistoryMetrics.value.map((metric) => {
+  const points = filteredHistoryBuckets.value
+    .map((bucket) => ({
+      date: bucket.date,
+      value: historyMetricValue(bucket, metric.key),
+    }))
+    .filter((point) => Number.isFinite(point.value))
+    .map((point) => ({
+      ...point,
+      x: historyGraphX(point.date),
+      y: historyGraphY(point.value, metric.axis),
+    }))
+  return {
+    ...metric,
+    points,
+    polyline: points.map((point) => `${point.x},${point.y}`).join(' '),
+  }
+}))
+const historyGraphXTicks = computed(() => {
+  const dates = filteredHistoryBuckets.value.map((bucket) => bucket.date)
+  if (!dates.length) return []
+  const count = Math.min(7, dates.length)
+  const indexes = new Set(Array.from({ length: count }, (_, index) => Math.round(index * (dates.length - 1) / Math.max(1, count - 1))))
+  return [...indexes].map((index) => ({ date: dates[index], x: historyGraphX(dates[index]) }))
+})
+const historyAxisLayouts = computed(() => {
+  let rightIndex = 0
+  return visibleHistoryAxes.value.map((axis) => {
+    const index = axis.side === 'right' ? rightIndex++ : 0
+    const x = axis.side === 'right' ? historyPlotRight.value + index * 58 : HISTORY_CHART_LEFT
+    return {
+      ...axis,
+      x,
+      tickX1: axis.side === 'right' ? x : x - 7,
+      tickX2: axis.side === 'right' ? x + 7 : x,
+      labelX: axis.side === 'right' ? x + 10 : x - 10,
+      textAnchor: axis.side === 'right' ? 'start' : 'end',
+      titleAnchor: axis.side === 'right' ? 'start' : 'end',
+      titleX: axis.side === 'right' ? x + 10 : x - 10,
+      ticks: Array.from({ length: 5 }, (_, tickIndex) => {
+        const ratio = tickIndex / 4
+        const bounds = historyAxisBounds.value[axis.key] || { min: 0, max: 1, span: 1 }
+        const value = bounds.max - bounds.span * ratio
+        return { value, y: historyGraphY(value, axis.key) }
+      }),
+    }
+  })
+})
+const historyPrimaryGridTicks = computed(() => historyAxisLayouts.value[0]?.ticks || [])
+const formatHistoryAxisValue = (value, axisKey) => {
+  if (axisKey === 'watercut') return `${formatCompactDecimal(value, 0)}%`
+  if (axisKey === 'wefac') return formatCompactDecimal(value, 2)
+  return formatCompactNumber(value)
+}
+const toggleHistoryMetric = (key) => {
+  if (selectedHistoryMetricKeys.value.includes(key)) {
+    selectedHistoryMetricKeys.value = selectedHistoryMetricKeys.value.filter((item) => item !== key)
+  } else {
+    selectedHistoryMetricKeys.value = [...selectedHistoryMetricKeys.value, key]
+  }
+}
+const selectDrainageMatrixRow = (row) => {
+  selectedDrainageMatrixKey.value = row.key
+  if (row.connectionId) {
+    selectedDrainageConnectionId.value = row.connectionId
+  }
+}
+const resetHistoryDateRange = () => {
+  historyDateFrom.value = historyAvailableDateBounds.value.min
+  historyDateTo.value = historyAvailableDateBounds.value.max
+}
 const activeScenarioRole = computed(() => scenarioDetail.value?.scenario?.metadata?.scenario_role || '')
 const baseScenarioWells = computed(() => {
   if (activeScenarioRole.value === 'pure_base') {
@@ -2488,6 +3443,15 @@ const fetchDatasetDetail = async (reference) => {
   return payload
 }
 
+const ensureScenarioHistoryLoaded = async () => {
+  const context = selectedScenarioContext.value
+  if (!context) return
+  await Promise.all([
+    context.production_history_dataset ? fetchDatasetDetail(context.production_history_dataset) : Promise.resolve(null),
+    context.injection_history_dataset ? fetchDatasetDetail(context.injection_history_dataset) : Promise.resolve(null),
+  ])
+}
+
 const setActiveDataset = async (reference) => {
   if (!reference) return
   const previousKey = selectedDatasets[reference.dataset_type] ? datasetReferenceKey(selectedDatasets[reference.dataset_type]) : ''
@@ -2514,6 +3478,9 @@ const selectDatasetByKey = async (type, key) => {
   const item = datasetTypes.value[type].find((dataset) => datasetReferenceKey(dataset.dataset_reference) === key)
   if (!item) return
   await setActiveDataset(item.dataset_reference)
+  if (selectedScenarioId.value) {
+    await saveActiveScenarioContext({ silent: true })
+  }
 }
 
 const ensureSelectedDatasets = async () => {
@@ -2528,10 +3495,15 @@ const applyScenarioContext = async (context) => {
   if (!context) return
   const mapping = {
     wells: context.wells_dataset,
+    well_groups: context.well_groups_dataset,
     niz: context.niz_dataset,
     gtm: context.gtm_dataset,
     infrastructure: context.infrastructure_dataset,
     external_krs_schedule: context.external_krs_schedule_dataset,
+    well_trajectories: context.well_trajectories_dataset,
+    perforations: context.perforations_dataset,
+    production_history: context.production_history_dataset,
+    injection_history: context.injection_history_dataset,
   }
   for (const [type, reference] of Object.entries(mapping)) {
     if (reference) {
@@ -2556,15 +3528,21 @@ const buildScenarioRequestPayload = () => ({
   forecast_end_date: optimizerForm.forecast_end_date,
   inputs: {
     wells: datasetSelectionPayload(selectedDatasets.wells),
+    well_groups: datasetSelectionPayload(selectedDatasets.well_groups),
     niz: datasetSelectionPayload(selectedDatasets.niz),
     gtm: datasetSelectionPayload(selectedDatasets.gtm),
     infrastructure: datasetSelectionPayload(selectedDatasets.infrastructure),
     external_krs_schedule: scenarioSourceMode.value === 'existing_krs'
       ? datasetSelectionPayload(selectedDatasets.external_krs_schedule)
       : null,
+    well_trajectories: datasetSelectionPayload(selectedDatasets.well_trajectories),
+    perforations: datasetSelectionPayload(selectedDatasets.perforations),
+    production_history: datasetSelectionPayload(selectedDatasets.production_history),
+    injection_history: datasetSelectionPayload(selectedDatasets.injection_history),
     manual_input_set_id: selectedManualInputSetId.value || null,
   },
   metadata: {
+    forecast_method: 'opm_flow_1d_drainage',
     scenario_source_mode: scenarioSourceMode.value,
     run_mode: optimizerForm.run_mode,
     objective: optimizerForm.objective,
@@ -2817,13 +3795,13 @@ const normalizeDataset = async () => {
       manualNizRows.value = []
     }
     datasetDetailKey.value = datasetReferenceKey(payload.dataset_reference)
-    if (
-      selectedScenarioId.value
-      && selectedUploadSourceKind.value === 'external_krs_schedule'
-      && scenarioSourceMode.value === 'existing_krs'
-    ) {
+    if (selectedScenarioId.value) {
       await saveActiveScenarioContext({ silent: true })
-      if (currentSection.value === 'planner') {
+      if (
+        selectedUploadSourceKind.value === 'external_krs_schedule'
+        && scenarioSourceMode.value === 'existing_krs'
+        && currentSection.value === 'planner'
+      ) {
         await syncPlannerWithActiveScenario({ silent: true })
       }
     }
@@ -2933,6 +3911,7 @@ const toggleNizExpand = (key) => toggleHierarchyExpand(expandedNizKeys, key)
 const toggleGtmExpand = (key) => toggleHierarchyExpand(expandedGtmKeys, key)
 const toggleNizMatchExpand = (key) => toggleHierarchyExpand(expandedNizMatchKeys, key)
 const toggleInfrastructureExpand = (key) => toggleHierarchyExpand(expandedInfrastructureKeys, key)
+const toggleDrainageExpand = (key) => toggleHierarchyExpand(expandedDrainageKeys, key)
 const setScenarioFlowSource = (mode) => {
   if (mode === 'external') {
     activeCanvasNode.value = 'scenario'
@@ -2966,6 +3945,12 @@ const selectCanvasNode = async (nodeKey) => {
     currentInputsTab.value = 'upload'
     selectedUploadSourceKind.value = 'wells'
     if (selectedDatasets.wells) await openDatasetDetail(selectedDatasets.wells)
+    return
+  }
+  if (nodeKey === 'well_groups') {
+    currentInputsTab.value = 'upload'
+    selectedUploadSourceKind.value = 'well_groups'
+    if (selectedDatasets.well_groups) await openDatasetDetail(selectedDatasets.well_groups)
     return
   }
   if (nodeKey === 'niz') {
@@ -3269,6 +4254,84 @@ const loadWaterfloodAnalysis = async ({ silent = false } = {}) => {
     }
   } finally {
     waterfloodLoading.value = false
+  }
+}
+
+const prepareDrainageModelsFromScenario = async () => {
+  if (!selectedScenarioId.value) {
+    showMessage('Сначала выберите сценарий.', 'error')
+    return
+  }
+  drainagePreparationLoading.value = true
+  try {
+    const payload = {
+      influence_radius_m: Number(opmSimulationForm.influence_radius_m || 3000),
+      grid_block_length_m: 50,
+      grid_block_width_m: 50,
+      grid_thickness_m: 5,
+      metadata: { ui_section: 'production.analysis', source: 'scenario_context' },
+    }
+    const response = await request(`/forecast/opm-flow/scenarios/${selectedScenarioId.value}/drainage-1d/prepare-from-context`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    drainagePreparation.value = await response.json()
+    selectedDrainageConnectionId.value = drainagePreparation.value?.connections?.[0]?.connection_id || ''
+    selectedDrainageMatrixKey.value = 'drainage:total'
+    expandedDrainageKeys.value = ['drainage:total']
+    showMessage('1D модели подготовлены из контекста сценария.', 'success')
+  } catch (error) {
+    showMessage(error.message, 'error')
+  } finally {
+    drainagePreparationLoading.value = false
+  }
+}
+
+const runTemplateOpmSyntheticSimulation = async () => {
+  opmSimulationLoading.value = true
+  try {
+    const payload = {
+      scenario_id: selectedScenarioId.value || 'template-synthetic',
+      scenario_name: selectedScenarioSummary.value?.name || optimizerForm.scenario_name || 'Template synthetic OPM',
+      case_name: opmSimulationForm.case_name || 'data_templates_opm_synthetic',
+      forecast_start_date: opmSimulationForm.forecast_start_date,
+      forecast_end_date: opmSimulationForm.forecast_end_date,
+      history_match_iterations: Number(opmSimulationForm.history_match_iterations || 12),
+      influence_radius_m: Number(opmSimulationForm.influence_radius_m || 3000),
+      pressure_weight: Number(opmSimulationForm.pressure_weight || 0),
+      watercut_weight: Number(opmSimulationForm.watercut_weight || 0),
+      rate_weight: Number(opmSimulationForm.rate_weight || 0),
+      summary_vectors: String(opmSimulationForm.summary_vectors || '')
+        .split(',')
+        .map((item) => item.trim().toUpperCase())
+        .filter(Boolean),
+      run_external_flow: true,
+      metadata: {
+        ui_section: 'production.analysis',
+        template_source: 'docs/forecast-module/data_templates',
+      },
+    }
+    const response = await request('/forecast/opm-flow/templates/synthetic-history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const result = await response.json()
+    opmSimulationRun.value = result.simulation_run || null
+    waterfloodAnalysis.value = result.analysis || null
+    if (waterfloodAnalysis.value?.cells?.length) {
+      selectedWaterfloodCellId.value = waterfloodAnalysis.value.cells[0].cell_id
+    }
+    if (opmSimulationRun.value?.status === 'failed') {
+      showMessage(opmSimulationRun.value?.metadata?.runner_error || 'OPM Flow завершился с ошибкой.', 'error')
+      return
+    }
+    showMessage('OPM Flow simulation выполнена.', 'success')
+  } catch (error) {
+    showMessage(error.message, 'error')
+  } finally {
+    opmSimulationLoading.value = false
   }
 }
 
@@ -3614,6 +4677,12 @@ const exportPlannerVersion = async () => {
 }
 
 watch(selectedScenarioId, async (scenarioId) => {
+  drainagePreparation.value = null
+  selectedDrainageConnectionId.value = ''
+  selectedDrainageMatrixKey.value = 'drainage:total'
+  expandedDrainageKeys.value = []
+  historyDateFrom.value = ''
+  historyDateTo.value = ''
   if (typeof window !== 'undefined') {
     if (scenarioId) {
       window.localStorage.setItem(ACTIVE_SCENARIO_STORAGE_KEY, scenarioId)
@@ -3627,6 +4696,9 @@ watch(selectedScenarioId, async (scenarioId) => {
     return
   }
   await loadScenarioDetail(scenarioId)
+  if (currentSection.value === 'production' && productionSubsection.value === 'analysis') {
+    await ensureScenarioHistoryLoaded()
+  }
   if (currentSection.value === 'planner') {
     await syncPlannerWithActiveScenario({ silent: true })
   }
@@ -3636,8 +4708,8 @@ watch(currentSection, async (section) => {
   if (section === 'planner') {
     await syncPlannerWithActiveScenario({ silent: true })
   }
-  if (section === 'production') {
-    await loadWaterfloodAnalysis({ silent: true })
+  if (section === 'production' && productionSubsection.value === 'analysis') {
+    await ensureScenarioHistoryLoaded()
   }
 })
 
@@ -3646,8 +4718,29 @@ watch(productionTimeMode, () => {
 })
 
 watch(productionSubsection, async (section) => {
-  if (currentSection.value === 'production' && section === 'analysis' && !waterfloodAnalysis.value) {
-    await loadWaterfloodAnalysis({ silent: true })
+  if (currentSection.value === 'production' && section === 'analysis') {
+    await ensureScenarioHistoryLoaded()
+    if (drainageMatrixRows.value.length) {
+      expandedDrainageKeys.value = ['drainage:total']
+    }
+  }
+})
+
+watch(historyAvailableDateBounds, (bounds) => {
+  if (!bounds.min || !bounds.max) return
+  if (!historyDateFrom.value || historyDateFrom.value < bounds.min || historyDateFrom.value > bounds.max) {
+    historyDateFrom.value = bounds.min
+  }
+  if (!historyDateTo.value || historyDateTo.value > bounds.max || historyDateTo.value < bounds.min) {
+    historyDateTo.value = bounds.max
+  }
+}, { immediate: true })
+
+watch(selectedDrainageMatrixKey, () => {
+  const bounds = historyAvailableDateBounds.value
+  if (bounds.min && bounds.max) {
+    historyDateFrom.value = bounds.min
+    historyDateTo.value = bounds.max
   }
 })
 
@@ -3902,7 +4995,7 @@ onMounted(async () => {
               <div class="flow-down-arrow" aria-hidden="true">↓</div>
 
               <div class="flow-main-row">
-                <div class="canvas-node inputs-group" :class="{ ready: scenarioReadiness.hasInputs, active: ['wells', 'niz', 'gtm', 'reservoir', 'economics', 'krs', 'infrastructure'].includes(activeCanvasNode) }">
+                <div class="canvas-node inputs-group" :class="{ ready: scenarioReadiness.hasInputs, active: ['wells', 'well_groups', 'niz', 'gtm', 'reservoir', 'economics', 'krs', 'infrastructure'].includes(activeCanvasNode) }">
                   <span class="canvas-node-kicker">Module A + Manual Inputs</span>
                   <strong>Исходные данные</strong>
                   <small>Загрузка datasets и настройка ручных вводных.</small>
@@ -3910,6 +5003,10 @@ onMounted(async () => {
                     <button type="button" class="input-mini-node seq-wells" :class="[inputNodeStatuses.wells, { active: activeCanvasNode === 'wells' }]" @click="selectCanvasNode('wells')">
                       <span class="input-mini-label">Wells</span>
                       <span v-if="inputNodeStatuses.wells !== 'empty'" class="input-mini-status" :title="inputNodePartialReason('wells')">{{ inputNodeStatuses.wells === 'ready' ? '✓' : '−' }}</span>
+                    </button>
+                    <button type="button" class="input-mini-node seq-well-groups" :class="[inputNodeStatuses.well_groups, { active: activeCanvasNode === 'well_groups' }]" @click="selectCanvasNode('well_groups')">
+                      <span class="input-mini-label">GRUP</span>
+                      <span v-if="inputNodeStatuses.well_groups !== 'empty'" class="input-mini-status" :title="inputNodePartialReason('well_groups')">{{ inputNodeStatuses.well_groups === 'ready' ? '✓' : '−' }}</span>
                     </button>
                     <button type="button" class="input-mini-node seq-niz" :class="[inputNodeStatuses.niz, { active: activeCanvasNode === 'niz' }]" @click="selectCanvasNode('niz')">
                       <span class="input-mini-label">NIZ</span>
@@ -3995,6 +5092,7 @@ onMounted(async () => {
                 <template v-else-if="activeCanvasNode === 'scenario' && scenarioFlowMode === 'planner'">Нижний inspector показывает опубликованные planner revisions и позволяет выбрать, какую revision применить к активному сценарию.</template>
                 <template v-else-if="activeCanvasNode === 'scenario'">Источник графика уже выбран на диаграмме.</template>
                 <template v-else-if="activeCanvasNode === 'wells'">Версия wells dataset и сводная иерархия `LU -> куст -> скважина`.</template>
+                <template v-else-if="activeCanvasNode === 'well_groups'">TXT GRUP: связь скважин с группами. Последний group перед скважиной используется как well_pad, уровни выше — как SLOY/LU/infrastructure.</template>
                 <template v-else-if="activeCanvasNode === 'niz'">Версия NIZ dataset и сводная иерархия `LU -> куст -> скважина` по связанным скважинам.</template>
                 <template v-else-if="activeCanvasNode === 'gtm'">Версия GTM dataset и сводная иерархия `LU -> куст -> скважина` с приростами.</template>
                 <template v-else-if="activeCanvasNode === 'reservoir'">LU / SLOY, характеристика вытеснения и годовые темпы падения жидкости.</template>
@@ -4070,12 +5168,24 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div v-else-if="activeCanvasNode === 'wells' || activeCanvasNode === 'niz' || activeCanvasNode === 'gtm' || activeCanvasNode === 'infrastructure' || (activeCanvasNode === 'scenario' && scenarioFlowMode === 'external')" class="page-stack">
+        <div v-else-if="activeCanvasNode === 'wells' || activeCanvasNode === 'well_groups' || activeCanvasNode === 'niz' || activeCanvasNode === 'gtm' || activeCanvasNode === 'infrastructure' || (activeCanvasNode === 'scenario' && scenarioFlowMode === 'external')" class="page-stack">
           <div class="page-stack">
             <div class="panel soft">
               <h2>{{ SOURCE_KIND_META[selectedUploadSourceKind].title }}</h2>
               <p class="subtitle">{{ SOURCE_KIND_META[selectedUploadSourceKind].description }}</p>
-              <input ref="uploadInputRef" type="file" accept=".xlsx,.xls,.xlsm" class="hidden-file-input" @change="uploadSourceFile" />
+              <div class="dataset-kind-strip">
+                <button
+                  v-for="kind in ['wells', 'well_groups', 'well_trajectories', 'perforations', 'production_history', 'injection_history', 'niz', 'gtm', 'infrastructure', 'external_krs_schedule']"
+                  :key="kind"
+                  type="button"
+                  class="dataset-kind-pill"
+                  :class="{ active: selectedUploadSourceKind === kind }"
+                  @click="selectedUploadSourceKind = kind"
+                >
+                  {{ SOURCE_KIND_META[kind]?.title || kind }}
+                </button>
+              </div>
+              <input ref="uploadInputRef" type="file" accept=".xlsx,.xls,.xlsm,.txt" class="hidden-file-input" @change="uploadSourceFile" />
               <div class="upload-compact-row">
                 <label class="compact-field">
                   <span>Файл</span>
@@ -4105,7 +5215,7 @@ onMounted(async () => {
                   </select>
                 </label>
                 <div class="compact-actions upload-actions">
-                  <button class="button" :disabled="loading" @click="uploadInputRef?.click()">Загрузить Excel</button>
+                  <button class="button" :disabled="loading" @click="uploadInputRef?.click()">Загрузить файл</button>
                   <button class="button" :disabled="!selectedUploadFileId || loading" @click="openUploadedPreview(selectedUploadFileId, selectedUploadSheet || null)">Открыть</button>
                   <button class="button" :disabled="!inputFile || loading" @click="openMappingModalForCurrentFile()">Сопоставление</button>
                   <button class="button primary" :disabled="!inputFile || loading" @click="normalizeDataset">Сохранить dataset</button>
@@ -4812,31 +5922,480 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div v-if="!scenarioDetail" class="panel empty-state">
+        <div v-if="!scenarioDetail && productionSubsection === 'forecast'" class="panel empty-state">
           Сохраненные сценарии пока не загружены. Запустите расчет на листе `Схема работы оптимизатора`.
         </div>
 
-        <template v-else>
-          <div class="stats-grid production-stats">
+        <template v-if="scenarioDetail || productionSubsection === 'analysis'">
+          <div v-if="scenarioDetail" class="stats-grid production-stats">
             <div class="stat-card"><span>Период</span><strong>{{ formatDateCell(scenarioDetail.scenario.forecast_start_date) }} — {{ formatDateCell(scenarioDetail.scenario.forecast_end_date) }}</strong></div>
             <div class="stat-card"><span>Нефть по выборке</span><strong>{{ formatCompactNumber(selectedProductionSummary.totalOil) }}</strong></div>
             <div class="stat-card"><span>Жидкость по выборке</span><strong>{{ formatCompactNumber(selectedProductionSummary.totalLiquid) }}</strong></div>
           </div>
 
-          <div v-if="productionSubsection === 'analysis'" class="production-analysis-stack">
+          <div v-if="productionSubsection === 'analysis'" class="production-analysis-stack opm-analysis-stack">
+            <div class="panel opm-analysis-control-panel">
+              <div class="toolbar between align-start">
+                <div>
+                  <h2>OPM Flow 1D: анализ и настройка</h2>
+                  <p class="subtitle">Экран работает от активного сценария: траектории + перфорации формируют контакты, связи injector-producer формируют 1D модели и матрицу дренирования.</p>
+                </div>
+                <div class="toolbar-actions">
+                  <span class="status-pill" :class="drainagePreparation ? 'ready' : 'pending'">
+                    {{ drainagePreparation ? 'контекст подготовлен' : 'нет подготовки' }}
+                  </span>
+                  <button class="button" :disabled="drainagePreparationLoading || !selectedScenarioId" @click="prepareDrainageModelsFromScenario">
+                    {{ drainagePreparationLoading ? 'Подготовка...' : 'Подготовить 1D из сценария' }}
+                  </button>
+                </div>
+              </div>
+              <div class="opm-analysis-toolbar">
+                <div class="opm-property-switch">
+                  <span>Свойство карты</span>
+                  <button
+                    v-for="property in OPM_ANALYSIS_PROPERTIES"
+                    :key="property.key"
+                    type="button"
+                    class="mode-toggle-button"
+                    :class="{ active: opmAnalysisProperty === property.key }"
+                    @click="opmAnalysisProperty = property.key"
+                  >
+                    {{ property.label }}
+                    <small>{{ property.kind === 'dynamic' ? 'динамика' : 'статика' }}</small>
+                  </button>
+                </div>
+                <label class="opm-radius-control">
+                  <span>Радиус связности, м</span>
+                  <input v-model.number="opmSimulationForm.influence_radius_m" type="number" min="100" step="100" />
+                </label>
+              </div>
+              <div class="opm-status-grid">
+                <div v-for="card in drainageStatusCards" :key="card.label" class="opm-status-card">
+                  <span>{{ card.label }}</span>
+                  <strong>{{ formatCompactNumber(card.value) }}</strong>
+                </div>
+              </div>
+              <div v-if="drainageDiagnostics?.warnings?.length" class="notice warning">
+                {{ drainageDiagnostics.warnings.join(' ') }}
+              </div>
+            </div>
+
+            <div v-if="!selectedScenarioId" class="panel empty-state">
+              Выберите сценарий. Набор моделей автоадаптации всегда берется из активного сценария.
+            </div>
+
+            <div v-else-if="!drainagePreparation" class="panel empty-state">
+              Подготовка 1D моделей еще не выполнена. Нажмите `Подготовить 1D из сценария`, чтобы построить контакты, связи и стартовую матрицу дренирования.
+            </div>
+
+            <template v-else>
+              <div class="panel opm-map-panel">
+                <div class="toolbar between align-start">
+                  <div>
+                    <h2>Карта скважин и 1D grid</h2>
+                    <p class="subtitle">Показаны скважины из сценария, связи injector-producer и ячейки выбранной 1D модели. Цвет ячеек соответствует свойству: {{ opmAnalysisPropertyOption.label }}.</p>
+                  </div>
+                  <div class="opm-map-legend">
+                    <span><i class="legend-dot injector"></i>Нагнетательная</span>
+                    <span><i class="legend-dot producer"></i>Добывающая</span>
+                    <span><i class="legend-line"></i>Связь / alpha</span>
+                  </div>
+                </div>
+                <div class="opm-map-layout">
+                  <svg class="opm-map-svg" :viewBox="`0 0 ${OPM_ANALYSIS_MAP_WIDTH} ${OPM_ANALYSIS_MAP_HEIGHT}`">
+                    <defs>
+                      <pattern id="opm-map-grid" width="44" height="44" patternUnits="userSpaceOnUse">
+                        <path d="M 44 0 L 0 0 0 44" fill="none" stroke="#e6edf5" stroke-width="1" />
+                      </pattern>
+                      <marker id="opm-analysis-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
+                        <path d="M0,0 L9,4.5 L0,9 z" fill="#4c6f92" />
+                      </marker>
+                    </defs>
+                    <rect x="0" y="0" :width="OPM_ANALYSIS_MAP_WIDTH" :height="OPM_ANALYSIS_MAP_HEIGHT" fill="url(#opm-map-grid)" rx="18" />
+                    <line
+                      v-for="connection in drainageMapConnections"
+                      :key="connection.connection_id"
+                      :x1="connection.injector.viewX"
+                      :y1="connection.injector.viewY"
+                      :x2="connection.producer.viewX"
+                      :y2="connection.producer.viewY"
+                      :stroke="connection.connection_id === selectedDrainageConnection?.connection_id ? '#f97316' : connection.propertyColor"
+                      :stroke-width="connection.connection_id === selectedDrainageConnection?.connection_id ? connection.strokeWidth + 2 : connection.strokeWidth"
+                      :opacity="connection.connection_id === selectedDrainageConnection?.connection_id ? 0.95 : 0.42"
+                      class="opm-map-link"
+                      marker-end="url(#opm-analysis-arrow)"
+                      @click="selectedDrainageConnectionId = connection.connection_id"
+                    />
+                    <circle
+                      v-for="cell in drainageGridCells"
+                      :key="cell.key"
+                      :cx="cell.x"
+                      :cy="cell.y"
+                      r="5"
+                      :fill="cell.color"
+                      stroke="#ffffff"
+                      stroke-width="1.2"
+                    >
+                      <title>{{ cell.index }}: {{ formatCompactDecimal(cell.value, opmAnalysisProperty === 'saturation' ? 3 : 1) }} {{ opmAnalysisPropertyOption.unit }}</title>
+                    </circle>
+                    <g
+                      v-for="well in drainageMapWells"
+                      :key="well.well_name"
+                      :class="['opm-map-well', well.role]"
+                    >
+                      <circle :cx="well.viewX" :cy="well.viewY" :r="well.role === 'injector' ? 10 : 8" />
+                      <text :x="well.viewX + 13" :y="well.viewY + 4">{{ well.well_name }}</text>
+                    </g>
+                  </svg>
+                  <aside class="opm-link-inspector">
+                    <span>Выбранная 1D модель</span>
+                    <strong>{{ selectedDrainageModelSpec?.model_name || 'Нет выбранной модели' }}</strong>
+                    <dl v-if="selectedDrainageConnection">
+                      <dt>Связь</dt>
+                      <dd>{{ selectedDrainageConnection.injector_name }} → {{ selectedDrainageConnection.producer_name }}</dd>
+                      <dt>Alpha / prior</dt>
+                      <dd>{{ formatCompactDecimal(selectedDrainageConnection.alpha, 4) }} / {{ formatCompactDecimal(selectedDrainageConnection.alpha_prior, 4) }}</dd>
+                      <dt>PV / OOIP</dt>
+                      <dd>{{ formatCompactNumber(selectedDrainageConnection.pv) }} / {{ selectedDrainageModelSpec?.allocated_ooip ? formatCompactNumber(selectedDrainageModelSpec.allocated_ooip) : '—' }}</dd>
+                      <dt>Длина / grid</dt>
+                      <dd>{{ formatCompactNumber(selectedDrainageConnection.distance_m) }} м / {{ selectedDrainageModelSpec?.nx || 0 }} × 1 × 1</dd>
+                      <dt>Tau</dt>
+                      <dd>{{ formatCompactNumber(selectedDrainageConnection.tau_days) }} сут</dd>
+                    </dl>
+                    <div class="opm-output-box">
+                      <strong>OPM output files</strong>
+                      <p v-if="opmOutputArtifacts.length">Найдено файлов: {{ opmOutputArtifacts.length }}</p>
+                      <p v-else>Выходные файлы OPM Flow для выбранного сценария еще не импортированы. Карта показывает подготовленную 1D геометрию и расчетные стартовые параметры.</p>
+                    </div>
+                  </aside>
+                </div>
+              </div>
+
+              <div class="panel opm-history-panel">
+                <div class="toolbar between align-start">
+                  <div>
+                    <h2>История добычи и закачки</h2>
+                    <p class="subtitle">График синхронизирован с матрицей дренирования. Выбрано: {{ historyCategoryLabel }}. По оси X время, по оси Y включенные показатели.</p>
+                  </div>
+                  <div class="toolbar-actions">
+                    <label class="history-date-field">
+                      <span>С</span>
+                      <input v-model="historyDateFrom" type="date" :min="historyAvailableDateBounds.min" :max="historyAvailableDateBounds.max" />
+                    </label>
+                    <label class="history-date-field">
+                      <span>По</span>
+                      <input v-model="historyDateTo" type="date" :min="historyAvailableDateBounds.min" :max="historyAvailableDateBounds.max" />
+                    </label>
+                    <button class="button ghost" type="button" @click="resetHistoryDateRange">Весь период</button>
+                  </div>
+                </div>
+                <div class="history-metric-switch">
+                  <button
+                    v-for="metric in HISTORY_METRIC_OPTIONS"
+                    :key="metric.key"
+                    type="button"
+                    class="history-metric-chip"
+                    :class="{ active: selectedHistoryMetricKeys.includes(metric.key) }"
+                    :style="{ '--metric-color': metric.color }"
+                    @click="toggleHistoryMetric(metric.key)"
+                  >
+                    <i></i>
+                    {{ metric.label }}
+                    <small>{{ metric.unit }}</small>
+                  </button>
+                </div>
+                <div class="history-axis-range-grid">
+                  <div
+                    v-for="axis in visibleHistoryAxes"
+                    :key="axis.key"
+                    class="history-axis-range-card"
+                    :style="{ '--axis-color': axis.color }"
+                  >
+                    <strong>{{ axis.label }}</strong>
+                    <span>{{ axis.unit }}</span>
+                    <label>
+                      min
+                      <input v-model="historyAxisRanges[axis.key].min" type="number" step="any" placeholder="auto" />
+                    </label>
+                    <label>
+                      max
+                      <input v-model="historyAxisRanges[axis.key].max" type="number" step="any" placeholder="auto" />
+                    </label>
+                  </div>
+                </div>
+                <div v-if="!scenarioProductionHistoryRows.length && !scenarioInjectionHistoryRows.length" class="empty-inline">
+                  В контексте сценария нет загруженной production/injection history.
+                </div>
+                <div v-else-if="!filteredHistoryBuckets.length" class="empty-inline">
+                  Нет исторических точек для выбранной категории и диапазона дат.
+                </div>
+                <div v-else class="history-chart-wrap">
+                  <svg class="history-chart" :viewBox="`0 0 ${HISTORY_CHART_WIDTH} ${HISTORY_CHART_HEIGHT}`">
+                    <line
+                      v-for="tick in historyPrimaryGridTicks"
+                      :key="`y:${tick.value}`"
+                      :x1="HISTORY_CHART_LEFT"
+                      :x2="historyPlotRight"
+                      :y1="tick.y"
+                      :y2="tick.y"
+                      class="history-grid-line"
+                    />
+                    <line
+                      v-for="tick in historyGraphXTicks"
+                      :key="`x:${tick.date}`"
+                      :x1="tick.x"
+                      :x2="tick.x"
+                      :y1="HISTORY_CHART_TOP"
+                      :y2="HISTORY_CHART_HEIGHT - HISTORY_CHART_BOTTOM"
+                      class="history-grid-line vertical"
+                    />
+                    <line :x1="HISTORY_CHART_LEFT" :x2="historyPlotRight" :y1="HISTORY_CHART_HEIGHT - HISTORY_CHART_BOTTOM" :y2="HISTORY_CHART_HEIGHT - HISTORY_CHART_BOTTOM" class="history-axis" />
+                    <g v-for="axis in historyAxisLayouts" :key="axis.key">
+                      <line :x1="axis.x" :x2="axis.x" :y1="HISTORY_CHART_TOP" :y2="HISTORY_CHART_HEIGHT - HISTORY_CHART_BOTTOM" class="history-axis" :style="{ stroke: axis.color }" />
+                      <text :x="axis.titleX" :y="16" :text-anchor="axis.titleAnchor" class="history-axis-title" :style="{ fill: axis.color }">{{ axis.label }}</text>
+                      <g v-for="tick in axis.ticks" :key="`${axis.key}:${tick.value}`">
+                        <line :x1="axis.tickX1" :x2="axis.tickX2" :y1="tick.y" :y2="tick.y" class="history-axis-tick" :style="{ stroke: axis.color }" />
+                        <text
+                          :x="axis.labelX"
+                          :y="tick.y + 4"
+                          :text-anchor="axis.textAnchor"
+                          class="history-axis-label"
+                          :style="{ fill: axis.color }"
+                        >
+                          {{ formatHistoryAxisValue(tick.value, axis.key) }}
+                        </text>
+                      </g>
+                    </g>
+                    <text
+                      v-for="tick in historyGraphXTicks"
+                      :key="`xl:${tick.date}`"
+                      :x="tick.x"
+                      :y="HISTORY_CHART_HEIGHT - 24"
+                      text-anchor="middle"
+                      class="history-axis-label"
+                    >
+                      {{ formatShortMonthTick(tick.date) }}
+                    </text>
+                    <g v-for="series in historyGraphSeries" :key="series.key">
+                      <polyline
+                        v-if="series.points.length > 1"
+                        :points="series.polyline"
+                        fill="none"
+                        :stroke="series.color"
+                        stroke-width="2.8"
+                        stroke-linejoin="round"
+                        stroke-linecap="round"
+                      />
+                      <circle
+                        v-for="point in series.points"
+                        :key="`${series.key}:${point.date}`"
+                        :cx="point.x"
+                        :cy="point.y"
+                        r="3.8"
+                        :fill="series.color"
+                        stroke="#fff"
+                        stroke-width="1.5"
+                      >
+                        <title>{{ series.label }} / {{ formatDateCell(point.date) }}: {{ formatCompactDecimal(point.value, series.key === 'watercut' ? 2 : 1) }} {{ series.unit }}</title>
+                      </circle>
+                    </g>
+                  </svg>
+                </div>
+                <div class="history-summary-row">
+                  <span>Production rows: {{ categoryProductionHistoryRows.length }}</span>
+                  <span>Injection rows: {{ categoryInjectionHistoryRows.length }}</span>
+                  <span>Точек на графике: {{ filteredHistoryBuckets.length }}</span>
+                  <span>Скважин добывающих: {{ selectedHistoryWellSets.producers.size }}</span>
+                  <span>Скважин нагнетательных: {{ selectedHistoryWellSets.injectors.size }}</span>
+                </div>
+              </div>
+
+              <div v-if="false" class="panel opm-graphs-panel">
+                <div class="toolbar between align-start">
+                  <div>
+                    <h2>Графики по группам и скважинам</h2>
+                    <p class="subtitle">Агрегация матрицы дренирования по LU, кустам или добывающим скважинам активного сценария.</p>
+                  </div>
+                  <div class="mode-toggle">
+                    <button
+                      v-for="level in OPM_ANALYSIS_GROUP_LEVELS"
+                      :key="level.key"
+                      type="button"
+                      class="mode-toggle-button"
+                      :class="{ active: opmAnalysisGroupLevel === level.key }"
+                      @click="opmAnalysisGroupLevel = level.key"
+                    >
+                      {{ level.label }}
+                    </button>
+                  </div>
+                </div>
+                <div class="opm-bar-list">
+                  <button
+                    v-for="row in drainageGraphRows"
+                    :key="row.key"
+                    type="button"
+                    class="opm-bar-row"
+                    @click="selectedDrainageConnectionId = row.connectionId || selectedDrainageConnectionId"
+                  >
+                    <span class="opm-bar-label">{{ row.label }}</span>
+                    <span class="opm-bar-track"><i :style="{ width: `${Math.max(4, (row.pv / maxDrainageGraphPv) * 100)}%` }"></i></span>
+                    <span>{{ formatCompactNumber(row.pv) }} PV</span>
+                    <span>{{ formatCompactDecimal(row.alphaSum, 3) }} α</span>
+                    <span>{{ row.connectionCount }} связей</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="panel opm-drainage-matrix-panel">
+                <div class="toolbar between align-start">
+                  <div>
+                    <h2>Матрица дренирования</h2>
+                    <p class="subtitle">Иерархия: Итого → LU → нагнетательная → связанные добывающие. Таблица показывает только показатели закачки, компенсации, давления и участия.</p>
+                  </div>
+                </div>
+                <div class="table-wrap hierarchy-wrap opm-drainage-wrap">
+                  <table class="hierarchy-table opm-drainage-table">
+                    <thead>
+                      <tr>
+                        <th>Узел</th>
+                        <th>Закач. тек.</th>
+                        <th>Закач. нак.</th>
+                        <th>PV</th>
+                        <th>PV прокач.</th>
+                        <th>Рпл факт</th>
+                        <th>Рпл расч.</th>
+                        <th>Комп. тек.</th>
+                        <th>Комп. нак.</th>
+                        <th>Нефть тек.</th>
+                        <th>Жидк. тек.</th>
+                        <th>Обв.</th>
+                        <th>α</th>
+                        <th>BHP факт</th>
+                        <th>BHP расч.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="row in visibleDrainageMatrixRows"
+                        :key="row.key"
+                        :class="[`node-${row.nodeType}`, { active: selectedDrainageMatrixKey === row.key }]"
+                        @click="selectDrainageMatrixRow(row)"
+                      >
+                        <td>
+                          <div class="node-cell" :style="{ paddingLeft: `${row.depth * 18}px` }">
+                            <button v-if="row.children.length" type="button" class="node-toggle" @click.stop="toggleDrainageExpand(row.key)">{{ expandedDrainageKeys.includes(row.key) ? '−' : '+' }}</button>
+                            <span v-else class="node-spacer"></span>
+                            <strong>{{ row.label }}</strong>
+                          </div>
+                        </td>
+                        <td>{{ row.nodeType === 'producer' ? '—' : formatCompactNumber(row.currentInjection) }}</td>
+                        <td>{{ row.nodeType === 'producer' ? '—' : formatCompactNumber(row.cumulativeInjection) }}</td>
+                        <td>{{ formatCompactNumber(row.poreVolume) }}</td>
+                        <td>{{ row.nodeType === 'producer' ? '—' : (row.injectedPoreVolume === null ? '—' : formatCompactDecimal(row.injectedPoreVolume, 2)) }}</td>
+                        <td>{{ row.pResFact === null ? '—' : formatCompactDecimal(row.pResFact, 1) }}</td>
+                        <td>{{ row.pResCalc === null ? '—' : formatCompactDecimal(row.pResCalc, 1) }}</td>
+                        <td>{{ row.nodeType === 'producer' || row.currentCompensation === null ? '—' : formatCompactDecimal(row.currentCompensation, 2) }}</td>
+                        <td>{{ row.nodeType === 'producer' || row.cumulativeCompensation === null ? '—' : formatCompactDecimal(row.cumulativeCompensation, 2) }}</td>
+                        <td>{{ row.nodeType === 'injector' ? '—' : formatCompactNumber(row.currentOil) }}</td>
+                        <td>{{ row.nodeType === 'injector' ? '—' : formatCompactNumber(row.currentLiquid) }}</td>
+                        <td>{{ row.nodeType === 'injector' || row.watercut === null ? '—' : formatRatioPercent(row.watercut, 1) }}</td>
+                        <td>{{ row.alpha === null ? '—' : formatCompactDecimal(row.alpha, 4) }}</td>
+                        <td>{{ row.nodeType === 'injector' || row.bhpFact === null ? '—' : formatCompactDecimal(row.bhpFact, 1) }}</td>
+                        <td>{{ row.nodeType === 'injector' || row.bhpCalc === null ? '—' : formatCompactDecimal(row.bhpCalc, 1) }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <div v-if="false && productionSubsection === 'analysis'" class="production-analysis-stack">
             <div class="panel waterflood-overview-panel">
               <div class="toolbar between align-start">
                 <div>
-                  <h2>Waterflood proxy: автоадаптация</h2>
-                  <p class="subtitle">Native MVP строит первичную связность по координатам, подбирает mock alpha/pressure/watercut и готовит базу для будущего production history matching.</p>
+                  <h2>OPM Flow: настройка и анализ</h2>
+                  <p class="subtitle">Настройка synthetic history-match по data_templates, расчет связей нагнетательная-добывающая, насыщенности, давления и факт-расчет аналитики.</p>
                 </div>
                 <div class="toolbar-actions">
-                  <span class="status-pill" :class="waterfloodCalibration?.status === 'mock_calibrated' ? 'ready' : 'pending'">
+                  <span class="status-pill" :class="waterfloodCalibration?.status ? 'ready' : 'pending'">
                     {{ waterfloodCalibration?.status || 'нет расчета' }}
                   </span>
                   <button class="button ghost" :disabled="waterfloodLoading" @click="loadWaterfloodAnalysis()">
-                    {{ waterfloodLoading ? 'Обновление...' : 'Обновить waterflood' }}
+                    {{ waterfloodLoading ? 'Обновление...' : 'Обновить proxy' }}
                   </button>
+                  <button class="button" :disabled="drainagePreparationLoading || !selectedScenarioId" @click="prepareDrainageModelsFromScenario">
+                    {{ drainagePreparationLoading ? 'Подготовка...' : 'Подготовить 1D из сценария' }}
+                  </button>
+                </div>
+              </div>
+              <div class="opm-simulation-box">
+                <div class="opm-simulation-head">
+                  <div>
+                    <strong>OPM Flow template run</strong>
+                    <span>Источник: docs/forecast-module/data_templates/wells, production, injection, cells</span>
+                  </div>
+                  <div class="opm-run-meta">
+                    <span class="status-pill" :class="opmSimulationRun?.status === 'completed' ? 'ready' : 'pending'">
+                      {{ opmSimulationRun?.status || 'run не запускался' }}
+                    </span>
+                    <span v-if="opmSimulationRun?.run_id">run {{ opmSimulationRun.run_id.slice(0, 8) }}</span>
+                  </div>
+                </div>
+                <div class="opm-simulation-form">
+                  <label class="opm-field wide">
+                    <span>Case name</span>
+                    <input v-model="opmSimulationForm.case_name" type="text" />
+                  </label>
+                  <label class="opm-field">
+                    <span>Старт</span>
+                    <input v-model="opmSimulationForm.forecast_start_date" type="date" />
+                  </label>
+                  <label class="opm-field">
+                    <span>Конец</span>
+                    <input v-model="opmSimulationForm.forecast_end_date" type="date" />
+                  </label>
+                  <label class="opm-field">
+                    <span>Итерации</span>
+                    <input v-model.number="opmSimulationForm.history_match_iterations" type="number" min="1" max="200" />
+                  </label>
+                  <label class="opm-field">
+                    <span>Радиус, м</span>
+                    <input v-model.number="opmSimulationForm.influence_radius_m" type="number" min="100" step="100" />
+                  </label>
+                  <label class="opm-field">
+                    <span>Вес P</span>
+                    <input v-model.number="opmSimulationForm.pressure_weight" type="number" min="0" max="1" step="0.05" />
+                  </label>
+                  <label class="opm-field">
+                    <span>Вес WCT</span>
+                    <input v-model.number="opmSimulationForm.watercut_weight" type="number" min="0" max="1" step="0.05" />
+                  </label>
+                  <label class="opm-field">
+                    <span>Вес rate</span>
+                    <input v-model.number="opmSimulationForm.rate_weight" type="number" min="0" max="1" step="0.05" />
+                  </label>
+                  <label class="opm-field vectors">
+                    <span>Summary vectors</span>
+                    <input v-model="opmSimulationForm.summary_vectors" type="text" />
+                  </label>
+                  <button class="button primary opm-run-button" :disabled="opmSimulationLoading" @click="runTemplateOpmSyntheticSimulation">
+                    {{ opmSimulationLoading ? 'Расчет...' : 'Запустить симуляцию' }}
+                  </button>
+                </div>
+                <div v-if="opmSimulationRun?.metadata?.runner_error" class="opm-run-error">
+                  {{ opmSimulationRun.metadata.runner_error }}
+                </div>
+                <div v-if="drainagePreparation" class="opm-prep-summary">
+                  <span>GRUP rows: {{ drainagePreparation.diagnostics?.well_group_rows || 0 }}</span>
+                  <span>TRAJ rows: {{ drainagePreparation.diagnostics?.trajectory_rows || 0 }}</span>
+                  <span>PERF rows: {{ drainagePreparation.diagnostics?.perforation_rows || 0 }}</span>
+                  <span>Контакты: {{ drainagePreparation.contact_intervals?.length || 0 }}</span>
+                  <span>Связи: {{ drainagePreparation.connections?.length || 0 }}</span>
+                  <span>1D модели: {{ drainagePreparation.model_specs?.length || 0 }}</span>
+                </div>
+                <div v-if="drainagePreparation?.diagnostics?.warnings?.length" class="notice warning">
+                  {{ drainagePreparation.diagnostics.warnings.join(' ') }}
                 </div>
               </div>
               <div class="waterflood-method-grid">
@@ -6694,6 +8253,550 @@ th {
   gap: 12px;
 }
 
+.opm-analysis-stack {
+  gap: 18px;
+}
+
+.opm-analysis-control-panel {
+  overflow: hidden;
+}
+
+.opm-analysis-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-end;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.opm-property-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.opm-property-switch > span,
+.opm-radius-control span {
+  color: #74839a;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.opm-property-switch .mode-toggle-button {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.opm-property-switch small {
+  color: #7e8da3;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.opm-radius-control {
+  display: grid;
+  gap: 6px;
+  min-width: 190px;
+}
+
+.opm-radius-control input {
+  border: 1px solid #d9e1ea;
+  border-radius: 14px;
+  padding: 10px 12px;
+  color: #142238;
+  font: inherit;
+  font-weight: 800;
+}
+
+.opm-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.opm-status-card {
+  padding: 14px 16px;
+  border: 1px solid #e4ebf3;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff, #f8fbff);
+}
+
+.opm-status-card span {
+  display: block;
+  color: #74839a;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.opm-status-card strong {
+  display: block;
+  margin-top: 6px;
+  color: #142238;
+  font-size: 24px;
+}
+
+.opm-map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 18px;
+  align-items: stretch;
+}
+
+.opm-map-svg {
+  width: 100%;
+  min-height: 420px;
+  border: 1px solid #dde7f1;
+  border-radius: 20px;
+  background: #f8fbff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.opm-map-link {
+  cursor: pointer;
+  transition: opacity 0.15s ease, stroke-width 0.15s ease;
+}
+
+.opm-map-link:hover {
+  opacity: 1;
+  stroke-width: 6;
+}
+
+.opm-map-well circle {
+  stroke: #ffffff;
+  stroke-width: 3;
+  filter: drop-shadow(0 5px 10px rgba(20, 34, 56, 0.2));
+}
+
+.opm-map-well.injector circle {
+  fill: #2563eb;
+}
+
+.opm-map-well.producer circle {
+  fill: #16a34a;
+}
+
+.opm-map-well text {
+  fill: #142238;
+  font-size: 12px;
+  font-weight: 900;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 4px;
+}
+
+.opm-map-legend {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  color: #5f7088;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.opm-map-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.legend-dot.injector {
+  background: #2563eb;
+}
+
+.legend-dot.producer {
+  background: #16a34a;
+}
+
+.legend-line {
+  display: inline-block;
+  width: 22px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2563eb, #f97316);
+}
+
+.opm-link-inspector {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid #dce6f0;
+  border-radius: 20px;
+  background: #ffffff;
+}
+
+.opm-link-inspector > span {
+  color: #74839a;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.opm-link-inspector > strong {
+  color: #142238;
+  font-size: 20px;
+  line-height: 1.15;
+}
+
+.opm-link-inspector dl {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 0;
+}
+
+.opm-link-inspector dt {
+  color: #7e8da3;
+  font-weight: 800;
+}
+
+.opm-link-inspector dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #142238;
+  font-weight: 800;
+}
+
+.opm-output-box {
+  margin-top: auto;
+  padding: 14px;
+  border-radius: 16px;
+  background: #f3f7fb;
+  color: #5f7088;
+}
+
+.opm-output-box strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #142238;
+}
+
+.opm-output-box p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.opm-bar-list {
+  display: grid;
+  gap: 8px;
+}
+
+.opm-bar-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 280px) minmax(180px, 1fr) 100px 90px 90px;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #e3ebf4;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #142238;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.opm-bar-row:hover {
+  border-color: #93c5fd;
+  background: #f8fbff;
+}
+
+.opm-bar-label {
+  overflow: hidden;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.opm-bar-track {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8eef5;
+}
+
+.opm-bar-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0ea5e9, #f97316);
+}
+
+.opm-history-panel {
+  overflow: hidden;
+}
+
+.history-date-field {
+  display: grid;
+  gap: 4px;
+}
+
+.history-date-field span {
+  color: #74839a;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.history-date-field input {
+  height: 38px;
+  min-width: 150px;
+  padding: 0 10px;
+  border: 1px solid #dbe4ee;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #142238;
+  font: inherit;
+  font-weight: 800;
+}
+
+.history-metric-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.history-metric-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 7px 10px;
+  border: 1px solid #dce5ef;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #52647a;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  opacity: 0.58;
+}
+
+.history-metric-chip i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--metric-color);
+}
+
+.history-metric-chip small {
+  color: #8a98aa;
+  font-weight: 800;
+}
+
+.history-metric-chip.active {
+  border-color: color-mix(in srgb, var(--metric-color) 42%, #dce5ef);
+  background: color-mix(in srgb, var(--metric-color) 10%, #ffffff);
+  color: #142238;
+  opacity: 1;
+}
+
+.history-axis-range-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+}
+
+.history-axis-range-card {
+  display: grid;
+  grid-template-columns: minmax(72px, 1fr) auto auto auto;
+  gap: 8px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--axis-color) 28%, #dce5ef);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--axis-color) 8%, #ffffff);
+}
+
+.history-axis-range-card strong {
+  color: #142238;
+  font-size: 13px;
+  line-height: 1.1;
+}
+
+.history-axis-range-card > span {
+  color: var(--axis-color);
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.history-axis-range-card label {
+  display: grid;
+  gap: 3px;
+  color: #68798d;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.history-axis-range-card input {
+  width: 82px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #d8e2ed;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #142238;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.history-chart-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #e3ebf4;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(14, 165, 233, 0.08), transparent 34%),
+    #ffffff;
+}
+
+.history-chart {
+  display: block;
+  min-width: 920px;
+  width: 100%;
+  height: auto;
+}
+
+.history-grid-line {
+  stroke: #e5edf5;
+  stroke-width: 1;
+}
+
+.history-grid-line.vertical {
+  stroke-dasharray: 4 6;
+}
+
+.history-axis {
+  stroke: #8da0b6;
+  stroke-width: 1.4;
+}
+
+.history-axis-tick {
+  stroke-width: 1.4;
+}
+
+.history-axis-title {
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.history-axis-label {
+  fill: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.history-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.history-summary-row span {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #52647a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.opm-drainage-wrap {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.opm-drainage-table {
+  min-width: 1320px;
+  font-size: 12px;
+  table-layout: auto;
+}
+
+.opm-drainage-table tr.active {
+  background: #fff7ed;
+}
+
+.opm-drainage-table th,
+.opm-drainage-table td {
+  padding: 5px 7px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.opm-drainage-table th:first-child,
+.opm-drainage-table td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 210px;
+  max-width: 300px;
+  background: inherit;
+  text-align: left;
+}
+
+.opm-drainage-table th:first-child {
+  z-index: 2;
+  background: #f6f9fd;
+}
+
+.opm-drainage-table .node-cell {
+  min-height: 24px;
+}
+
+.opm-drainage-table .node-toggle {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  border-radius: 6px;
+}
+
+.opm-drainage-table td:not(:first-child),
+.opm-drainage-table th:not(:first-child) {
+  text-align: right;
+}
+
+@media (max-width: 1100px) {
+  .opm-status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .opm-map-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .opm-bar-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .production-analysis-panel {
   gap: 14px;
 }
@@ -6806,6 +8909,114 @@ th {
 .waterflood-network-panel,
 .waterflood-comparison-panel {
   overflow: hidden;
+}
+
+.opm-simulation-box {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 14px;
+  border: 1px solid rgba(47, 128, 255, 0.16);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(47, 128, 255, 0.12), transparent 34%),
+    linear-gradient(180deg, #ffffff, #f7fbff);
+}
+
+.opm-simulation-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.opm-simulation-head div:first-child,
+.opm-run-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.opm-simulation-head strong {
+  color: #17263a;
+  font-size: 18px;
+}
+
+.opm-simulation-head span {
+  overflow: hidden;
+  color: #647790;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.opm-run-meta {
+  justify-items: end;
+  font-size: 12px;
+}
+
+.opm-simulation-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.35fr) repeat(7, minmax(92px, 0.72fr)) minmax(220px, 1.3fr) auto;
+  gap: 10px;
+  align-items: end;
+  min-width: 0;
+}
+
+.opm-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.opm-field span {
+  color: #6f8096;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.opm-field input {
+  min-width: 0;
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid rgba(35, 50, 68, 0.1);
+  border-radius: 12px;
+  background: #fff;
+  color: #17263a;
+  font: inherit;
+}
+
+.opm-run-button {
+  height: 38px;
+  white-space: nowrap;
+}
+
+.opm-run-error {
+  padding: 10px 12px;
+  border: 1px solid rgba(190, 18, 60, 0.18);
+  border-radius: 14px;
+  background: #fff1f2;
+  color: #9f1239;
+  font-weight: 800;
+}
+
+.opm-prep-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.opm-prep-summary span {
+  padding: 6px 10px;
+  border: 1px solid rgba(47, 128, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(47, 128, 255, 0.08);
+  color: #23405f;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .waterflood-method-grid {
@@ -7034,6 +9245,16 @@ th {
 }
 
 @media (max-width: 1180px) {
+  .opm-simulation-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .opm-field.wide,
+  .opm-field.vectors,
+  .opm-run-button {
+    grid-column: 1 / -1;
+  }
+
   .waterflood-layout,
   .waterflood-network-card {
     grid-template-columns: 1fr;
@@ -7076,6 +9297,31 @@ th {
   background: #ffffff;
   color: #1d2f42;
   box-shadow: 0 6px 18px rgba(38, 60, 86, 0.12);
+}
+
+.dataset-kind-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.dataset-kind-pill {
+  border: 1px solid #d8e0ec;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #52647a;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 11px;
+  white-space: nowrap;
+}
+
+.dataset-kind-pill.active {
+  background: #edf6ff;
+  border-color: #86b7f3;
+  color: #1d4ed8;
 }
 
 .legend-item {

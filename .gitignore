@@ -1,4 +1,6 @@
 backend/storage/uploads/
+backend/storage/simulation_runs/
 external_tools/*
 !external_tools/README.md
 !external_tools/manifest.json
+external/opm-flow-bin/

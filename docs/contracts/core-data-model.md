@@ -43,6 +43,7 @@
 - `external_krs_schedule`
 - `production_history`
 - `injection_history`
+- `well_groups`
 - `development_cells`
 - `waterflood_connections`
 - `reservoir_properties`
@@ -597,7 +598,7 @@
 
 ## Entity: ForecastModelConfig
 
-Описывает конфигурацию новой waterflood proxy методики.
+Описывает конфигурацию расчётной методики Module B.
 
 ### Поля
 
@@ -617,12 +618,14 @@
 
 ### Forecast Methods
 
+- `opm_flow_blackoil`
 - `waterflood_proxy_hm`
 - `legacy_decline_liquid`
 
 ### Инварианты
 
-- `waterflood_proxy_hm` является целевой основной методикой Module B;
+- `opm_flow_blackoil` является production-методикой Module B;
+- `waterflood_proxy_hm` допускается как optional reduced-order diagnostic/proxy path;
 - `legacy_decline_liquid` допускается как режим совместимости для старых сценариев и synthetic smoke tests;
 - координатная система должна быть задана явно.
 
@@ -654,6 +657,132 @@
 
 - forecast events из `GTM`, `KrsScheduleScenario` или `PlannerScheduleRevision` должны приводиться к этой модели событий перед запуском новой методики;
 - изменения связей не должны перетирать исходную distance-based диагностику, а должны сохраняться как сценарные overrides.
+
+---
+
+## Entity: SimulationRun
+
+Описывает один запуск гидродинамического расчёта Module B.
+
+### Поля
+
+- `run_id: str`
+- `scenario_id: str`
+- `forecast_method: str`
+- `engine: str`
+- `engine_version: str | None`
+- `status: str`
+- `case_name: str`
+- `case_root: str`
+- `input_dir: str`
+- `output_dir: str`
+- `normalized_dir: str`
+- `started_at: str | None`
+- `finished_at: str | None`
+- `created_at: str`
+- `created_by: str | None`
+- `opm_case_manifest: OpmCaseManifest | None`
+- `artifacts: list[SimulationArtifact]`
+- `import_result: OpmImportResult | None`
+- `metadata: dict[str, object] | None`
+
+### Status Values
+
+- `draft`
+- `case_built`
+- `running`
+- `completed`
+- `failed`
+- `imported`
+
+### Инварианты
+
+- каждый production-запуск `Module B` создает новый `SimulationRun`;
+- raw OPM artifacts не перезаписываются после завершения запуска;
+- downstream-модули читают нормализованные результаты, но raw artifacts сохраняются как evidence/debug layer;
+- `scenario_id` обязателен для всех результатов, таблиц и artifacts.
+
+---
+
+## Entity: OpmCaseManifest
+
+Описывает подготовленный OPM/Eclipse-compatible case.
+
+### Поля
+
+- `case_name: str`
+- `deck_path: str`
+- `include_files: list[str]`
+- `sections: list[str]`
+- `summary_vectors: list[str]`
+- `input_bindings_hash: str | None`
+- `deck_hash: str | None`
+- `validation_warnings: list[str]`
+- `metadata: dict[str, object] | None`
+
+### Инварианты
+
+- manifest должен позволять воспроизвести, какие входные данные и include-файлы были использованы;
+- `RUNSPEC`, `GRID`, `PROPS`, `REGIONS`, `SOLUTION`, `SCHEDULE`, `SUMMARY` являются каноническими секциями production case.
+
+---
+
+## Entity: SimulationArtifact
+
+Описывает raw или normalized файл, связанный с `SimulationRun`.
+
+### Поля
+
+- `artifact_id: str`
+- `run_id: str`
+- `artifact_type: str`
+- `path: str`
+- `format: str`
+- `size_bytes: int | None`
+- `checksum: str | None`
+- `created_at: str | None`
+- `metadata: dict[str, object] | None`
+
+### Artifact Types
+
+- `opm_deck`
+- `opm_include`
+- `opm_egrid`
+- `opm_init`
+- `opm_smspec`
+- `opm_unsmry`
+- `opm_unrst`
+- `opm_rft`
+- `opm_prt`
+- `opm_log`
+- `normalized_parquet`
+- `import_report`
+
+---
+
+## Entity: OpmImportResult
+
+Описывает результат импорта raw OPM artifacts в нормализованные таблицы WorkNotOver.
+
+### Поля
+
+- `run_id: str`
+- `status: str`
+- `well_timeseries_path: str | None`
+- `field_timeseries_path: str | None`
+- `grid_static_path: str | None`
+- `grid_dynamic_path: str | None`
+- `region_material_balance_path: str | None`
+- `rft_connections_path: str | None`
+- `warnings: list[str]`
+- `errors: list[str]`
+- `metadata: dict[str, object] | None`
+
+### Инварианты
+
+- importer не должен считать расчётную физику повторно;
+- importer только читает OPM/Eclipse artifacts и приводит их к каноническим таблицам;
+- отсутствие optional artifacts, например `.RFT`, не должно ломать импорт summary/grid results, но должно фиксироваться в warnings.
 
 ---
 
@@ -1180,10 +1309,13 @@
 ### Related Entity: ScenarioInputBindings
 
 - `wells_dataset: DatasetReference | None`
+- `well_groups_dataset: DatasetReference | None`
 - `niz_dataset: DatasetReference | None`
 - `gtm_dataset: DatasetReference | None`
 - `infrastructure_dataset: DatasetReference | None`
 - `external_krs_schedule_dataset: DatasetReference | None`
+- `well_trajectories_dataset: DatasetReference | None`
+- `perforations_dataset: DatasetReference | None`
 - `production_history_dataset: DatasetReference | None`
 - `injection_history_dataset: DatasetReference | None`
 - `development_cells_dataset: DatasetReference | None`
@@ -1196,10 +1328,13 @@
 ### Related Entity: ScenarioInputValidation
 
 - `wells_state: str`
+- `well_groups_state: str`
 - `niz_state: str`
 - `gtm_state: str`
 - `infrastructure_state: str`
 - `external_krs_schedule_state: str`
+- `well_trajectories_state: str`
+- `perforations_state: str`
 - `production_history_state: str`
 - `injection_history_state: str`
 - `development_cells_state: str`
@@ -1235,10 +1370,13 @@
 - у сценария должно существовать каноническое состояние валидации входов `ScenarioInputValidation`, чтобы один и тот же статус полноты входных данных читался одинаково в `Сценарии`, `Добыча` и planner-side flows;
 - если сценарий использует `external_krs_schedule`, но wells или gtm datasets не покрывают все скважины из внешнего графика, соответствующие узлы должны считаться `partial`, а `is_forecast_ready` должно быть `false`;
 - если сценарий требует `NIZ`, а wells dataset или gtm dataset содержат скважины, для которых отсутствует `NIZ` в привязанном scenario-bound dataset `niz`, соответствующие узлы `wells`, `gtm` и `niz` должны считаться `partial`, а `is_forecast_ready` должно быть `false`;
-- для `metadata.forecast_method = waterflood_proxy_hm` сценарий должен иметь привязанные `production_history_dataset`, `injection_history_dataset`, `development_cells_dataset`, `reservoir_properties_dataset` и `forecast_model_config`;
+- для `metadata.forecast_method = opm_flow_blackoil` сценарий должен иметь привязанные `production_history_dataset`, `injection_history_dataset`, `development_cells_dataset`, `reservoir_properties_dataset`, `forecast_model_config` и schedule source (`gtm`, `external_krs_schedule`, `optimized_krs` или `planner_revision`);
+- для `metadata.forecast_method = opm_flow_blackoil` `wells_dataset` должен содержать добывающие и нагнетательные скважины, координаты/привязку к grid completions или достаточные данные для построения `WELSPECS`/`COMPDAT`;
+- для `metadata.forecast_method = waterflood_proxy_hm` сценарий должен иметь привязанные `well_trajectories_dataset`, `perforations_dataset`, `production_history_dataset`, `injection_history_dataset`, `development_cells_dataset`, `reservoir_properties_dataset` и `forecast_model_config`;
+- для `metadata.forecast_method = opm_flow_1d_drainage` сценарий должен иметь привязанные `well_groups_dataset`, `well_trajectories_dataset`, `perforations_dataset`, `production_history_dataset`, `injection_history_dataset`; `NIZ` / pore volume пока optional на этапе подготовки `Drainage1DModelSpec`, но должен стать обязательным для production run с распределением запасов;
 - для `metadata.forecast_method = waterflood_proxy_hm` `wells_dataset` должен содержать `well_type`, `x`, `y` и согласованную координатную систему для всех добывающих и нагнетательных скважин, участвующих в расчёте;
 - если `reservoir_properties_dataset` не содержит достаточные PVT/SCAL/ROCK-свойства или включает silent extrapolation, `is_forecast_ready` должно быть `false`;
-- `waterflood_connections_dataset` может отсутствовать до запуска distance-based initialization; в этом случае Module B обязан построить initial connections из координат и сохранить diagnostics как scenario-bound output;
+- `waterflood_connections_dataset` может отсутствовать для `waterflood_proxy_hm` до запуска distance-based initialization; в этом случае Module B обязан построить initial connections из координат и сохранить diagnostics как scenario-bound output;
 - сценарий с `is_forecast_ready = false` не может быть передан в расчет добычи `Module B`.
 
 ---
@@ -1329,6 +1467,43 @@
 - `Dataset / DatasetVersion / DatasetReference` — сохранённый в storage layer канонический слой нормализованных данных;
 - `ManualInputSet / ManualInputReference` и связанные config entities — сохранённый в storage layer канонический слой ручных исходных данных;
 - `scenario results` — производные расчётные и planner-сущности, привязанные к сценарию.
+
+---
+
+## Дополнение для новой методики Module B: 1D OPM drainage models
+
+Для новой схемы прогноза добычи `Module B` добавляются scenario-bound datasets:
+
+- `well_groups` — scenario-bound иерархия скважин из GRUP: `well_name`, `well_pad_id`, optional `sloy_id`, `lu_id`, `infrastructure_object_id`, `group_path`; последний group перед скважиной мапится в `well_pad_id`, предыдущий уровень при наличии мапится в `sloy_id`;
+- `well_trajectories` — точки траекторий скважин: `well_name`, `md`, `x`, `y`, `z`, optional `trajectory_point_id`; для TXT TRAJ порядок колонок фиксирован как `X, Y, Z, MD`;
+- `perforations` — интервалы связи скважины с пластом: `well_name`, `top_md`, `bottom_md`, optional `lu_id`, `sloy_id`, `well_pad_id`, `start_date`, `end_date`;
+- `production_history` — история добычи по добывающим скважинам: `date`, `well_name`, `q_oil`, optional `q_water`, `q_liq`, `q_gas`, `bhp`, `thp`, `p_res`, `wefac`;
+- `injection_history` — история закачки по нагнетательным скважинам: `date`, `well_name`, `q_water_inj`, optional `bhp`, `whp`, `thp`, `p_res`, `wefac`.
+
+Для drainage-1D ветки все `well_name`, `well_pad_id`, `sloy_id`, `lu_id` нормализуются в верхний регистр. Объемы истории принимаются в `m3`, давления в `bar`, `wefac` соответствует `Кэкспл` (`работавшее время в месяце / календарное время месяца`).
+
+`Module B` обязан пересекать `well_trajectories` и `perforations`, формируя `ContactInterval`.
+`ContactInterval` является расчетной scenario-bound сущностью и содержит интервал MD, координаты верхней/нижней/центральной точки и иерархию `LU / SLOY / WellPad`, если она доступна.
+
+Первичная матрица дренирования формируется до запуска OPM Flow:
+
+- кандидаты injector-producer строятся между нагнетательными и добывающими скважинами с контактами с пластом;
+- базовый радиус влияния — `3000 m`;
+- обязательная первая догадка `alpha_prior` строится по геометрии/расстоянию;
+- CRM / pywaterflood может использоваться только как optional adapter для уточнения prior, но не как единственный источник связности;
+- для каждого активного ребра создается `Drainage1DModelSpec` с прямолинейной 1D геометрией от центра нагнетательной скважины до центра добывающей скважины.
+
+Минимальная 1D геометрия по умолчанию:
+
+- `dx = 50 m`;
+- `dy = 50 m`;
+- `dz = 5 m`;
+- `nx = ceil(distance_m / dx)`;
+- `ny = 1`;
+- `nz = 1`.
+
+Запасы, поровый объем и закачка распределяются между связанными скважинами пропорционально `alpha` / `alpha_prior` до начала итерационной автоадаптации.
+Все `ContactInterval`, `Drainage1DConnection`, `Drainage1DModelSpec`, результаты запуска OPM Flow и параметры автоадаптации должны иметь `scenario_id`.
 
 ---
 

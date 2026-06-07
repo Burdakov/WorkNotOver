@@ -26,11 +26,16 @@ class ForecastCalculateRequest(BaseModel):
 
 
 class ScenarioInputBindings(BaseModel):
+    well_groups: ForecastDatasetSelection | None = None
     wells: ForecastDatasetSelection | None = None
     niz: ForecastDatasetSelection | None = None
     gtm: ForecastDatasetSelection | None = None
     infrastructure: ForecastDatasetSelection | None = None
     external_krs_schedule: ForecastDatasetSelection | None = None
+    well_trajectories: ForecastDatasetSelection | None = None
+    perforations: ForecastDatasetSelection | None = None
+    production_history: ForecastDatasetSelection | None = None
+    injection_history: ForecastDatasetSelection | None = None
     manual_input_set_id: str | None = None
 
 
@@ -45,11 +50,16 @@ class ScenarioUpsertRequest(BaseModel):
 
 
 class ScenarioContextResponse(BaseModel):
+    well_groups_dataset: DatasetReference | None = None
     wells_dataset: DatasetReference | None = None
     niz_dataset: DatasetReference | None = None
     gtm_dataset: DatasetReference | None = None
     infrastructure_dataset: DatasetReference | None = None
     external_krs_schedule_dataset: DatasetReference | None = None
+    well_trajectories_dataset: DatasetReference | None = None
+    perforations_dataset: DatasetReference | None = None
+    production_history_dataset: DatasetReference | None = None
+    injection_history_dataset: DatasetReference | None = None
     manual_input_set: ManualInputReference | None = None
 
 
@@ -59,11 +69,16 @@ class ScenarioInputNodeValidation(BaseModel):
 
 
 class ScenarioInputValidationResponse(BaseModel):
+    well_groups: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
     wells: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
     niz: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
     gtm: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
     infrastructure: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
     external_krs_schedule: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
+    well_trajectories: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
+    perforations: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
+    production_history: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
+    injection_history: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
     manual_input_set: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
     is_forecast_ready: bool = False
     issues: list[str] = Field(default_factory=list)

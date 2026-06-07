@@ -24,12 +24,31 @@ from app.schemas.import_models import (
     UploadResponse,
     UploadedFileItem,
 )
-from app.services.importing.excel_utils import STORAGE_DIR, columns_info, excel_row_number, normalize_text, preview_records, sheet_df, stringify
+from app.services.importing.excel_utils import (
+    EXCEL_EXTENSIONS,
+    STORAGE_DIR,
+    TEXT_EXTENSIONS,
+    columns_info,
+    excel_row_number,
+    normalize_text,
+    preview_records,
+    sheet_df,
+    stringify,
+    text_df,
+    text_lines,
+)
 from app.services.importing.normalizers import (
     normalize_external_krs_schedule,
     normalize_gtm,
     normalize_infrastructure,
+    normalize_injection_history,
     normalize_niz,
+    normalize_perforations,
+    normalize_perforations_text,
+    normalize_production_history,
+    normalize_well_groups_text,
+    normalize_well_trajectories,
+    normalize_well_trajectories_text,
     normalize_wells,
     resolve_columns,
     validate_hierarchy,
@@ -49,6 +68,16 @@ _SOURCE_KIND_MAPPING_FIELDS = {
         "liquid_rate",
         "watercut",
         "gor",
+    },
+    "well_groups": {
+        "well",
+        "lu",
+        "sloy",
+        "well_pad",
+        "object_name",
+        "object_type",
+        "parent_object",
+        "group",
     },
     "niz": {
         "well",
@@ -100,6 +129,52 @@ _SOURCE_KIND_MAPPING_FIELDS = {
         "liquid_increment",
         "gas_increment",
         "gor_change",
+    },
+    "well_trajectories": {
+        "well",
+        "md",
+        "x",
+        "y",
+        "z",
+        "trajectory_point_id",
+    },
+    "perforations": {
+        "well",
+        "lu",
+        "sloy",
+        "well_pad",
+        "top_md",
+        "bottom_md",
+        "start_date",
+        "end_date",
+        "perforation_id",
+    },
+    "production_history": {
+        "date",
+        "well",
+        "producer_id",
+        "q_oil",
+        "q_water",
+        "q_liq",
+        "q_gas",
+        "oil_rate",
+        "liquid_rate",
+        "gas_rate",
+        "bhp",
+        "thp",
+        "p_res",
+        "wefac",
+    },
+    "injection_history": {
+        "date",
+        "well",
+        "injector_id",
+        "q_water_inj",
+        "bhp",
+        "whp",
+        "thp",
+        "p_res",
+        "wefac",
     },
 }
 
@@ -271,15 +346,18 @@ def _build_well_match_rows(df, resolved_columns, candidate_wells: list[dict[str,
 @router.post("/files/upload", response_model=UploadResponse)
 def upload_excel(file: UploadFile = File(...), db: Session = Depends(get_db)) -> UploadResponse:
     extension = Path(file.filename or "source.xlsx").suffix.lower()
-    if extension not in {".xlsx", ".xls", ".xlsm"}:
-        raise HTTPException(status_code=400, detail="Поддерживаются только Excel-файлы .xlsx, .xls и .xlsm.")
+    if extension not in EXCEL_EXTENSIONS | TEXT_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Supported source files: .xlsx, .xls, .xlsm, .txt.")
 
     file_id = f"{uuid4()}{extension}"
     stored_path = STORAGE_DIR / file_id
     with stored_path.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    sheets, selected_sheet, df = sheet_df(stored_path, None)
+    if extension in TEXT_EXTENSIONS:
+        sheets, selected_sheet, df = text_df(stored_path)
+    else:
+        sheets, selected_sheet, df = sheet_df(stored_path, None)
     DatasetRepository(db).upsert_uploaded_file(file_id, file.filename or file_id, str(stored_path), sheets)
 
     return UploadResponse(
@@ -306,7 +384,11 @@ def get_file_details(file_id: str, sheet_name: str | None = None, db: Session = 
     if uploaded is None:
         raise HTTPException(status_code=404, detail="Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ.")
 
-    sheets, selected_sheet, df = sheet_df(Path(uploaded.stored_path), sheet_name)
+    file_path = Path(uploaded.stored_path)
+    if file_path.suffix.lower() in TEXT_EXTENSIONS:
+        sheets, selected_sheet, df = text_df(file_path)
+    else:
+        sheets, selected_sheet, df = sheet_df(file_path, sheet_name)
     return UploadResponse(
         file_id=uploaded.file_id,
         original_name=uploaded.original_name,
@@ -429,6 +511,46 @@ def normalize_dataset(payload: NormalizeRequest, db: Session = Depends(get_db)) 
         raise HTTPException(status_code=404, detail="Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ.")
 
     file_path = Path(uploaded.stored_path)
+    if file_path.suffix.lower() in TEXT_EXTENSIONS:
+        selected_sheet = "text"
+        report = ImportValidationReport(
+            source_kind=payload.source_kind,
+            file_id=payload.file_id,
+            original_name=uploaded.original_name,
+            sheet_name=selected_sheet,
+            column_mappings={},
+        )
+        lines = text_lines(file_path)
+        if payload.source_kind == "well_groups":
+            normalized_payload = normalize_well_groups_text(lines, report)
+        elif payload.source_kind == "well_trajectories":
+            normalized_payload = normalize_well_trajectories_text(lines, report)
+        elif payload.source_kind == "perforations":
+            normalized_payload = normalize_perforations_text(lines, report)
+        else:
+            raise HTTPException(status_code=400, detail=f"Text import is not supported for source_kind '{payload.source_kind}'.")
+
+        try:
+            dataset_reference = repo.create_dataset_version(
+                dataset_type=payload.source_kind,
+                name=payload.dataset_name or f"{payload.source_kind}:{uploaded.original_name}",
+                source_format=file_path.suffix.lstrip("."),
+                source_file_name=uploaded.original_name,
+                normalized_payload=normalized_payload,
+                validation_report=report.model_dump(),
+                row_count=report.row_count,
+                metadata={"sheet_name": selected_sheet, "text_import": True},
+                dataset_id=payload.dataset_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return NormalizeResponse(
+            dataset_reference=dataset_reference,
+            validation_report=report,
+            normalized_payload=normalized_payload,
+        )
+
     _, selected_sheet, df = sheet_df(file_path, payload.sheet_name)
 
     try:
@@ -445,6 +567,9 @@ def normalize_dataset(payload: NormalizeRequest, db: Session = Depends(get_db)) 
     )
 
     if payload.source_kind == "wells":
+        normalized_payload = normalize_wells(df, resolved_columns, report)
+        validate_hierarchy(normalized_payload, report)
+    elif payload.source_kind == "well_groups":
         normalized_payload = normalize_wells(df, resolved_columns, report)
         validate_hierarchy(normalized_payload, report)
     elif payload.source_kind == "niz":
@@ -470,6 +595,14 @@ def normalize_dataset(payload: NormalizeRequest, db: Session = Depends(get_db)) 
         validate_hierarchy(normalized_payload, report)
     elif payload.source_kind == "infrastructure":
         normalized_payload = normalize_infrastructure(df, resolved_columns, report)
+    elif payload.source_kind == "well_trajectories":
+        normalized_payload = normalize_well_trajectories(df, resolved_columns, report)
+    elif payload.source_kind == "perforations":
+        normalized_payload = normalize_perforations(df, resolved_columns, report)
+    elif payload.source_kind == "production_history":
+        normalized_payload = normalize_production_history(df, resolved_columns, report)
+    elif payload.source_kind == "injection_history":
+        normalized_payload = normalize_injection_history(df, resolved_columns, report)
     elif payload.source_kind == "external_krs_schedule":
         normalized_payload = normalize_external_krs_schedule(df, resolved_columns, report)
     else:

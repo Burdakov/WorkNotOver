@@ -1,5 +1,17 @@
 # Master prompt for Codex: Waterflood proxy history matching and forecasting
 
+## WorkNotOver implementation override
+
+For the current WorkNotOver architecture, `Module B` production calculation is OPM-first:
+
+- primary production method: `forecast_method = opm_flow_blackoil`;
+- external `OPM Flow` is the hydrodynamic simulation engine;
+- WorkNotOver backend builds OPM/Eclipse-compatible cases, runs `flow`, imports raw OPM artifacts and stores normalized scenario-bound results;
+- native `waterflood_proxy_hm` logic is retained only as optional reduced-order diagnostics / legacy compatibility, not as the production calculation core;
+- base tests may still validate case building, manifest generation and importer behavior without requiring the external `flow` executable.
+
+The rest of this document remains useful for data requirements, PVT/SCAL/ROCK discipline, diagnostics, history-match concepts and optional adapters, but production implementation must not preserve the previous decline/proxy calculation as the main result source.
+
 You are a senior reservoir simulation engineer, reservoir surveillance specialist, and Python software architect.
 
 Build a production-quality Python package named `waterflood_proxy_hm` for automated history matching and forecasting of a waterflood proxy model. The model must combine:

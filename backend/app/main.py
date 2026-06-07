@@ -9,6 +9,7 @@ from app.api.manual_inputs import router as manual_inputs_router
 from app.api.planner import router as planner_router
 from app.api.scenarios import router as scenarios_router
 from app.api.schedule import router as schedule_router
+from app.api.simulation import router as simulation_router
 from app.db.session import init_db
 
 app = FastAPI(title="WorkNotOver API", version="1.1.0")
@@ -37,3 +38,4 @@ app.include_router(schedule_router)
 app.include_router(planner_router)
 app.include_router(scenarios_router)
 app.include_router(forecast_router)
+app.include_router(simulation_router)

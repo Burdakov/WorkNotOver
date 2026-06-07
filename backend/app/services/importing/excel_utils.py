@@ -12,6 +12,9 @@ from app.schemas.common import ColumnInfo
 STORAGE_DIR = Path(__file__).resolve().parent.parent.parent.parent / "storage" / "uploads"
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
+EXCEL_EXTENSIONS = {".xlsx", ".xls", ".xlsm"}
+TEXT_EXTENSIONS = {".txt"}
+
 HEADER_SCAN_MAX_ROWS = 50
 HEADER_SCAN_MAX_COLS = 100
 TABLE_SCAN_DATA_ROWS = 200
@@ -381,6 +384,27 @@ def sheet_df(path: Path, sheet_name: str | None) -> tuple[list[str], str, pd.Dat
     return sheets, selected_sheet, data_block
 
 
+def text_lines(path: Path) -> list[str]:
+    for encoding in ("utf-8-sig", "cp1251", "utf-8"):
+        try:
+            return path.read_text(encoding=encoding).splitlines()
+        except UnicodeDecodeError:
+            continue
+    return path.read_text(errors="replace").splitlines()
+
+
+def text_df(path: Path) -> tuple[list[str], str, pd.DataFrame]:
+    lines = text_lines(path)
+    df = pd.DataFrame(
+        {
+            "line_number": list(range(1, len(lines) + 1)),
+            "text": lines,
+        }
+    )
+    df.attrs["excel_data_row_offset"] = 1
+    return ["text"], "text", df
+
+
 def column_type(series: pd.Series) -> str:
     sample = series.dropna().head(50)
     if sample.empty:
@@ -428,6 +452,10 @@ def preview_records(df: pd.DataFrame, limit: int = 12) -> list[dict[str, Any]]:
 def coerce_date(value: object) -> str | None:
     if value is None or pd.isna(value):
         return None
+    if isinstance(value, (int, float)) and 20000 <= float(value) <= 80000:
+        parsed = pd.to_datetime(float(value), unit="D", origin="1899-12-30", errors="coerce")
+        if not pd.isna(parsed):
+            return parsed.date().isoformat()
     parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
     if pd.isna(parsed):
         return None

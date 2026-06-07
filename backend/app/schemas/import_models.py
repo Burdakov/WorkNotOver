@@ -24,6 +24,7 @@ class UploadResponse(BaseModel):
 
 class NormalizeColumns(BaseModel):
     well: str | None = None
+    group: str | None = None
     area: str | None = None
     lu: str | None = None
     sloy: str | None = None
@@ -57,6 +58,27 @@ class NormalizeColumns(BaseModel):
     capacity_water: str | None = None
     connection_well: str | None = None
     parent_object: str | None = None
+    date: str | None = None
+    producer_id: str | None = None
+    injector_id: str | None = None
+    q_oil: str | None = None
+    q_water: str | None = None
+    q_liq: str | None = None
+    q_gas: str | None = None
+    q_water_inj: str | None = None
+    bhp: str | None = None
+    thp: str | None = None
+    whp: str | None = None
+    p_res: str | None = None
+    wefac: str | None = None
+    md: str | None = None
+    top_md: str | None = None
+    bottom_md: str | None = None
+    x: str | None = None
+    y: str | None = None
+    z: str | None = None
+    trajectory_point_id: str | None = None
+    perforation_id: str | None = None
 
 
 class NizWellMatchInput(BaseModel):
