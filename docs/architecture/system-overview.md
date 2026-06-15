@@ -27,14 +27,12 @@
 
 ### 1. Контур данных
 
-- загрузка Excel/CSV/YAML;
+- загрузка Excel/CSV/YAML/текстовые с любым расшрением;
 - ручной ввод параметров и конфигураций;
 - загрузка отдельного dataset `NIZ` по скважинам;
 - загрузка истории добычи;
 - загрузка истории закачки;
-- загрузка ячеек разработки / material-balance cells;
 - загрузка PVT/SCAL/ROCK/region properties;
-- загрузка конфигурации waterflood proxy модели;
 - загрузка forecast scenario definitions;
 - ручной ввод коэффициентов отказности по `LU` и `SLOY`;
 - preview;
@@ -45,10 +43,8 @@
 
 ### 2. Расчётно-оптимизационный контур
 
-- построение injector-producer связности по координатам;
-- расчёт waterflood proxy модели;
-- history matching по обводнённости, пластовому давлению, rates и material balance;
-- расчёт пластового давления через PVT-aware material balance;
+- подготовка полного комплекса исходных данных для гидродинамического моделирования
+- history matching по обводнённости, пластовому давлению, дебитам жидкости и нефти;
 - расчёт насыщенности, обводнённости, газа и `GOR`;
 - расчёт forecast scenarios;
 - расчёт экономики;
@@ -85,7 +81,7 @@
 
 Зона ответственности:
 
-- загрузка Excel/CSV/YAML-файлов;
+- загрузка Excel/CSV/YAML-файлов/текстовых файлов любого расширения;
 - приём ручных исходных вводных;
 - preview;
 - auto-mapping и manual mapping колонок;
@@ -97,31 +93,8 @@
 - подготовка входных наборов данных для остальных модулей.
 
 Выход:
+- набор файлов для гидродинамического симулятора OPM flow и его обвязки в части контроля и генерации schedule секции
 
-- normalized well dataset;
-- base wells in that dataset are imported with `fund_type = Base`;
-- wells for `waterflood_proxy_hm` carry `well_type`, metric coordinates and optional cell/region identifiers;
-- initial participation of each base well is controlled by scenario-bound field `fund_state` from the wells dataset;
-- canonical upload order for legacy/GTM branch inside Scenario UI is `wells -> gtm -> niz`;
-- inside the legacy Scenario UI input chain the loading order must be visualized as `wells -> gtm -> niz -> displacement config -> KRS -> infrastructure -> economics`;
-- canonical upload order for `waterflood_proxy_hm` / drainage-1D branch is `wells -> well_groups / GRUP -> well trajectories / TRAJ -> perforations / PERF -> production history -> injection history -> NIZ / pore volumes -> reservoir properties -> forecast model config -> forecast scenarios -> optional connection overrides`;
-- `well_groups / GRUP` maps group hierarchy to `well_pad`; if a layer is present in GRUP it is mapped to `sloy_id` between field/LU and well_pad, and preparation/processing objects in the same hierarchy are mapped to infrastructure context;
-- `TRAJ` text order is fixed as `X, Y, Z, MD`; all normalized well names and hierarchy identifiers in the drainage-1D branch must be uppercase;
-- production / injection volumes are normalized as `m3`, pressure as `bar`; `Кэкспл` is normalized as `wefac` and represents worked time divided by calendar month time;
-- normalized production history dataset;
-- normalized injection history dataset;
-- normalized development cells dataset;
-- normalized reservoir properties dataset with PVT/SCAL/ROCK and region mappings;
-- normalized waterflood connection overrides dataset;
-- normalized forecast model config and forecast scenario definitions;
-- normalized NIZ dataset;
-- scenario-bound cumulative oil / gas values are also carried through the `niz` dataset and linked to wells by `well_name`;
-- normalized GTM dataset;
-- GTM rows are hierarchically matched against the current wells dataset; matched rows reuse base wells, unmatched rows become `New wells / ВНС`;
-- GTM required import fields are `well`, `lu`, `sloy`, `well_pad`, `gtm_type`, `start_date`, `end_date`, `increment`, `liquid_increment`; `gas_increment` and `gor_change` remain optional.
-- normalized infrastructure dataset;
-- manual input configs;
-- validation report.
 
 ---
 
@@ -136,8 +109,7 @@
 - импорт `.EGRID`, `.INIT`, `.SMSPEC`, `.UNSMRY`, `.UNRST`, `.RFT`, `.PRT/.LOG` в нормализованные scenario-bound результаты;
 - формирование well/field/group time series, grid static state, grid dynamic state, material balance by region/FIPNUM и diagnostics;
 - расчёт forecast scenarios с injection schedules, producer constraints, shut-ins, conversions, link changes и pressure constraints через schedule/deck;
-- optional reduced-order diagnostics по waterflood proxy, если явно включены;
-- legacy-режим `legacy_decline_liquid` для совместимости со старым контуром;
+- формирование регионов для скважин используя pywaterflood
 - автоматическое формирование связанного сценария `чистая База` без GTM для сценарного сравнения и отображения слоя `БАЗА`;
 - расчёт инкрементальных и накопленных эффектов по нефти, газу и жидкости;
 - формирование `SimulationRun` и `ProductionScenario` на основании импортированных результатов OPM.
@@ -158,11 +130,10 @@
 
 Внешние open source инструменты:
 
-- optional source trees хранятся отдельно в `external_tools/` и описываются `external_tools/manifest.json`;
 - production path `Module B` требует доступного `OPM Flow` runtime для реального гидродинамического расчёта;
 - backend должен уметь валидировать и готовить case без запуска `flow`, чтобы base tests не требовали внешнего симулятора;
 - `res2df` / `opm.io` используются как optional importer layer для OPM/Eclipse results;
-- MRST и pywaterflood не являются расчетным ядром; они могут использоваться только как optional diagnostics/prior adapters.
+- pywaterflood не являtтся расчетным ядром, а используется для генерации регионов для скважин как один из кубов симулятора.
 
 ---
 
@@ -214,6 +185,7 @@ Module D не реализует инфраструктурные огранич
 - учёт дат ввода объектов;
 - учёт ограничений линейных и площадочных объектов;
 - возврат нарушений в optimizer.
+- формиурет групповой контроль для секции schedule при расчёте прогнозных сценариев в OPM Flow
 
 Выход:
 
@@ -355,7 +327,7 @@ G -> C
 
 ### Module B: новая drainage-1D ветка
 
-Внутри `A -> B` для новой версии прогноза добычи действует дополнительная подготовительная цепочка:
+Внутри `A -> B` для настройки модели и прогноза добычи действует дополнительная подготовительная цепочка:
 
 ```text
 well trajectories
@@ -372,15 +344,13 @@ well trajectories
 ```
 
 Эта ветка остается частью `Module B`.
-CRM / pywaterflood и аналогичные инструменты являются optional adapters для формирования или уточнения prior-матрицы связности, но не заменяют scenario-bound подготовку данных и запуск OPM Flow.
-Scenario-bound подготовка запускается через `POST /api/forecast/opm-flow/scenarios/{scenario_id}/drainage-1d/prepare-from-context`, который читает нормализованные входы из `ScenarioInputBindings`.
 
 ---
 
 ## Расшифровка зависимостей
 
 - `A -> B`
-  Module B получает нормализованные скважины, историю добычи/закачки, ячейки разработки, PVT/SCAL/ROCK properties, forecast config/scenarios и legacy inputs при необходимости.
+  Module B получает нормализованные скважины, историю добычи/закачки, ячейки разработки, PVT/SCAL/ROCK properties, forecast config/scenarios.
 
 - `A -> D`
   Module D получает нормализованные мероприятия и правила планирования.

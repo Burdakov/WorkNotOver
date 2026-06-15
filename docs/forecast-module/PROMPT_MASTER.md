@@ -1,1282 +1,903 @@
-# Master prompt for Codex: Waterflood proxy history matching and forecasting
+Ты - senior reservoir simulation / Python / UI developer. Нужно реализовать модуль автоматической адаптации модели на историю добычи, закачки, давлений и затем сделать генератор сценариев на основе набора внешних ограничений.
 
-## WorkNotOver implementation override
+Система должна выполнять следующие действия по порядку:
 
-For the current WorkNotOver architecture, `Module B` production calculation is OPM-first:
-
-- primary production method: `forecast_method = opm_flow_blackoil`;
-- external `OPM Flow` is the hydrodynamic simulation engine;
-- WorkNotOver backend builds OPM/Eclipse-compatible cases, runs `flow`, imports raw OPM artifacts and stores normalized scenario-bound results;
-- native `waterflood_proxy_hm` logic is retained only as optional reduced-order diagnostics / legacy compatibility, not as the production calculation core;
-- base tests may still validate case building, manifest generation and importer behavior without requiring the external `flow` executable.
-
-The rest of this document remains useful for data requirements, PVT/SCAL/ROCK discipline, diagnostics, history-match concepts and optional adapters, but production implementation must not preserve the previous decline/proxy calculation as the main result source.
-
-You are a senior reservoir simulation engineer, reservoir surveillance specialist, and Python software architect.
-
-Build a production-quality Python package named `waterflood_proxy_hm` for automated history matching and forecasting of a waterflood proxy model. The model must combine:
-
-1. A native Python graph/tank/1D-edge proxy model that works without external simulators.
-2. OPM Flow as an optional high-fidelity black-oil simulator and validation/source-of-truth adapter.
-3. MRST Flow Diagnostics as an optional source of allocation factors, time-of-flight, swept/drainage volumes, and connectivity diagnostics.
-4. pywaterflood as an optional CRM and Buckley-Leverett helper.
-5. OPM/Eclipse-style PVT/SCAL/ROCK property requirements as the canonical source for fluid, rock, and saturation-function data.
-
-The package must support automated history matching of:
-
-- producer watercut;
-- reservoir pressure `p_res` / `Рпл` by well, cell, or region;
-- material balance by development cell / FIPNUM / flood cell;
-- injector-producer participation coefficients;
-- injection efficiency coefficients;
-- 1D displacement / saturation state on injector-producer links.
-
-After calibration, the package must run forecast scenarios with different injection schedules, production constraints, shut-ins, well conversions, pressure constraints, link changes, and efficiency assumptions.
-
-Do not build a monolithic reservoir simulator. Build a modular, testable Python package with clear data contracts, explicit engineering assumptions, strict validation, and optional external adapters.
+1. На основе данных координат скважин и их перфораций создавать модель вокруг скважин в радиусе `3000 м` или другом значении, заданном пользователем. Модель формируется с полным набором исходных данных, получаемых из `Module A`. Модель содержит все необходимые ключевые слова, указанные в мануале из папки `references`. Так получается базовый вариант геометрии сетки с набором немодифицированных параметров.
+2. Производится построение куба регионов с использованием внешней CRM-системы `pywaterflood`, определяющей первую догадку связности между добывающими и нагнетательными скважинами. На этой основе формируется единый для всей модели куб регионов `OPERNUM` / `connection_region_id`. Для каждой добывающей скважины формируется регион связи с нагнетательными скважинами.
+3. Для каждого региона задаются переменные значения проницаемости, формы кривых относительных фазовых проницаемостей и порового объёма. Перебором достигается автоматическая адаптация пластового давления и обводнённости с установленными критериями точности. После настройки модель считается готовой для прогноза.
+4. Прогнозы формируются сразу как минимум два: базовый расчёт, сформированный из технологического режима скважин как входной точки без каких-либо действий, и расчёт с ГТМ. Используются ГТМ с приростами из dataset `gtm` и датами из внешнего графика КРС, формируемой ветки `Сформировать график` или planner revision.
+5. Формируемый в `Module D: KRS Optimizer` график КРС и соответствующий график ГТМ используются для формирования `SCHEDULE`; оптимизатор является итеративным генератором schedule-файла.
 
 ---
 
-## 1. Required technology stack
+# Детализация пунктов 1-3
 
-Use Python 3.11+.
+## Проверенные источники
 
-Required libraries:
+Эта спецификация сверена с:
 
-- numpy
-- pandas
-- scipy
-- pydantic
-- pyyaml
-- matplotlib
-- networkx
-- pyarrow
-- pytest
-- typer or click
+- `docs/contracts/core-data-model.md`;
+- `docs/contracts/module-a-task-package.md`;
+- `docs/contracts/module-b-forecast.md`;
+- `docs/contracts/module-g-scenario-ui.md`;
+- `docs/forecast-module/docs/OPM_FLOW_REFERENCE_GUIDE.md`;
+- текущим кодом `backend/app/api/simulation.py`;
+- текущим кодом `backend/app/api/scenarios.py`;
+- текущими схемами `backend/app/services/opm_flow/schemas.py`;
+- текущей реализацией `backend/app/services/opm_flow/field_2d.py`;
+- текущим UI `frontend/src/ModuleGApp.vue`;
+- импортом Module A в `backend/app/api/import_api.py` и `backend/app/services/importing/normalizers.py`.
 
-Optional libraries:
+Контрактное имя целевого production-метода: `forecast_method = opm_flow_blackoil`.
+Текущая реализация использует переходный runtime-профиль `forecast_method = opm_flow_2d_field`. До миграции оба имени должны быть явно сопоставлены, но новые алгоритмы должны проектироваться как `opm_flow_blackoil`, где `opm_flow_2d_field` является MVP-профилем одного 2D field model.
 
-- optuna for multi-start / global optimization;
-- pywaterflood for CRM and Buckley-Leverett helpers;
-- res2df, resdata, opm.io, or ecl-like libraries for OPM/Eclipse input/output when available;
-- oct2py or MATLAB/Octave command wrappers for MRST when available.
+## Текущее состояние кода
 
-The base unit test suite must not require OPM Flow, MATLAB, MRST, Octave, pywaterflood, res2df, opm.io, or resdata. All external integrations must fail gracefully and skip integration tests when optional dependencies are unavailable.
+### Уже есть
 
----
+- `Module A` умеет сохранять normalized datasets: `well_groups`, `well_trajectories`, `perforations`, `production_history`, `injection_history`, `pvt_properties`, `niz`.
+- Scenario context хранит ссылки на эти datasets через `DatasetReference`.
+- `Field2DModelService.prepare()` строит единый 2D grid, интерполирует перфорации по траекториям, активирует ячейки и формирует well/region diagnostics.
+- `Field2DModelService.run()` создаёт `SimulationRun`, пишет `.DATA` и include-файлы, может запускать внешний `flow`, сохраняет JSON analysis.
+- Case builder пишет ключевые секции `RUNSPEC`, `GRID`, `PROPS`, `REGIONS`, `SOLUTION`, `SCHEDULE`, `SUMMARY`.
+- UI уже содержит сценарный контекст, настройки `field_2d_config`, запуск `field-2d/run-from-context`, просмотр grid cells, regions, artifacts и history-vs-calc diagnostics.
 
-## 2. Repository structure
+### Частично есть
 
-Create this structure:
+- Радиус влияния настраивается, но default в коде/UI сейчас `1000 м`; целевой default для этой методики - `3000 м`.
+- Куб регионов строится геометрически по ближайшим injector-producer парам, а не через `pywaterflood`.
+- Есть `FIPNUM/SATNUM/ROCKNUM/PVTNUM`, но нет отдельного подтверждённого OPM keyword `OPERNUM`; поэтому `OPERNUM` должен быть WorkNotOver normalized cube, а deck обязан писать поддерживаемые OPM region arrays. Если `OPERNUM` подтверждён локальным manual, его можно добавить через guide-first change.
+- Историческая адаптация сейчас эвристическая и однопроходная: меняются multipliers в памяти и JSON diagnostics, но нет полноценного итерационного контура `run -> import -> objective -> parameter update`.
+- Importer raw OPM artifacts сейчас проверяет наличие файлов и пишет `import_report.json`, но не извлекает полноценно `UNSMRY/EGRID/INIT/UNRST/RFT` в normalized tables.
 
-```text
-waterflood_proxy_hm/
-  __init__.py
-  cli.py
+### Нет и нужно добавить
 
-  data/
-    __init__.py
-    schemas.py
-    loaders.py
-    validation.py
-    units.py
-
-  geometry/
-    __init__.py
-    distances.py
-    connectivity_initializer.py
-    well_trajectory.py
-
-  graph/
-    __init__.py
-    nodes.py
-    edges.py
-    network.py
-
-  properties/
-    __init__.py
-    units.py
-    regions.py
-    pvt_tables.py
-    pvt_evaluator.py
-    relperm_tables.py
-    relperm_evaluator.py
-    rock_tables.py
-    rock_evaluator.py
-    property_deck.py
-    opm_import.py
-    mrst_import.py
-    validation.py
-
-  model/
-    __init__.py
-    edge_displacement.py
-    response_kernels.py
-    fractional_flow.py
-    material_balance.py
-    pressure.py
-    simulator.py
-
-  calibration/
-    __init__.py
-    parameters.py
-    priors.py
-    objective.py
-    optimizer.py
-    metrics.py
-
-  forecast/
-    __init__.py
-    scenarios.py
-    runner.py
-
-  adapters/
-    __init__.py
-    opm.py
-    mrst.py
-    pywaterflood_adapter.py
-    res2df_adapter.py
-
-  reporting/
-    __init__.py
-    plots.py
-    html_report.py
-    russian_labels.py
-
-  examples/
-    synthetic.py
-
-tests/
-  test_schemas.py
-  test_geometry_initializer.py
-  test_pvt_tables.py
-  test_relperm_tables.py
-  test_rock_tables.py
-  test_property_regions.py
-  test_fractional_flow.py
-  test_edge_displacement.py
-  test_material_balance.py
-  test_calibration_synthetic.py
-  test_forecast_scenarios.py
-  test_optional_adapters_skip.py
-
-examples/
-  synthetic_small/
-    wells.csv
-    production.csv
-    injection.csv
-    cells.csv
-    config.yaml
-    scenarios.yaml
-    properties/
-      density.csv
-      oil_pvt.csv
-      water_pvt.csv
-      gas_pvt.csv
-      rock.csv
-      swof.csv
-      sgof.csv
-      region_map.csv
-```
+- Зависимость/adapter для `pywaterflood` и отдельный backend-контур CRM connectivity.
+- Сущности `CrmConnectivityResult`, `RegionCube`, `RegionParameterSet`, `CalibrationIteration`, `CalibrationResult`.
+- Генерацию `EDIT` include для `MULTPV`, `MULTX`, `MULTY`, `MULTZ`, `MULTREGT` или эквивалентных OPM-supported array edits.
+- Генерацию region-specific SCAL через варианты `SWOF/SGOF` и `SATNUM`.
+- Управляемый перебор параметров по регионам с критериями остановки.
+- UI для матрицы CRM-связности, куба регионов, таблицы параметров регионов, журнала итераций и принятия калиброванной модели.
 
 ---
 
-## 3. Conceptual model
+## Общий контракт входов для пунктов 1-3
 
-The core model is a directed waterflood graph:
+`Module B` не читает raw Excel/CSV/YAML напрямую. Все входы приходят из `Module A` как `DatasetReference` или как нормализованные payloads, полученные по этим ссылкам.
 
-- Injector nodes: water injection wells.
-- Producer nodes: oil/water/gas production wells.
-- Optional reservoir cell / pattern / FIPNUM nodes: development cells, flooding cells, blocks, regions, or tanks.
-- Edges: injector-producer 1D hydrodynamic proxy connections.
+Обязательные scenario-bound datasets:
 
-Every injector-producer edge must have its own state and parameters:
+| Dataset type | Назначение |
+| --- | --- |
+| `well_groups` | принадлежность скважин к `LU/SLOY/WellPad`, OPM group hierarchy, группировка результатов |
+| `well_trajectories` | точки траекторий `well, md, x, y, z` для интерполяции перфораций и `COMPDAT` |
+| `perforations` | интервалы `top_md/bottom_md`, active completions и связка со слоями |
+| `production_history` | история нефти, воды, жидкости, газа, `BHP/THP`, пластового давления по добывающим |
+| `injection_history` | история закачки воды/газа, `BHP/WHP/THP`, пластового давления по нагнетательным |
+| `pvt_properties` или `reservoir_properties` | raw OPM include или структурированные PVT/SCAL/ROCK таблицы |
+| `niz` | target pore-volume/OOIP sanity check и распределение начальных запасов по скважинам/регионам |
 
-- `injector_id`
-- `producer_id`
-- `cell_id` or `region_id`, optional
-- `distance_m`
-- `inside_influence_radius`
-- `active`
-- `link_type`: `normal`, `screen`, `channel`, or `unknown`
-- `alpha_ij`: fitted participation coefficient
-- `alpha_prior`: prior participation coefficient
-- `eta_i` or `eta_ij`: injection efficiency coefficient
-- `tau_days`: delay / time-of-flight proxy
-- `pv_ij`: effective edge pore volume
-- `movable_oil_ij`, optional
-- `sw_ij`: current water saturation on the edge
-- `so_ij`, optional
-- `sg_ij`, optional
-- `ipvi_ij`: injected pore volumes on the edge
-- `length_m`
-- `corridor_width_m`
-- `area_m2`, optional
-- `kh`, optional
-- `transmissibility`, optional
-- `screen_factor`
-- `channel_factor`
-- `breakthrough_ipvi_ij`
-- `displacement_efficiency_ij`
-- `prior_source`
-- `prior_weight`
+Опциональные, но целевые datasets/configs:
 
-The 1D edge is not just a statistical connection. It represents an approximate injector-producer displacement corridor with effective pore volume, displacement state, saturation-dependent fractional flow, and delay.
+| Dataset/config | Назначение |
+| --- | --- |
+| `forecast_model_config` | grid resolution, default radius, фазовый режим, bounds адаптации, tolerances |
+| `waterflood_connections_dataset` | сохранённая или ручная связность, если CRM нужно переиспользовать |
+| `development_cells_dataset` | готовая сетка/ячейки, если Module A поставляет grid вместо генерации |
+| `reservoir_properties_dataset` | структурированные PVT/SCAL/ROCK вместо raw include |
+
+Основные инварианты:
+
+- `well_name` должен совпадать во всех hydrodynamic datasets и сценарных datasets.
+- Координатная система должна быть единой; `coordinate_crs` фиксируется в metadata dataset или строки.
+- Все даты - ISO `YYYY-MM-DD`.
+- Все дебиты неотрицательны и имеют согласованные единицы.
+- Каждая перфорация должна попадать в активную ячейку.
+- `pvt_properties.include_text` не должен теряться: raw include является evidence layer для deck.
+- Любой generated fallback PVT/SCAL/ROCK допустим только при явном `allow_generated_pvt = true` и записывается в warnings.
 
 ---
 
-## 4. Coordinate-based first guess for participation coefficients
+## Пункт 1. Построение базовой OPM-модели вокруг скважин
 
-Mandatory rule: the first injector-producer connectivity estimate must be generated from well coordinates before using MRST, CRM, OPM, or manually specified coefficients.
+### Цель
 
-### 4.1 Well coordinates
+Построить inspectable OPM/Eclipse-compatible case с базовой геометрией и немодифицированными свойствами пласта. Результат пункта 1 не является прогнозом и не считается history matched model; это исходное состояние для CRM-регионов и адаптации.
 
-`wells.csv` must contain metric coordinates.
+### Backend algorithm
 
-Required columns:
+1. Загрузить scenario context:
+   - получить `Scenario` по `scenario_id`;
+   - извлечь `metadata.forecast_method`, `metadata.field_2d_config` или `metadata.opm_blackoil_config`;
+   - загрузить normalized payloads по `DatasetReference`;
+   - проверить обязательные datasets.
 
-- `well_id`
-- `well_type`: `producer` or `injector`
-- `x`
-- `y`
+2. Нормализовать идентификаторы:
+   - привести `well_name` к каноническому виду для runtime matching;
+   - построить lookup `well_name -> group row`;
+   - построить lookup `well_name -> trajectory points`;
+   - построить lookup `well_name -> production/injection history`.
 
-Optional columns:
+3. Определить тип скважины:
+   - если скважина есть в `injection_history`, считать `well_type = injector`;
+   - если скважина есть в `production_history`, считать `well_type = producer`;
+   - если скважина есть в обоих потоках, использовать последнюю фактическую роль или явную роль из dataset/config, а конфликт писать в diagnostics.
 
-- `z`
-- `cell_id`
-- `region_id`
-- `field`
-- `reservoir`
-- `formation`
-- `start_date`
-- `end_date`
-- `status`
-- `coord_source`
-- `trajectory_type`: `vertical`, `deviated`, `horizontal`, `unknown`
-- `heel_x`, `heel_y`, `toe_x`, `toe_y` for horizontal wells
+4. Построить точки контакта с пластом:
+   - для каждого perforation interval взять `top_md`, `center_md`, `bottom_md`;
+   - интерполировать `x/y/z` по траектории;
+   - если в перфорации есть explicit `x/y/z`, использовать их только как fallback;
+   - сохранить `perforation_points[]` с `point_type`, `md`, `x/y/z`.
 
-The configuration must explicitly define the coordinate system:
+5. Построить границу модели:
+   - взять все координаты скважин и perforation points;
+   - применить пользовательский радиус `model_radius_m`, default `3000`;
+   - граница `min_x/max_x/min_y/max_y` должна покрывать все активные перфорации плюс radius;
+   - если есть `development_cells_dataset`, границу можно расширить до пересечения с готовыми ячейками.
 
-```yaml
-coordinates:
-  crs: "EPSG:32640"
-  x_unit: "m"
-  y_unit: "m"
-  allow_latlon: false
-```
+6. Построить grid:
+   - MVP: regular Cartesian 2D/one-layer grid с `nx, ny, nz=1`;
+   - target: допускается multilayer/corner-point grid, если Module A поставляет `COORD/ZCORN` или структурированные cells;
+   - `dx_m`, `dy_m`, `dz_m` берутся из config;
+   - если `nx * ny * nz > max_grid_cells`, grid coarsening должен быть явным и записан в diagnostics;
+   - каждая ячейка получает `i/j/k`, центр `x/y/z`, `ACTNUM`.
 
-Do not silently mix coordinate systems. If coordinates are latitude/longitude, fail validation unless explicit conversion is configured.
+7. Назначить базовые свойства:
+   - `PORO`, `PERMX`, `PERMY`, `PERMZ` из `reservoir_properties_dataset` или config;
+   - `PRESSURE`, `SWAT`, `SGAS` из initialization inputs/config;
+   - `PVTNUM`, `SATNUM`, `ROCKNUM`, `FIPNUM` default `1`, если нет region map;
+   - `MULTPV = 1.0` на базовом шаге.
 
-### 4.2 Influence radius
+8. Активировать ячейки:
+   - все ячейки с perforation points должны иметь `ACTNUM = 1`;
+   - ячейки в пределах radius от скважин и будущих CRM corridors активируются;
+   - inactive cells допускаются только вне области моделирования и не должны попадать в `COMPDAT`.
 
-For every injector `i`, find producer wells `j` within the default influence radius:
+9. Сформировать OPM case:
+   - root deck: `input/FIELD_2D_<SCENARIO>.DATA`;
+   - includes:
+     - `input/includes/runspec.inc`;
+     - `input/includes/grid.inc`;
+     - `input/includes/edit.inc`, если есть generated edits;
+     - `input/includes/props.inc`;
+     - `input/includes/regions.inc`;
+     - `input/includes/init.inc`;
+     - `input/includes/summary.inc`;
+     - `input/includes/schedule.inc`.
 
-```text
-R_influence = 3000 m
-```
+10. Выполнить validation:
+    - порядок deck sections валиден;
+    - длины массивов равны `nx * ny * nz`;
+    - каждая перфорация попала в active cell;
+    - каждая `COMPDAT` completion попала в active cell;
+    - `DIMENS` совпадает с grid arrays;
+    - PVT/SCAL/ROCK keywords присутствуют или есть explicit generated fallback warning.
 
-Distance:
+### OPM keyword contract
 
-```text
-d_ij = sqrt((x_i - x_j)^2 + (y_i - y_j)^2)
-```
+`RUNSPEC`:
 
-A producer is a primary candidate if:
+- `TITLE`;
+- `DIMENS`;
+- `OIL`, `WATER`, `GAS` по включённым фазам;
+- `METRIC` или другой единый unit system проекта;
+- `TABDIMS`, `REGDIMS`, `WELLDIMS`, `SMRYDIMS`;
+- `START`;
+- при необходимости `UNIFOUT`, `UNIFOUTS`, `FMTOUT`.
 
-```text
-d_ij <= R_influence
-```
+`GRID`:
 
-Producers outside the radius are excluded by default. Optionally create inactive candidate links outside the radius if configured.
+- `DX`, `DY`, `DZ` или `COORD/ZCORN` для corner-point grid;
+- `TOPS`;
+- `PORO`;
+- `PERMX`, `PERMY`, `PERMZ`;
+- `ACTNUM`.
 
-### 4.3 Distance kernel
+`EDIT`:
 
-Default distance kernel:
+- пустой или отсутствует на базовом шаге;
+- после адаптации содержит `MULTPV`, `MULTX`, `MULTY`, `MULTZ`, `MULTREGT`, `EQUALS/MULTIPLY/BOX/ENDBOX`.
 
-```text
-g_dist_ij = max(0, 1 - d_ij / R_influence)^p
-```
+`PROPS`:
 
-Default:
+- `DENSITY`;
+- `PVTW`;
+- `PVDO` или `PVTO`;
+- `PVDG` или `PVTG`, если включён gas phase;
+- `ROCK`;
+- `SWOF`;
+- `SGOF` или поддерживаемые альтернативы.
 
-```text
-p = 2.0
-```
+`REGIONS`:
 
-Also support optional kernels:
+- `PVTNUM`;
+- `SATNUM`;
+- `ROCKNUM`;
+- `FIPNUM`;
+- `EQLNUM`, если используется equilibration by region.
 
-```text
-gaussian: g_dist_ij = exp(-(d_ij / R_influence)^beta)
-inverse:  g_dist_ij = 1 / (d_ij + d_min)^p
-```
+`SOLUTION`:
 
-Use the finite cutoff power kernel by default because it implements a clear 3000 m influence zone.
+- `PRESSURE`, `SWAT`, `SGAS`;
+- или `EQUIL`, если выбран equilibrium initialization.
 
-### 4.4 Link type multipliers
+`SCHEDULE`:
 
-Apply geological/engineering link-type multipliers:
+- `RPTRST`, `RPTSCHED`;
+- `WELSPECS`;
+- `COMPDAT`;
+- `WCONPROD`;
+- `WCONINJE`;
+- `DATES`;
+- `END`.
 
-```text
-g_ij = g_dist_ij * m_link_type_ij
-```
+`SUMMARY`:
 
-Default multipliers:
+- field vectors: `FOPR`, `FOPT`, `FWPR`, `FWPT`, `FGPR`, `FGPT`, `FWIR`, `FWIT`;
+- well vectors: `WOPR`, `WWPR`, `WGPR`, `WLPR`, `WBHP`, `WWCT`, `WGOR`;
+- pressure/material balance vectors, если они нужны для calibration objective.
 
-```yaml
-link_type_multipliers:
-  screen: 0.2
-  normal: 1.0
-  channel: 2.5
-  unknown: 1.0
-```
+### Backend interface
 
-Meaning:
-
-- `screen`: barrier-like or poorly communicating connection; lower prior alpha, higher delay, weaker transmissibility, later water response.
-- `channel`: high-conductivity / fracture / washed-out preferential path; higher prior alpha, lower delay, smaller effective PV, earlier water breakthrough.
-- `normal`: regular connection.
-- `unknown`: weak prior; let calibration infer behavior.
-
-These labels are priors, not hard truth. The optimizer must be able to override them if history data supports another behavior.
-
-### 4.5 Alpha prior normalization
-
-Normalize the geometric prior by injector:
-
-```text
-alpha_prior_ij = g_ij / sum_j(g_ij)
-```
-
-If an injector has no producer inside 3000 m:
-
-- do not invent a strong link;
-- optionally connect it to the nearest producer with a very weak prior only if `connect_nearest_if_empty: true`;
-- mark such links as `low_confidence`.
-
-### 4.6 Distance-based delay prior
-
-Initial delay:
-
-```text
-tau_prior_days = tau_min_days + distance_m / front_velocity_prior_m_per_day
-```
-
-Default:
-
-```yaml
-tau_initializer:
-  tau_min_days: 10
-  front_velocity_prior_m_per_day: 5.0
-```
-
-Apply link-type multipliers:
-
-```yaml
-link_type_tau_multipliers:
-  screen: 2.5
-  normal: 1.0
-  channel: 0.4
-  unknown: 1.0
-```
-
-### 4.7 Distance-based edge PV prior
-
-If no cell volume, OPM volume, or MRST swept/drainage volume is available, initialize edge pore volume geometrically:
+Existing compatible endpoint:
 
 ```text
-pv_prior_ij = phi_ij * ntg_ij * h_ij * corridor_width_ij * distance_m
+POST /api/forecast/opm-flow/scenarios/{scenario_id}/field-2d/prepare-from-context
 ```
 
-Default:
-
-```yaml
-edge_pv_initializer:
-  method: "corridor"
-  default_phi: 0.20
-  default_ntg: 0.75
-  default_h_m: 10.0
-  default_corridor_width_m: 300.0
-```
-
-If cell material-balance volume is available, allow:
+Target endpoint:
 
 ```text
-pv_prior_ij = alpha_prior_ij * pv_cell
+POST /api/forecast/opm-flow/scenarios/{scenario_id}/model/prepare
 ```
 
-If MRST diagnostics are available, prefer MRST swept/drainage volume as a stronger prior.
+Request:
+
+```json
+{
+  "forecast_method": "opm_flow_blackoil",
+  "model_radius_m": 3000,
+  "grid": {
+    "mode": "cartesian_2d",
+    "dx_m": 150,
+    "dy_m": 150,
+    "dz_m": 5,
+    "max_grid_cells": 60000
+  },
+  "initial_state": {
+    "pressure_bar": 220,
+    "swat": 0.30,
+    "sgas": 0.04,
+    "top_depth_m": 2000,
+    "datum_depth_m": 2000
+  },
+  "pvt_policy": {
+    "allow_generated_pvt": false,
+    "append_missing_props_with_warning": true
+  },
+  "summary_vectors": ["FOPR", "FWPR", "FWIR", "WOPR", "WWPR", "WBHP", "WWCT"]
+}
+```
+
+Response:
+
+```json
+{
+  "scenario_id": "string",
+  "model_id": "string",
+  "simulation_run": {
+    "run_id": "string",
+    "status": "case_built",
+    "case_root": "storage/simulation_runs/..."
+  },
+  "geometry": {
+    "nx": 1,
+    "ny": 1,
+    "nz": 1,
+    "cell_count": 1,
+    "active_cell_count": 1,
+    "model_radius_m": 3000
+  },
+  "wells": [],
+  "perforation_points": [],
+  "validation": {
+    "is_valid": true,
+    "warnings": [],
+    "errors": []
+  },
+  "artifacts": []
+}
+```
+
+### UI contract
+
+В `Module G`, узел `Module B: Forecast` должен иметь panel `Модель`:
+
+- selector сценария и метод `OPM Flow black-oil`;
+- status cards по datasets: `well_groups`, `well_trajectories`, `perforations`, `production_history`, `injection_history`, `pvt_properties`, `niz`;
+- numeric controls:
+  - `model_radius_m`, default `3000`;
+  - `dx_m`, `dy_m`, `dz_m`;
+  - `max_grid_cells`;
+  - `initial_pressure_bar`, `SWAT`, `SGAS`;
+  - `top_depth_m`, `datum_depth_m`;
+  - `run_external_flow`;
+- кнопка `Подготовить модель`;
+- grid preview:
+  - карта активных/inactive cells;
+  - скважины и перфорации;
+  - coverage summary;
+- deck artifacts browser:
+  - root `.DATA`;
+  - include-файлы;
+  - validation warnings.
 
 ---
 
-## 5. PVT / SCAL / ROCK property system
+## Пункт 2. CRM-связность и единый куб регионов
 
-Production runs must not use guessed constant fluid and rock properties. Implement a full property input and evaluation layer based on OPM/Eclipse-style black-oil requirements.
+### Цель
 
-The native Python proxy must accept properties in either:
+Получить первую физически осмысленную догадку связности между нагнетательными и добывающими скважинами через `pywaterflood`, затем превратить её в единый cell-level region cube для всей модели.
 
-1. OPM/Eclipse deck/include format, where import support is available; or
-2. normalized CSV/Parquet equivalents.
+### Важное правило по OPERNUM
 
-Synthetic examples may use toy property tables, but these toy properties must be explicit, versioned, and clearly marked as synthetic.
+В `PROMPT_MASTER` используется термин `OPERNUM`. В текущем локальном `OPM_FLOW_REFERENCE_GUIDE.md` подтверждены `FIPNUM`, `SATNUM`, `PVTNUM`, `ROCKNUM`, но не подтверждён `OPERNUM`. Поэтому:
 
-### 5.1 Canonical external basis
+- внутри WorkNotOver создаётся normalized cube `opernum` / `connection_region_id`;
+- OPM deck обязательно получает поддерживаемые массивы `FIPNUM/SATNUM/ROCKNUM/PVTNUM`;
+- если локальный manual подтверждает `OPERNUM`, добавление keyword выполняется через обновление `OPM_FLOW_REFERENCE_GUIDE.md` и только потом через runtime-code.
 
-Use OPM/Eclipse-style `PROPS` and `REGIONS` concepts as the canonical input basis.
+### Backend algorithm
 
-Support these keywords or normalized equivalents:
+1. Подготовить aligned history matrices:
+   - выбрать history window для CRM;
+   - привести production и injection history к общему daily/monthly timestep;
+   - для добывающих сформировать `q_oil`, `q_water`, `q_liq`, `watercut`, `p_res/bhp`;
+   - для нагнетательных сформировать `q_water_inj` и pressure controls;
+   - заполнение пропусков выполнять только по явной policy: `zero`, `ffill`, `drop_period`.
 
-PVT / fluid properties:
+2. Сформировать candidate injector-producer pairs:
+   - ограничить пары радиусом `model_radius_m` или отдельным `crm_radius_m`;
+   - исключить пары с разными `LU/SLOY`, если config запрещает cross-layer connectivity;
+   - добавить distance, azimuth, overlap score по perforation depth/layer;
+   - если user/manual connections заданы, использовать их как hard или soft prior.
 
-- `DENSITY`
-- `PVTO`
-- `PVDO`
-- `PVTW`
-- `PVDG`
-- `PVTG`
-- optional later: `RSCONST`, `RSVD`, `RVVD`
+3. Запустить `pywaterflood` через adapter:
+   - adapter получает matrices `injector_rates[t, i]`, `producer_rates[t, p]`, optional pressure vectors и candidate mask;
+   - adapter возвращает connectivity weights `alpha[i, p]`, time constants `tau_days[i, p]`, quality metrics;
+   - все library-specific вызовы изолируются в `PywaterfloodCrmAdapter`, чтобы API библиотеки не протекал в Module B schemas.
 
-Rock properties:
+4. Постобработать связность:
+   - отрицательные weights запрещены;
+   - weights ниже `min_connection_weight` отбрасываются;
+   - для каждого producer weights нормируются так, чтобы сумма активных injection weights была `1.0`, если есть хотя бы одна связь;
+   - если `pywaterflood` не вернул связь для producer, fallback policy:
+     - `nearest_injectors` с warning;
+     - или `unconnected_producer` и blocking warning, если fallback запрещён.
 
-- `ROCK`
-- optional later: `ROCKTAB`, `ROCKCOMP`, `ROCKOPTS`
+5. Сформировать region table:
+   - `producer_region_id` - основной регион связи для добывающей скважины;
+   - `connection_id = injector:producer` - диагностический sub-connection;
+   - сохранить `alpha`, `tau_days`, `distance_m`, `prior_source`, `crm_quality`, `manual_override`.
 
-Saturation functions / SCAL:
+6. Построить cube:
+   - один cube на всю модель, dimensions равны OPM grid;
+   - каждая active cell получает:
+     - `opernum` / `connection_region_id`;
+     - `producer_region_id`;
+     - `dominant_injector_name`;
+     - `crm_weight`;
+     - `FIPNUM`;
+     - `SATNUM`;
+     - `ROCKNUM`;
+     - `PVTNUM`.
+   - алгоритм allocation:
+     - cells вокруг producer получают producer region;
+     - corridors от injector к producer строятся по line-segment distance или более точной flow-diagnostic геометрии;
+     - при пересечении нескольких corridors выбирается максимальный weighted score `alpha / distance_to_corridor`;
+     - well-region cells имеют приоритет над corridor cells.
 
-- `SWOF`
-- `SGOF`
-- `SWFN`
-- `SGFN`
-- `SOF2`
-- `SOF3`
-- optional later: endpoint scaling and hysteresis keywords
+7. Сформировать deck region arrays:
+   - `REGIONS` получает `FIPNUM/SATNUM/ROCKNUM/PVTNUM`;
+   - optional `EDIT` получает region edit boxes/multipliers только после пункта 3;
+   - normalized outputs сохраняют полный `opernum` cube независимо от того, пишется ли OPM keyword.
 
-Region mapping:
+8. Записать diagnostics:
+   - coverage by producer;
+   - unconnected producers/injectors;
+   - filtered connections;
+   - CRM fit metrics;
+   - fallback events.
 
-- `PVTNUM`
-- `SATNUM`
-- `ROCKNUM`
-- `FIPNUM` or custom material-balance regions
+### Backend interface
 
-The internal normalized tables must preserve source keyword, source file, units, and region number.
-
-### 5.2 Required property evaluators
-
-Implement pressure-dependent and saturation-dependent evaluators:
-
-PVT:
-
-- `Bo(p, Rs, pvt_region)`
-- `Rs_sat(p, pvt_region)`
-- `Pb(Rs, pvt_region)`, derived from PVTO saturated rows when possible
-- `mu_o(p, Rs, pvt_region)`
-- `Bw(p, pvt_region)`
-- `mu_w(p, pvt_region)`
-- `Cw(p, pvt_region)`
-- `Bg(p, pvt_region)`
-- `mu_g(p, pvt_region)`
-- `density_oil_reservoir(p, Rs, pvt_region)`
-- `density_water_reservoir(p, pvt_region)`
-- `density_gas_reservoir(p, pvt_region)`
-
-Rock:
-
-- `phi_multiplier_from_rock(p, rock_region)`
-- optional pore-volume compressibility derivative
-
-SCAL / relative permeability:
-
-- `krw(Sw, sat_region)`
-- `krow(Sw, sat_region)`
-- `pcow(Sw, sat_region)`
-- `krg(Sg, sat_region)`
-- `krog(Sg, sat_region)`
-- `pcog(Sg, sat_region)`
-
-Use table interpolation for production. Do not use black-oil correlations unless explicitly configured.
-
-Validation must fail on pressure or saturation outside table range unless extrapolation is explicitly enabled. Every extrapolation event must be logged.
-
-### 5.3 Normalized property files
-
-Support these normalized input files under `data/properties/`:
+Target endpoint:
 
 ```text
-density.csv
-water_pvt.csv
-oil_pvt.csv
-gas_pvt.csv
-rock.csv
-swof.csv
-sgof.csv
-swfn.csv
-sgfn.csv
-sof2.csv
-sof3.csv
-region_map.csv
+POST /api/forecast/opm-flow/scenarios/{scenario_id}/crm-connectivity
 ```
 
-#### density.csv
+Request:
 
-Required columns:
+```json
+{
+  "run_id": "optional-prepared-run-id",
+  "history_window": {
+    "start_date": "2024-01-01",
+    "end_date": "2025-12-31",
+    "frequency": "month"
+  },
+  "crm": {
+    "engine": "pywaterflood",
+    "radius_m": 3000,
+    "min_connection_weight": 0.03,
+    "max_connections_per_producer": 8,
+    "allow_cross_lu": false,
+    "allow_cross_sloy": false,
+    "fallback_policy": "nearest_injectors"
+  }
+}
+```
 
-- `pvt_region`
-- `oil_density_surface`
-- `water_density_surface`
-- `gas_density_surface`
-- `density_unit`
+Response:
 
-#### water_pvt.csv
+```json
+{
+  "scenario_id": "string",
+  "run_id": "string",
+  "connectivity": [
+    {
+      "connection_id": "INJ:PROD",
+      "injector_name": "INJ",
+      "producer_name": "PROD",
+      "producer_region_id": 101,
+      "alpha": 0.42,
+      "tau_days": 90,
+      "distance_m": 1400,
+      "source": "pywaterflood",
+      "quality": {
+        "rmse": 0.12,
+        "r2": 0.78
+      }
+    }
+  ],
+  "region_cube": {
+    "nx": 1,
+    "ny": 1,
+    "nz": 1,
+    "cube_path": "storage/.../normalized/region_cube.json",
+    "arrays": ["opernum", "fipnum", "satnum", "rocknum", "pvtnum"]
+  },
+  "diagnostics": {
+    "unconnected_producers": [],
+    "fallback_connections": [],
+    "warnings": []
+  }
+}
+```
 
-Required columns:
-
-- `pvt_region`
-- `p_ref`
-- `bw_ref`
-- `cw`
-- `muw_ref`
-- `cvw`
-- `pressure_unit`
-- `viscosity_unit`
-
-#### oil_pvt.csv
-
-For live-oil PVTO-style data:
-
-- `pvt_region`
-- `rs`
-- `pressure`
-- `bo`
-- `muo`
-- `is_saturated_row`
-- `pressure_unit`
-- `rs_unit`
-- `viscosity_unit`
-
-For dead-oil PVDO-style data:
-
-- `pvt_region`
-- `pressure`
-- `bo`
-- `muo`
-- `pressure_unit`
-- `viscosity_unit`
-
-#### gas_pvt.csv
-
-For dry-gas PVDG-style data:
-
-- `pvt_region`
-- `pressure`
-- `bg`
-- `mug`
-- `pressure_unit`
-- `bg_unit`
-- `viscosity_unit`
-
-For wet-gas PVTG-style data, allow:
-
-- `pvt_region`
-- `pressure`
-- `rv`
-- `bg`
-- `mug`
-- `pressure_unit`
-- `rv_unit`
-- `bg_unit`
-- `viscosity_unit`
-
-#### rock.csv
-
-Required columns:
-
-- `rock_region`
-- `p_ref`
-- `rock_compressibility`
-- `pressure_unit`
-- `compressibility_unit`
-
-#### swof.csv
-
-Required columns:
-
-- `sat_region`
-- `sw`
-- `krw`
-- `krow`
-- `pcow`
-- `pressure_unit`
-
-#### sgof.csv
-
-Required columns:
-
-- `sat_region`
-- `sg`
-- `krg`
-- `krog`
-- `pcog`
-- `pressure_unit`
-
-#### region_map.csv
-
-Required columns:
-
-- `cell_id`
-- `pvt_region`
-- `sat_region`
-- `rock_region`
-- `fip_region`
-
-Optional columns:
-
-- `region_name`
-- `formation`
-- `reservoir`
-- `zone`
-
-### 5.4 Bubble-point handling
-
-For PVTO-style live oil:
-
-- treat saturated PVTO rows as the source of `Rs_sat(p)` and `Pb(Rs)`;
-- do not require a separate Pb table if PVTO is available;
-- allow an explicit bubble-point table only as an additional normalized input;
-- validate monotonicity and physical consistency where possible.
-
-For PVDO-style dead oil:
-
-- do not use dissolved gas unless explicit `RSCONST` or equivalent is provided.
-
-### 5.5 PVT-aware material balance
-
-Replace simplified liquid-volume balance with black-oil, stock-tank/reservoir-volume-aware material balance.
-
-For each material-balance cell or region, track at least:
-
-- pressure `p`
-- pore volume `PV`
-- porosity multiplier from rock compressibility
-- water saturation `Sw`
-- oil saturation `So`
-- gas saturation `Sg`, optional
-- stock-tank oil in place
-- water in place
-- free gas in place, optional
-- dissolved gas in oil if live-oil PVT is used
-
-Use black-oil component volumes:
+Target endpoint для явного перестроения cube из сохранённой связности:
 
 ```text
-N_oil_stock = PV * phi_mult(p) * So / Bo(p, Rs)
-W_water_stock = PV * phi_mult(p) * Sw / Bw(p)
-G_gas_stock = PV * phi_mult(p) * Sg / Bg(p) + PV * phi_mult(p) * So * Rs(p) / Bo(p, Rs)
+POST /api/forecast/opm-flow/scenarios/{scenario_id}/region-cube/build
 ```
 
-Production/injection conversions:
+Request:
 
-```text
-oil_reservoir_volume   = q_oil_surface   * Bo(p, Rs)
-water_reservoir_volume = q_water_surface * Bw(p)
-gas_reservoir_volume   = q_gas_surface   * Bg(p)
+```json
+{
+  "run_id": "string",
+  "connectivity_result_id": "string",
+  "allocation": {
+    "corridor_width_m": 225,
+    "well_region_radius_m": 150,
+    "producer_region_mode": "one_region_per_producer",
+    "store_pair_subregions": true
+  }
+}
 ```
 
-Injected water should use `Bw` at local pressure or injection-condition pressure depending on configuration.
+### UI contract
 
-Calculate voidage replacement ratio using PVT-corrected reservoir volumes.
+В `Module B: Forecast` должен быть panel `CRM и регионы`:
 
-### 5.6 Pressure update
-
-Initial MVP may use a tank pressure solver, but it must use:
-
-- rock compressibility from `ROCK`;
-- water compressibility from `PVTW`;
-- pressure-dependent `Bo`, `Bw`, `Bg`, `Rs`, and viscosities from PVT tables;
-- region-specific `PVTNUM` / `ROCKNUM`.
-
-A conceptual update is:
-
-```text
-p_c(t+dt) = p_c(t) + pressure_solver(
-    pore_volume,
-    rock_compressibility,
-    water_compressibility,
-    oil_pvt,
-    gas_pvt,
-    injection_reservoir_volume,
-    withdrawal_reservoir_volume,
-    intercell_flux,
-    aquifer_support
-)
-```
-
-Do not use a single constant formation volume factor in production mode.
-
-### 5.7 SCAL/PVT fractional flow
-
-Oil-water fractional flow must use tabular relative permeability and pressure-dependent viscosity:
-
-```text
-lambda_w = krw(Sw, SATNUM) / mu_w(p, PVTNUM)
-lambda_o = krow(Sw, SATNUM) / mu_o(p, Rs, PVTNUM)
-fw = lambda_w / (lambda_w + lambda_o)
-```
-
-For gas-oil if gas is active:
-
-```text
-lambda_g = krg(Sg, SATNUM) / mu_g(p, PVTNUM)
-lambda_o_g = krog(Sg, SATNUM) / mu_o(p, Rs, PVTNUM)
-```
-
-Corey/Brooks-Corey parametric curves are allowed only:
-
-- for synthetic tests;
-- when explicitly configured as parametric SCAL mode;
-- as a simplified pywaterflood compatibility example.
-
-Native tabular SCAL/PVT fractional flow is the authoritative implementation.
+- controls:
+  - `CRM radius`;
+  - timestep `day/month`;
+  - `min_connection_weight`;
+  - `max_connections_per_producer`;
+  - toggles `cross-LU`, `cross-SLOY`;
+  - fallback policy;
+- action `Рассчитать CRM`;
+- connectivity matrix:
+  - rows: producers;
+  - columns: injectors;
+  - cell value: `alpha`;
+  - tooltip: `tau_days`, distance, quality;
+- map:
+  - wells;
+  - injector-producer links;
+  - cell-level `opernum`/`FIPNUM` cube;
+  - switch between `opernum`, `fipnum`, `satnum`, `rocknum`, `pvtnum`;
+- editable connection table:
+  - enable/disable pair;
+  - manual weight override;
+  - lock pair before calibration;
+- diagnostics:
+  - unconnected producers;
+  - fallback links;
+  - CRM quality summary;
+  - number of regions and active cells by region.
 
 ---
 
-## 6. 1D edge displacement model
+## Пункт 3. Региональная адаптация на историю
 
-For every active injector-producer edge, track effective injection and injected pore volumes:
+### Цель
+
+Автоматически подобрать региональные multipliers и формы SCAL-кривых так, чтобы модель воспроизводила историю пластового давления и обводнённости в заданных tolerances. После успешной адаптации case получает статус `calibrated` / `ready_for_forecast`.
+
+### Настраиваемые параметры региона
+
+Каждый `producer_region_id` или `connection_region_id` имеет `RegionParameterSet`:
+
+```json
+{
+  "region_id": 101,
+  "permx_multiplier": 1.0,
+  "permy_multiplier": 1.0,
+  "permz_multiplier": 1.0,
+  "transmissibility_multiplier": 1.0,
+  "pv_multiplier": 1.0,
+  "satnum": 101,
+  "swof_shape": {
+    "swc": 0.18,
+    "sorw": 0.15,
+    "krw_end": 1.0,
+    "kro_end": 1.0,
+    "nw": 2.0,
+    "no": 2.0
+  },
+  "sgof_shape": {
+    "sgc": 0.0,
+    "sorg": 0.10,
+    "krg_end": 1.0,
+    "krog_end": 1.0,
+    "ng": 2.0,
+    "nog": 2.0
+  }
+}
+```
+
+Parameter bounds:
+
+- `permx/permy multiplier`: `0.05 .. 20.0`;
+- `permz multiplier`: `0.01 .. 10.0`;
+- `transmissibility multiplier`: `0.05 .. 20.0`;
+- `pv_multiplier`: `0.05 .. 500.0`;
+- Corey exponents `nw/no/ng/nog`: `0.5 .. 8.0`;
+- endpoints `kr*_end`: `0.05 .. 1.0`;
+- residual saturations must preserve physical ordering: `0 <= swc < 1 - sorw`, `0 <= sgc < 1 - sorg`.
+
+### Objective function
+
+Для каждой итерации импортируются расчётные time series и считается objective:
 
 ```text
-q_inj_eff_ij(t) = alpha_ij * eta_ij * q_inj_i(t)
-dIPVI_ij(t) = q_inj_eff_ij(t) * dt / pv_ij
-IPVI_ij(t+dt) = IPVI_ij(t) + dIPVI_ij(t)
+objective =
+  pressure_weight * normalized_rmse(p_res_fact, p_res_calc)
+  + watercut_weight * rmse(watercut_fact, watercut_calc)
+  + rate_weight * normalized_rmse(q_liq_fact, q_liq_calc)
+  + regularization_weight * parameter_distance_from_base
 ```
 
-Convert IPVI to saturation using an explicit displacement model:
+Default criteria:
+
+- `abs(p_res_fact - p_res_calc) <= pressure_tolerance_bar`, default `5 bar`;
+- `abs(watercut_fact - watercut_calc) <= watercut_tolerance_fraction`, default `0.03`;
+- optional `q_liq_error <= rate_tolerance_fraction`, default `0.10`;
+- at least `min_history_coverage_fraction` of valid dates per calibrated producer.
+
+### Backend algorithm
+
+1. Создать calibration run:
+   - взять prepared case из пункта 1;
+   - взять region cube из пункта 2;
+   - создать `SimulationRun` или child calibration run;
+   - сохранить base `RegionParameterSet`.
+
+2. Сформировать baseline simulation:
+   - записать deck без regional edits или с current params;
+   - запустить `flow`;
+   - импортировать `UNSMRY/SMSPEC/UNRST/INIT/EGRID` в normalized tables;
+   - если `flow` недоступен, calibration не должна помечаться successful; допускается только diagnostic fallback.
+
+3. Посчитать baseline objective:
+   - сопоставить `W*` summary vectors с original well names;
+   - агрегировать well metrics до region metrics;
+   - записать `CalibrationIteration(iteration=0)`.
+
+4. Запустить перебор:
+   - использовать deterministic coordinate search как базовый backend без внешней optimizer dependency;
+   - для каждого региона и семейства параметров генерировать candidates вокруг текущего значения:
+     - coarse factors: `[0.5, 0.75, 1.0, 1.25, 1.5, 2.0]`;
+     - после улучшения shrink factor: `[0.85, 0.95, 1.0, 1.05, 1.15]`;
+   - порядок подбора:
+     1. `pv_multiplier` для pressure/material balance;
+     2. `permx/permy/transmissibility` для injectivity/productivity and pressure response;
+     3. `SWOF/SGOF shape` через `SATNUM` variants для watercut/GOR;
+     4. optional well controls только если region params исчерпали bounds.
+
+5. Для каждого candidate:
+   - записать новый `edit.inc`, `props.inc`, `regions.inc`;
+   - запустить `flow`;
+   - импортировать results;
+   - посчитать objective;
+   - сохранить iteration record, artifacts и logs.
+
+6. Правило принятия:
+   - candidate принимается, если objective улучшился минимум на `min_objective_improvement`;
+   - если ухудшился, параметры откатываются к best-known set;
+   - если регион уже within tolerance, он может быть frozen.
+
+7. Правило остановки:
+   - все calibrated regions within tolerances;
+   - достигнут `max_iterations`;
+   - улучшение меньше `min_objective_improvement` за `patience` итераций;
+   - OPM errors или invalid deck превышают `max_failed_candidates`.
+
+8. Зафиксировать calibrated model:
+   - `SimulationRun.metadata.calibration_status = calibrated | partial | failed`;
+   - сохранить best parameter set;
+   - записать final deck artifacts;
+   - записать `field/region/well time series`;
+   - downstream forecast может стартовать только от `calibrated` или `partial` при explicit user override.
+
+### Deck generation for calibrated params
+
+`EDIT`:
+
+- `MULTPV` array или `MULTIPLY/BOX` edits по region cells;
+- `MULTX/MULTY/MULTZ` или `MULTREGT` для transmissibility/permeability effects;
+- каждое изменение должно быть traceable в normalized diagnostics.
+
+`PROPS`:
+
+- для каждого unique SCAL variant генерировать набор `SWOF/SGOF`;
+- `SATNUM` в `REGIONS` указывает, какой вариант SCAL применён к cell;
+- generated SCAL tables должны хранить исходные Corey-параметры в `CalibrationResult`.
+
+`REGIONS`:
+
+- `FIPNUM` сохраняет material balance region;
+- `SATNUM` меняется при изменении SCAL формы;
+- `ROCKNUM` меняется, если требуется region-specific rock compressibility;
+- `PVTNUM` меняется только если PVT реально region-specific.
+
+`SOLUTION`:
+
+- region pressure shifts допустимы только как explicit calibration option;
+- по умолчанию давление адаптируется через PV/permeability/transmissibility/SCAL, а не скрытой перезаписью фактического давления.
+
+### Backend interface
+
+Target endpoint:
 
 ```text
-S_w_ij(t) = clip(S_wc + IPVI_ij(t) * displacement_efficiency_ij, S_wc, 1 - S_orw)
+POST /api/forecast/opm-flow/scenarios/{scenario_id}/calibration/start
 ```
 
-Then calculate edge fractional flow from property evaluators:
+Request:
+
+```json
+{
+  "run_id": "prepared-or-region-cube-run-id",
+  "connectivity_result_id": "string",
+  "history_window": {
+    "start_date": "2024-01-01",
+    "end_date": "2025-12-31",
+    "frequency": "month"
+  },
+  "criteria": {
+    "pressure_tolerance_bar": 5,
+    "watercut_tolerance_fraction": 0.03,
+    "rate_tolerance_fraction": 0.10,
+    "min_history_coverage_fraction": 0.70
+  },
+  "objective_weights": {
+    "pressure": 0.45,
+    "watercut": 0.35,
+    "rate": 0.20,
+    "regularization": 0.05
+  },
+  "search": {
+    "method": "coordinate_grid",
+    "max_iterations": 60,
+    "patience": 8,
+    "min_objective_improvement": 0.005,
+    "max_failed_candidates": 10
+  },
+  "parameter_bounds": {
+    "permeability_multiplier": [0.05, 20],
+    "pv_multiplier": [0.05, 500],
+    "corey_exponent": [0.5, 8]
+  },
+  "run_external_flow": true
+}
+```
+
+Response:
+
+```json
+{
+  "calibration_id": "string",
+  "scenario_id": "string",
+  "run_id": "string",
+  "status": "running",
+  "current_iteration": 0,
+  "best_objective": null,
+  "criteria": {},
+  "artifacts": []
+}
+```
+
+Status endpoint:
 
 ```text
-fw_ij(t) = fractional_flow(S_w_ij, p_cell_or_edge, pvt_region, sat_region)
+GET /api/forecast/opm-flow/scenarios/{scenario_id}/calibration/{calibration_id}
 ```
 
-Support at least two water-response options:
+Response:
 
-1. Native tabular SCAL/PVT fractional-flow response.
-2. Optional pywaterflood Buckley-Leverett response if pywaterflood is installed and compatible with the selected simplification.
+```json
+{
+  "calibration_id": "string",
+  "status": "calibrated",
+  "best_run_id": "string",
+  "best_objective": 0.18,
+  "regions_within_tolerance": 42,
+  "regions_total": 45,
+  "iterations": [
+    {
+      "iteration": 12,
+      "region_id": 101,
+      "changed_parameters": {"pv_multiplier": 1.4},
+      "objective": 0.18,
+      "pressure_rmse_bar": 3.8,
+      "watercut_rmse_fraction": 0.024,
+      "accepted": true,
+      "run_id": "string"
+    }
+  ],
+  "best_parameters_path": "storage/.../normalized/region_parameters_best.json",
+  "diagnostics_path": "storage/.../normalized/calibration_report.json"
+}
+```
 
-The native implementation is mandatory.
-
-Producer watercut prediction:
+Promotion endpoint:
 
 ```text
-fw_hat_j(t) = aggregate_i(edge_response_ij(t - tau_ij))
+POST /api/forecast/opm-flow/scenarios/{scenario_id}/calibration/{calibration_id}/promote
 ```
 
-A simple first implementation may use:
+Effect:
+
+- marks calibrated run as ready for forecast;
+- writes `metadata.calibrated_run_id`;
+- stores calibrated parameter set in scenario result/source payload;
+- enables scenario forecast generation for points 4-5.
+
+### UI contract
+
+В `Module B: Forecast` должен быть panel `Адаптация`:
+
+- controls:
+  - history window;
+  - pressure/watercut/rate tolerances;
+  - objective weights;
+  - max iterations;
+  - candidate search mode;
+  - toggles for parameter families: `PV`, `PERM`, `TRANSMISSIBILITY`, `SCAL`;
+- region parameter table:
+  - `region_id`;
+  - producer;
+  - injectors;
+  - `pv_multiplier`;
+  - `perm_multiplier`;
+  - `satnum`;
+  - Corey params;
+  - bounds;
+  - freeze checkbox;
+- action buttons:
+  - `Запустить адаптацию`;
+  - `Остановить`;
+  - `Принять лучшую модель`;
+- iteration log:
+  - iteration number;
+  - changed region;
+  - changed parameters;
+  - objective;
+  - accepted/rejected;
+  - run status;
+- plots:
+  - pressure fact vs calc;
+  - watercut fact vs calc;
+  - liquid/oil fact vs calc;
+  - objective over iterations;
+- map:
+  - color by pressure error;
+  - color by watercut error;
+  - color by accepted parameter multiplier;
+- final status:
+  - `not_started`;
+  - `running`;
+  - `calibrated`;
+  - `partial`;
+  - `failed`;
+  - `ready_for_forecast`.
+
+---
+
+## Unified normalized outputs for points 1-3
+
+Every run must write:
 
 ```text
-fw_hat_j(t) = clip(
-    fw_background_j + sum_i response_weight_ij(t) * fw_ij(t - tau_ij),
-    0,
-    1
-)
+run_manifest.json
+input/FIELD_2D_<SCENARIO>.DATA
+input/includes/runspec.inc
+input/includes/grid.inc
+input/includes/edit.inc
+input/includes/props.inc
+input/includes/regions.inc
+input/includes/init.inc
+input/includes/summary.inc
+input/includes/schedule.inc
+output/stdout.txt
+output/stderr.txt
+normalized/field_2d_analysis.json
+normalized/grid_static.json
+normalized/grid_dynamic.json
+normalized/region_cube.json
+normalized/crm_connectivity.json
+normalized/region_parameters_initial.json
+normalized/region_parameters_best.json
+normalized/calibration_iterations.json
+normalized/calibration_report.json
+normalized/well_timeseries.json
+normalized/field_timeseries.json
+normalized/region_timeseries.json
 ```
 
-The aggregation weights must depend on:
+Expected OPM raw output families after actual `flow` run:
 
-- `alpha_ij`
-- `eta_ij`
-- effective injection rate
-- edge PV
-- current edge saturation
-- link type
-- optional historical liquid rate
+- `EGRID`;
+- `INIT`;
+- `SMSPEC`;
+- `UNSMRY` or segmented `S*`;
+- `UNRST` or segmented `X*`;
+- `PRT`;
+- `DBG` or logs when available.
 
----
-
-## 7. Calibration / history matching
-
-The calibration engine must estimate:
-
-- `alpha_ij`
-- `eta_i` or `eta_ij`
-- `tau_days`
-- `pv_ij`
-- `displacement_efficiency_ij`
-- `breakthrough_ipvi_ij`
-- selected fractional-flow multipliers, if configured
-- pressure/material-balance parameters
-- pore-volume and compressibility multipliers, if configured
-- optional aquifer and intercell transmissibility parameters
-- optional producer base watercut correction
-
-Use constraints:
-
-- `alpha_ij >= 0`
-- `0 <= eta_i <= 1.5` or configurable
-- `0 <= eta_ij <= 1.5` or configurable
-- `tau_days > 0`
-- `pv_ij > 0`
-- for each injector, `sum_j alpha_ij <= 1.0` or normalized to 1.0 depending on config
-- watercut predictions in `[0, 1]`
-- pressure positive
-- no invalid saturations
-
-Use scipy optimization first. Add optional optuna for multi-start/global search.
-
-Objective function:
-
-```text
-L = W_wc * L_watercut
-  + W_p  * L_pressure
-  + W_q  * L_rates
-  + W_mb * L_material_balance
-  + W_reg * L_regularization
-```
-
-Where:
-
-- `L_watercut` compares observed and predicted producer watercut.
-- `L_pressure` compares observed and predicted `p_res` by well/cell/region.
-- `L_rates` optionally compares oil, water, and liquid rates.
-- `L_material_balance` penalizes unrealistic cell volume imbalance and impossible voidage replacement.
-- `L_regularization` penalizes deviations from distance, MRST, CRM, manual, and link-type priors.
-
-Calibration must support:
-
-- train/validation split by time;
-- multi-start optimization;
-- fixed parameters;
-- parameter bounds from YAML config;
-- reproducible random seed;
-- exporting fitted parameters to JSON and Parquet;
-- metrics per producer, injector, cell, and scenario.
-
-Distance-based alpha is only a prior. The optimizer must be able to correct it when history data shows a better explanation.
-
-Examples of behavior to capture:
-
-- close producer but weak response: possible screen, low eta, high tau, bad connection;
-- distant producer but fast watercut growth: possible channel/fracture, low PV, low tau;
-- strong injection without pressure increase: low injection efficiency or out-of-pattern losses;
-- pressure support without watercut growth: good pressure support before breakthrough;
-- watercut growth without pressure support: channeling or small effective connected volume.
+Downstream modules must consume normalized results and `SimulationRun` metadata, not repeat forecast math in UI.
 
 ---
 
-## 8. Input data contracts
-
-### 8.1 wells.csv
-
-Required:
-
-- `well_id`
-- `well_type`: `producer` or `injector`
-- `x`
-- `y`
-
-Optional:
-
-- `z`
-- `cell_id`
-- `region_id`
-- `start_date`
-- `end_date`
-- `status`
-- `trajectory_type`
-- `heel_x`, `heel_y`, `toe_x`, `toe_y`
-
-### 8.2 production.csv
-
-Required:
-
-- `date`
-- `producer_id`
-- `q_oil`
-- `q_water`
-
-Optional:
-
-- `q_liq`; if missing, use `q_oil + q_water`
-- `q_gas`
-- `bhp`
-- `thp`
-- `p_res`
-- `status`
-- `measurement_quality`
-
-### 8.3 injection.csv
-
-Required:
-
-- `date`
-- `injector_id`
-- `q_water_inj`
-
-Optional:
-
-- `bhp`
-- `whp`
-- `thp`
-- `status`
-- `measurement_quality`
-
-### 8.4 cells.csv
-
-Required for pressure/material-balance mode:
-
-- `cell_id`
-- `region_id`
-- `pv`
-- `ooip`
-- `initial_pressure`
-- `initial_sw`
-
-Optional:
-
-- `initial_so`
-- `initial_sg`
-- `ct`
-- `aquifer_index`
-- `area_m2`
-- `h_m`
-- `phi`
-- `ntg`
-
-### 8.5 connections.csv / connections_initial.csv
-
-`init-connections` must generate `connections_initial.csv` with:
-
-- `injector_id`
-- `producer_id`
-- `distance_m`
-- `inside_influence_radius`
-- `active`
-- `link_type`
-- `alpha_prior`
-- `alpha_lower_bound`
-- `alpha_upper_bound`
-- `eta_prior`
-- `tau_prior_days`
-- `pv_prior`
-- `prior_source`
-- `prior_weight`
-- `geometry_weight`
-- `notes`
-
-Manual `connections.csv` may override link type or priors, but the system must preserve the distance-based initialization diagnostics.
-
----
-
-## 9. External tool integration
-
-### 9.1 OPM Flow adapter
-
-OPM Flow is optional and used as a high-fidelity simulator / validation source.
-
-The OPM adapter must:
-
-1. Run OPM Flow if the `flow` executable is available.
-2. Import well rates, pressures, saturations, FIPNUM/region material-balance data if exported.
-3. Import PROPS and REGIONS from OPM/Eclipse-style deck/include files where possible.
-4. Support at least normalized equivalents of:
-   - `DENSITY`
-   - `PVTO` / `PVDO`
-   - `PVTW`
-   - `PVDG` / `PVTG`
-   - `ROCK`
-   - `SWOF` / `SGOF` or `SWFN` / `SGFN` / `SOF2` / `SOF3`
-   - `PVTNUM` / `SATNUM` / `ROCKNUM` / `FIPNUM`
-5. Compare proxy history match and forecast against OPM results when available.
-6. Never require OPM for the base test suite.
-
-Use `res2df`, `opm.io`, or similar libraries when available, but keep adapters optional.
-
-### 9.2 MRST Flow Diagnostics adapter
-
-MRST is optional and used for flow diagnostics priors.
-
-The MRST adapter must:
-
-1. Generate MATLAB/Octave script templates that use deck-based MRST workflows when available.
-2. Import MRST-exported CSV files with:
-   - `injector_id`
-   - `producer_id`
-   - `allocation_factor`
-   - `time_of_flight_days`
-   - `swept_volume`
-   - `drainage_volume`
-3. Map:
-   - allocation factor -> `alpha_mrst_ij`
-   - time-of-flight -> `tau_mrst_ij`
-   - swept/drainage volume -> `pv_mrst_ij`
-4. Never require MATLAB/MRST for the base Python tests.
-
-### 9.3 pywaterflood adapter
-
-pywaterflood is optional and used for CRM and simplified Buckley-Leverett calculations.
-
-The adapter must:
-
-1. Use pywaterflood CRM to estimate connectivities and time decays when installed.
-2. Use pywaterflood Buckley-Leverett helpers only when compatible with simplified inputs.
-3. Derive representative oil and water viscosities from the PVT evaluator at current or representative pressure.
-4. Derive endpoints from SCAL tables when using a Corey approximation.
-5. Prefer native tabular fractional-flow when full SCAL/PVT tables are available.
-6. Gracefully fall back when pywaterflood is missing.
-
-### 9.4 Prior blending
-
-Distance-based initialization is mandatory. External tools refine it.
-
-If multiple prior sources exist:
-
-```text
-score_ij =
-    w_distance * alpha_distance_ij
-  + w_mrst     * alpha_mrst_ij
-  + w_crm      * alpha_crm_ij
-  + w_manual   * alpha_manual_ij
-```
-
-Then normalize:
-
-```text
-alpha_prior_ij = score_ij / sum_j(score_ij)
-```
-
-Default:
-
-```yaml
-prior_blending:
-  distance_weight: 0.60
-  mrst_weight: 0.25
-  crm_weight: 0.15
-  manual_weight: 1.00
-  manual_overrides_automatic: true
-```
-
-If MRST or CRM priors are unavailable, redistribute their weights to available sources.
-
----
-
-## 10. CLI requirements
-
-Create a CLI named `waterflood-proxy` with commands:
-
-```bash
-waterflood-proxy validate-data --data-dir data/ --config config.yaml
-waterflood-proxy validate-properties --data-dir data/ --config config.yaml
-waterflood-proxy import-opm-properties --deck data/model.DATA --out data/properties/
-waterflood-proxy inspect-properties --data-dir data/ --config config.yaml
-waterflood-proxy plot-pvt --data-dir data/ --config config.yaml --out outputs/pvt_plots/
-waterflood-proxy plot-scal --data-dir data/ --config config.yaml --out outputs/scal_plots/
-waterflood-proxy init-connections --data-dir data/ --config config.yaml --out data/connections_initial.csv
-waterflood-proxy calibrate --data-dir data/ --config config.yaml --out outputs/
-waterflood-proxy forecast --data-dir data/ --params outputs/fitted_parameters.json --scenarios scenarios.yaml --out outputs/
-waterflood-proxy report --outputs outputs/ --lang ru
-```
-
-`validate-data` must call `validate-properties` when material balance or watercut modeling is enabled.
-
-`init-connections` must:
-
-1. Read wells and coordinates.
-2. Validate coordinate system and units.
-3. Build injector-producer candidates within 3000 m.
-4. Calculate distance-based alpha priors.
-5. Apply `screen` / `channel` / `normal` / `unknown` multipliers.
-6. Estimate tau priors.
-7. Estimate 1D edge PV priors.
-8. Export `connections_initial.csv`.
-9. Produce a network diagnostic plot.
-10. Produce a distance/alpha heatmap.
-
----
-
-## 11. Forecast scenarios
-
-`scenarios.yaml` must support multiple forecast scenarios:
-
-- scenario name;
-- forecast start/end date;
-- injection multipliers by well/date;
-- explicit injection schedules;
-- producer constraints;
-- shut-ins;
-- new wells or disabled wells;
-- converted wells;
-- changed injection efficiency assumptions;
-- changed link status or link type;
-- pressure constraints;
-- property multiplier cases, if allowed;
-- output aggregation level.
-
-Forecast outputs:
-
-- producer oil, water, liquid, gas rates where modeled;
-- watercut;
-- injector rates;
-- effective injection by edge;
-- pressure by cell/region/well;
-- material balance by cell/region;
-- cumulative oil/water/injection;
-- scenario summary metrics.
-
----
-
-## 12. Outputs
-
-The package must produce:
-
-```text
-outputs/fitted_parameters.json
-outputs/fitted_edges.parquet
-outputs/history_match_timeseries.parquet
-outputs/forecast_timeseries.parquet
-outputs/material_balance_by_cell.parquet
-outputs/scenario_summary.csv
-outputs/report.html
-outputs/plots/watercut_actual_vs_predicted_*.png
-outputs/plots/p_res_actual_vs_predicted_*.png
-outputs/plots/alpha_matrix_heatmap.png
-outputs/plots/eta_by_injector.png
-outputs/plots/link_type_diagnostics.png
-outputs/plots/forecast_watercut_by_scenario.png
-outputs/plots/forecast_pressure_by_scenario.png
-outputs/plots/material_balance_by_cell.png
-outputs/plots/pvt_*.png
-outputs/plots/scal_*.png
-```
-
-The generated report must support Russian labels.
-
----
-
-## 13. Validation rules
-
-Strict validation is mandatory.
-
-Coordinate validation:
-
-- `x` and `y` required in meters.
-- CRS required.
-- Do not silently treat latitude/longitude as meters.
-- Do not silently mix CRS.
-
-Production data validation:
-
-- Missing critical rates must fail unless explicitly configured.
-- Negative impossible rates must fail unless status/operation explains them.
-- Watercut must be computable for producers.
-
-Property validation:
-
-- `DENSITY` required for active phases.
-- `PVTW` required if water is active.
-- `PVTO` or `PVDO` required if oil is active.
-- `PVDG` or `PVTG` required if gas is active.
-- `ROCK` required for pressure/material-balance mode.
-- `SWOF` or `SWFN` + `SOF2/SOF3` required for oil-water displacement.
-- `SGOF` or `SGFN` + `SOF3` required if gas-oil displacement is active.
-- `PVTNUM`, `SATNUM`, `ROCKNUM` mappings must be valid for all active cells/edges.
-- Saturation tables must be monotonic in saturation.
-- Relative permeability must be non-negative.
-- Watercut predictions must remain in `[0, 1]`.
-- Pressure must remain positive.
-- Extrapolation disabled by default.
-
-Calibration validation:
-
-- constraints respected;
-- parameters remain inside bounds;
-- all outputs reproducible under fixed seed;
-- loss components exported.
-
----
-
-## 14. Tests / acceptance criteria
-
-Implementation is acceptable when all these tests pass:
-
-### Geometry
-
-1. Producers outside 3000 m are excluded by default.
-2. Producers inside 3000 m receive positive `alpha_prior`.
-3. For each injector, active `alpha_prior` values sum to 1.0.
-4. A closer producer receives a larger distance weight than a farther producer, all else equal.
-5. `screen` lowers prior weight.
-6. `channel` increases prior weight.
-7. If all producers are outside radius, no strong artificial connection is created.
-8. Calibration can override distance priors when history requires it.
-
-### PVT / SCAL / ROCK
-
-1. PVTW records are parsed into reference pressure, `Bw`, `Cw`, water viscosity, and water viscosibility.
-2. PVTO-style live-oil data is parsed into `Rs`, pressure, `Bo`, and oil viscosity.
-3. PVDG-style gas data is parsed into pressure, `Bg`, and gas viscosity.
-4. DENSITY is parsed for oil, water, and gas surface densities.
-5. ROCK is parsed into reference pressure and rock compressibility.
-6. SWOF tables are parsed into `Sw`, `Krw`, `Krow`, and `Pcow`.
-7. SGOF tables are parsed into `Sg`, `Krg`, `Krog`, and `Pcog`.
-8. PVTNUM/SATNUM/ROCKNUM select the correct regional properties.
-9. Material-balance pressure response changes when `Bo`, `Bw`, `Cw`, or rock compressibility changes.
-10. 1D edge fractional-flow response changes when SCAL curves or viscosities change.
-11. Missing production PVT/SCAL/ROCK data causes validation failure, not silent defaults.
-12. Synthetic examples still run with explicitly declared toy PVT/SCAL tables.
-
-### Model / calibration
-
-1. Synthetic data generator creates a small model with known true alpha, eta, tau, PV, pressure parameters, and properties.
-2. Calibration approximately recovers known alpha and eta values.
-3. Calibration produces watercut and pressure metrics.
-4. Forecast scenarios run from fitted parameters.
-5. Reports and diagnostic plots are created.
-6. Optional OPM/MRST/pywaterflood tests skip gracefully when dependencies are missing.
-
----
-
-## 15. Engineering requirements
-
-- Use type hints.
-- Use pydantic models for configs and schemas.
-- Use dataclasses or pydantic for parameter containers.
-- Use vectorized numpy/pandas where practical.
-- Keep functions small and testable.
-- Add docstrings explaining reservoir-engineering assumptions.
-- Unit handling must be explicit.
-- Do not silently infer units.
-- Do not silently fill missing critical data.
-- Provide clear validation errors.
-- Use reproducible random seeds.
-- Save config snapshot with every calibration run.
-- Save objective components and train/validation metrics.
-- Keep external adapters isolated.
-- Base tests must run offline and without external simulators.
-
----
-
-## 16. Suggested implementation sequence
-
-First inspect the repository. If it is empty, create the package from scratch.
-
-Work in small, testable steps:
-
-1. Create package skeleton, pyproject, schemas, config loader, and CLI stubs.
-2. Implement coordinate validation and distance-based `init-connections`.
-3. Implement PVT/SCAL/ROCK normalized table readers and validators.
-4. Implement property evaluators: PVT, rock, relperm, fractional flow.
-5. Implement graph model and 1D edge displacement.
-6. Implement PVT-aware tank material balance and pressure model.
-7. Implement simulator loop.
-8. Implement objective function and scipy optimizer.
-9. Implement synthetic data generator and tests.
-10. Implement forecast scenario runner.
-11. Implement reports and plots.
-12. Add optional pywaterflood adapter.
-13. Add MRST import adapter and MATLAB/Octave script template.
-14. Add OPM/res2df adapters.
-15. Add README and examples.
-
-Before coding, provide a concise implementation plan. Then implement. After implementation, run tests and show results.
+## Acceptance checklist for points 1-3
+
+1. Scenario validation blocks run if required hydrodynamic datasets are missing.
+2. Model radius default is `3000 м`, user can override it and the value is saved in scenario metadata.
+3. Every perforation top/center/bottom maps to an active cell.
+4. Root `.DATA` references every include file.
+5. `RUNSPEC/GRID/PROPS/REGIONS/SOLUTION/SCHEDULE/SUMMARY` are present and ordered according to `OPM_FLOW_REFERENCE_GUIDE.md`.
+6. PVT/SCAL/ROCK comes from scenario-bound input or explicit generated fallback warning.
+7. CRM connectivity is produced by `pywaterflood` adapter or explicit fallback policy.
+8. One model-wide region cube is created; no separate model per injector-producer pair.
+9. `opernum` normalized cube is stored; OPM deck stores supported region arrays.
+10. Each calibrated region has traceable parameter values and bounds.
+11. Calibration objective includes pressure and watercut at minimum.
+12. Every candidate iteration has run artifacts, objective, accepted/rejected flag and diagnostics.
+13. A model is marked `ready_for_forecast` only after criteria are met or user explicitly accepts partial calibration.
+14. UI shows model geometry, CRM matrix, region cube, calibration status and OPM artifacts from backend results.
+15. Existing legacy/reduced-order logic must not be used as a hidden substitute for OPM Flow history matching.

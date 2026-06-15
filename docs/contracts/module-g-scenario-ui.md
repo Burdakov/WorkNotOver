@@ -735,3 +735,30 @@ Cross-dataset проверки (`external_krs_schedule` coverage, отсутст
 
 Текущий `Planner` остаётся отдельным route/модулем `Планировщик КРС` и не должен ломаться при внедрении этих листов.
 
+# CURRENT IMPLEMENTATION OVERRIDE: Module G for OPM Flow 2D field model
+
+This section is authoritative for the current `Module G` implementation. If any
+lower legacy section mentions `waterflood_proxy_hm`, `opm_flow_1d_drainage`,
+`Drainage1D*`, `drainage-1d/*`, or `waterflood/mock-analysis`, it is deprecated
+and must not be used by runtime UI code.
+
+- The active scenario stores one canonical input context for `Module B`.
+- For `forecast_method = opm_flow_2d_field`, the scenario workflow must expose
+  these input nodes: `well_groups`, `well_trajectories`, `perforations`,
+  `production_history`, `injection_history`, `niz`, `pvt_properties`.
+- The scenario creation/editing UI must expose and persist
+  `metadata.field_2d_config`, including manual `influence_radius_m` (for
+  example `1000 m` or `3000 m`), INIT pressure/saturations/depths, history-match
+  tolerances and weights, and `run_external_flow`.
+- The `pvt_properties` node uploads/selects a raw OPM Flow include dataset from
+  any file whose content is readable text, without restricting the file
+  extension to `.txt`.
+- `Production -> analysis and setup` runs and reads only `field-2d/*`
+  endpoints.
+- The analysis view must show a single 2D field model: wells, 2D grid cells,
+  injector-producer regions, well regions, pressure/saturation/pore-volume/
+  permeability properties, region metrics, and history-vs-calculation time
+  series.
+- The scenario `calculate` action must use the same stored `field_2d_config` as
+  the explicit prepare/run controls.
+- The UI must not render 1D model batches as the current method.

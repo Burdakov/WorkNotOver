@@ -27,11 +27,23 @@ class OpmResultImporter:
             )
 
         available = {path.suffix.upper().lstrip(".") for path in output_dir.glob("*") if path.is_file()}
-        required_any = {"UNSMRY", "SMSPEC", "UNRST", "EGRID", "INIT"}
-        missing = sorted(required_any - available)
+        has_restart = "UNRST" in available or any(item.startswith("X") and item[1:].isdigit() for item in available)
+        has_summary = (
+            "UNSMRY" in available
+            or "ESMRY" in available
+            or any(item.startswith("S") and item[1:].isdigit() for item in available)
+        )
+        families = {
+            "grid": "EGRID" in available,
+            "initial_state": "INIT" in available or "X0000" in available,
+            "restart": has_restart,
+            "summary": has_summary,
+            "summary_spec": "SMSPEC" in available,
+        }
+        missing = sorted(name for name, present in families.items() if not present)
         if missing:
             warnings.append(
-                "OPM output artifacts are incomplete or not generated yet: " + ", ".join(missing)
+                "OPM output artifact families are incomplete or not generated yet: " + ", ".join(missing)
             )
 
         report_path = normalized_dir / "import_report.json"
@@ -41,6 +53,7 @@ class OpmResultImporter:
             warnings=warnings,
             metadata={
                 "available_extensions": sorted(available),
+                "artifact_families": families,
                 "expected_importer": "res2df/opm.io",
             },
         )

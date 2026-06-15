@@ -6,3 +6,4 @@ xlrd==2.0.1
 python-multipart==0.0.20
 sqlalchemy==2.0.41
 psycopg[binary]==3.2.9
+pywaterflood==0.3.4

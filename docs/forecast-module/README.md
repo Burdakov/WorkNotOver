@@ -1,40 +1,49 @@
-# waterflood_proxy_hm Codex prompt kit
+# WorkNotOver Forecast Module Reference Kit
 
-Этот комплект предназначен для запуска разработки Python-пакета `waterflood_proxy_hm` через Codex.
+Эта папка является методической базой для разработки `Module B`: обвязки
+`OPM Flow`, генерации OPM/Eclipse-compatible deck-файлов, запуска
+`simulation_runs` и импорта результатов в нормализованные scenario-bound
+артефакты.
+
+## Основной источник истины
+
+Для гидродинамического симулятора и генерации исходных данных приоритет имеют:
+
+1. `references/OPM_Flow_Reference_Manual_2025-10_Rev-0_compressed.pdf` —
+   локальная копия OPM Flow Reference Manual.
+2. `docs/OPM_FLOW_REFERENCE_GUIDE.md` — рабочий справочник по структуре deck,
+   ключевым словам, include-файлам и ожидаемым выходным артефактам.
+3. `references/opm_flow_manual_2025_10_index.json` — извлечённый из PDF индекс
+   оглавления и ключевых слов для быстрых проверок.
+4. `../contracts/module-b-forecast.md` — контракт WorkNotOver для Module B.
+
 
 ## Что внутри
 
-- `PROMPT_MASTER.md` — основной готовый prompt для вставки в Codex.
-- `AGENTS.md` — постоянные инструкции для репозитория.
-- `config.example.yaml` — пример полной конфигурации.
-- `scenarios.example.yaml` — пример сценариев прогноза.
-- `data_templates/` — шаблоны CSV для скважин, добычи, закачки, ячеек и свойств.
-- `scripts/mrst_export_flow_diagnostics_template.m` — шаблон экспорта MRST Flow Diagnostics.
-- `docs/MVP_PROMPTS.md` — поэтапные промпты для разработки MVP.
-- `docs/ACCEPTANCE_CHECKLIST.md` — чек-лист приёмки.
-- `docs/EXTERNAL_REFERENCES.md` — ссылки на внешние источники, по которым нужно сверять реализацию.
+- `references/` — локальные методические источники и машинный индекс manual.
+- `docs/OPM_FLOW_REFERENCE_GUIDE.md` — основной рабочий справочник для
+  case-builder, runner, importer и UI-потребителей результатов.
+- `docs/EXTERNAL_REFERENCES.md` — внешние ссылки и локальные primary references.
+- `PROMPT_MASTER.md` — legacy prompt-kit для reduced-order waterflood/proxy
+  ветки; он не является источником истины для OPM deck generation.
 
-## Как использовать
+## Правило для разработки
 
-1. Создайте пустой репозиторий.
-2. Скопируйте `AGENTS.md` в корень репозитория.
-3. Скопируйте `config.example.yaml`, `scenarios.example.yaml` и папку `data_templates/` как основу примеров.
-4. Откройте Codex в корне репозитория.
-5. Вставьте содержимое `PROMPT_MASTER.md`.
-6. Для управляемой разработки используйте этапы из `docs/MVP_PROMPTS.md`.
-
-## Ключевая идея модели
-
-Модель строит первую связность по координатам скважин:
+Перед добавлением или изменением OPM-ключевого слова в runtime-коде нужно
+сверить его с локальным manual, `OPM_FLOW_REFERENCE_GUIDE.md` и индексом. Новая
+логика должна сохранять inspectable input artifacts в `simulation_runs`:
 
 ```text
-радиус влияния 3000 м → расстояния → alpha_prior → экран/канал/нормальная связь → адаптация
+input/FIELD_2D_<SCENARIO>.DATA
+input/includes/runspec.inc
+input/includes/grid.inc
+input/includes/edit.inc
+input/includes/props.inc
+input/includes/regions.inc
+input/includes/init.inc
+input/includes/summary.inc
+input/includes/schedule.inc
 ```
 
-Затем выполняется адаптация по истории добычи, закачки, обводнённости, Рпл и материальному балансу. Каждая связь `нагнетательная → добывающая` является 1D-гидродинамической прокси-линией с PV, насыщенностью, IPVI и fractional-flow-откликом.
-
-Для материального баланса и вытеснения используются явные PVT/SCAL/ROCK свойства, совместимые по смыслу с OPM/Eclipse deck conventions: `PVTO/PVDO`, `PVTW`, `PVDG/PVTG`, `DENSITY`, `ROCK`, `SWOF/SGOF` или `SWFN/SGFN/SOF2/SOF3`, `PVTNUM/SATNUM/ROCKNUM/FIPNUM`.
-
-## Важное ограничение
-
-Этот комплект не является готовым симулятором. Это ТЗ и стартовый набор файлов для Codex, чтобы он создал пакет с тестами, CLI, адаптерами и примерами.
+Если поведение не подтверждено manual или справочником, оно считается
+экспериментальным и должно быть явно помечено в diagnostics/warnings.

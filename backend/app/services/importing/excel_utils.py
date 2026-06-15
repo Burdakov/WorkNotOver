@@ -13,7 +13,8 @@ STORAGE_DIR = Path(__file__).resolve().parent.parent.parent.parent / "storage" /
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 EXCEL_EXTENSIONS = {".xlsx", ".xls", ".xlsm"}
-TEXT_EXTENSIONS = {".txt"}
+TEXT_EXTENSIONS = {".txt", ".inc", ".data", ".deck", ".pvt", ".props", ".scal", ".rock", ".sch", ".include", ""}
+TEXT_SNIFF_BYTES = 65536
 
 HEADER_SCAN_MAX_ROWS = 50
 HEADER_SCAN_MAX_COLS = 100
@@ -391,6 +392,28 @@ def text_lines(path: Path) -> list[str]:
         except UnicodeDecodeError:
             continue
     return path.read_text(errors="replace").splitlines()
+
+
+def is_text_file(path: Path) -> bool:
+    try:
+        sample = path.read_bytes()[:TEXT_SNIFF_BYTES]
+    except OSError:
+        return False
+    if not sample:
+        return True
+    if b"\x00" in sample:
+        return False
+    for encoding in ("utf-8-sig", "cp1251", "utf-8"):
+        try:
+            sample.decode(encoding)
+            return True
+        except UnicodeDecodeError:
+            continue
+    decoded = sample.decode("utf-8", errors="replace")
+    replacement_ratio = decoded.count("\ufffd") / max(1, len(decoded))
+    control_count = sum(1 for char in decoded if ord(char) < 32 and char not in "\r\n\t")
+    control_ratio = control_count / max(1, len(decoded))
+    return replacement_ratio < 0.02 and control_ratio < 0.02
 
 
 def text_df(path: Path) -> tuple[list[str], str, pd.DataFrame]:

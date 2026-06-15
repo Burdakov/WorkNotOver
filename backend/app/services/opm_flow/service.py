@@ -27,8 +27,12 @@ class OpmFlowSimulationService:
         self.importer = importer or OpmResultImporter()
 
     def build_case(self, request: OpmCaseBuildRequest) -> SimulationRun:
-        run_id, run_root = self.store.allocate_run_root(request.scenario_id)
         case_name = request.case_name or request.scenario_name or f"scenario_{request.scenario_id[:8]}"
+        run_id, run_root = self.store.allocate_run_root(
+            request.scenario_id,
+            scenario_name=request.scenario_name,
+            run_name=case_name,
+        )
         run = SimulationRun(
             run_id=run_id,
             scenario_id=request.scenario_id,

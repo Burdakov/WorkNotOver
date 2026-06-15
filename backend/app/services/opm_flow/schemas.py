@@ -21,22 +21,6 @@ class OpmCaseBuildRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class OpmTemplateSyntheticRequest(BaseModel):
-    scenario_id: str = "template-synthetic"
-    scenario_name: str | None = None
-    case_name: str = "data_templates_opm_synthetic"
-    forecast_start_date: str = "2018-01-01"
-    forecast_end_date: str = "2018-03-01"
-    history_match_iterations: int = Field(default=12, ge=1, le=200)
-    influence_radius_m: float = Field(default=3000.0, gt=0)
-    pressure_weight: float = Field(default=0.45, ge=0, le=1)
-    watercut_weight: float = Field(default=0.35, ge=0, le=1)
-    rate_weight: float = Field(default=0.2, ge=0, le=1)
-    summary_vectors: list[str] = Field(default_factory=lambda: ["FOPR", "FWPR", "FGPR", "WOPR", "WWPR", "WBHP", "WWCT"])
-    run_external_flow: bool = True
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
 class OpmCaseManifest(BaseModel):
     case_name: str
     deck_path: str
@@ -75,99 +59,6 @@ class OpmImportResult(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class ContactInterval(BaseModel):
-    contact_id: str
-    well_name: str
-    lu_id: str | None = None
-    sloy_id: str | None = None
-    well_pad_id: str | None = None
-    top_md: float
-    bottom_md: float
-    center_md: float
-    top_x: float | None = None
-    top_y: float | None = None
-    top_z: float | None = None
-    bottom_x: float | None = None
-    bottom_y: float | None = None
-    bottom_z: float | None = None
-    center_x: float | None = None
-    center_y: float | None = None
-    center_z: float | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class Drainage1DConnection(BaseModel):
-    connection_id: str
-    scenario_id: str
-    injector_name: str
-    producer_name: str
-    distance_m: float
-    inside_influence_radius: bool
-    active: bool = True
-    alpha_prior: float = 0.0
-    alpha: float = 0.0
-    eta: float = 1.0
-    tau_days: float = 0.0
-    pv: float = 0.0
-    link_type: str = "unknown"
-    prior_source: str = "distance_3000m"
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class Drainage1DModelSpec(BaseModel):
-    model_id: str
-    model_name: str
-    connection_id: str
-    injector_name: str
-    producer_name: str
-    nx: int
-    ny: int = 1
-    nz: int = 1
-    dx_m: float = 50.0
-    dy_m: float = 50.0
-    dz_m: float = 5.0
-    length_m: float
-    pore_volume: float
-    allocated_ooip: float | None = None
-    opm_case_name: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class Drainage1DPrepareRequest(BaseModel):
-    scenario_id: str
-    scenario_name: str | None = None
-    well_groups: list[dict[str, Any]] = Field(default_factory=list)
-    trajectories: list[dict[str, Any]] = Field(default_factory=list)
-    perforations: list[dict[str, Any]] = Field(default_factory=list)
-    production_history: list[dict[str, Any]] = Field(default_factory=list)
-    injection_history: list[dict[str, Any]] = Field(default_factory=list)
-    initial_reserves: list[dict[str, Any]] = Field(default_factory=list)
-    pore_volumes: list[dict[str, Any]] = Field(default_factory=list)
-    influence_radius_m: float = Field(default=3000.0, gt=0)
-    distance_kernel_power: float = Field(default=2.0, gt=0)
-    grid_block_length_m: float = Field(default=50.0, gt=0)
-    grid_block_width_m: float = Field(default=50.0, gt=0)
-    grid_thickness_m: float = Field(default=5.0, gt=0)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class Drainage1DPrepareFromScenarioRequest(BaseModel):
-    influence_radius_m: float = Field(default=3000.0, gt=0)
-    distance_kernel_power: float = Field(default=2.0, gt=0)
-    grid_block_length_m: float = Field(default=50.0, gt=0)
-    grid_block_width_m: float = Field(default=50.0, gt=0)
-    grid_thickness_m: float = Field(default=5.0, gt=0)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class Drainage1DPrepareResponse(BaseModel):
-    scenario_id: str
-    contact_intervals: list[ContactInterval] = Field(default_factory=list)
-    connections: list[Drainage1DConnection] = Field(default_factory=list)
-    model_specs: list[Drainage1DModelSpec] = Field(default_factory=list)
-    diagnostics: dict[str, Any] = Field(default_factory=dict)
-
-
 class SimulationRun(BaseModel):
     run_id: str
     scenario_id: str
@@ -192,3 +83,142 @@ class SimulationRun(BaseModel):
     @property
     def root_path(self) -> Path:
         return Path(self.case_root)
+
+
+class Field2DPrepareRequest(BaseModel):
+    scenario_id: str
+    scenario_name: str | None = None
+    well_groups: list[dict[str, Any]] = Field(default_factory=list)
+    trajectories: list[dict[str, Any]] = Field(default_factory=list)
+    perforations: list[dict[str, Any]] = Field(default_factory=list)
+    production_history: list[dict[str, Any]] = Field(default_factory=list)
+    injection_history: list[dict[str, Any]] = Field(default_factory=list)
+    initial_reserves: list[dict[str, Any]] = Field(default_factory=list)
+    pvt_include: dict[str, Any] | None = None
+    dx_m: float = Field(default=150.0, gt=0)
+    dy_m: float = Field(default=150.0, gt=0)
+    dz_m: float = Field(default=5.0, gt=0)
+    porosity: float = Field(default=0.10, gt=0, lt=1)
+    permeability_md: float = Field(default=500.0, gt=0)
+    formation_volume_factor: float = Field(default=1.15, gt=0)
+    initial_oil_saturation: float = Field(default=0.65, gt=0, lt=1)
+    initial_pressure_bar: float = Field(default=220.0, gt=0)
+    initial_water_saturation: float = Field(default=0.30, ge=0, le=1)
+    initial_gas_saturation: float = Field(default=0.04, ge=0, le=1)
+    datum_depth_m: float = Field(default=2000.0, ge=0)
+    top_depth_m: float = Field(default=2000.0, ge=0)
+    nearest_producers_per_injector: int = Field(default=4, ge=1, le=20)
+    influence_radius_m: float = Field(default=3000.0, gt=0)
+    well_region_radius_m: float = Field(default=150.0, gt=0)
+    region_corridor_width_m: float = Field(default=225.0, gt=0)
+    grid_padding_m: float = Field(default=450.0, ge=0)
+    max_grid_cells: int = Field(default=60000, ge=100)
+    history_match_iterations: int = Field(default=8, ge=0, le=200)
+    pressure_weight: float = Field(default=0.45, ge=0, le=1)
+    watercut_weight: float = Field(default=0.35, ge=0, le=1)
+    rate_weight: float = Field(default=0.20, ge=0, le=1)
+    pressure_tolerance_bar: float = Field(default=5.0, ge=0)
+    watercut_tolerance_fraction: float = Field(default=0.03, ge=0, le=1)
+    allow_generated_pvt: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class Field2DRunFromScenarioRequest(BaseModel):
+    dx_m: float = Field(default=150.0, gt=0)
+    dy_m: float = Field(default=150.0, gt=0)
+    dz_m: float = Field(default=5.0, gt=0)
+    porosity: float = Field(default=0.10, gt=0, lt=1)
+    permeability_md: float = Field(default=500.0, gt=0)
+    formation_volume_factor: float = Field(default=1.15, gt=0)
+    initial_oil_saturation: float = Field(default=0.65, gt=0, lt=1)
+    initial_pressure_bar: float = Field(default=220.0, gt=0)
+    initial_water_saturation: float = Field(default=0.30, ge=0, le=1)
+    initial_gas_saturation: float = Field(default=0.04, ge=0, le=1)
+    datum_depth_m: float = Field(default=2000.0, ge=0)
+    top_depth_m: float = Field(default=2000.0, ge=0)
+    nearest_producers_per_injector: int = Field(default=4, ge=1, le=20)
+    influence_radius_m: float = Field(default=3000.0, gt=0)
+    well_region_radius_m: float = Field(default=150.0, gt=0)
+    region_corridor_width_m: float = Field(default=225.0, gt=0)
+    grid_padding_m: float = Field(default=450.0, ge=0)
+    max_grid_cells: int = Field(default=60000, ge=100)
+    history_match_iterations: int = Field(default=8, ge=0, le=200)
+    pressure_weight: float = Field(default=0.45, ge=0, le=1)
+    watercut_weight: float = Field(default=0.35, ge=0, le=1)
+    rate_weight: float = Field(default=0.20, ge=0, le=1)
+    pressure_tolerance_bar: float = Field(default=5.0, ge=0)
+    watercut_tolerance_fraction: float = Field(default=0.03, ge=0, le=1)
+    allow_generated_pvt: bool = False
+    run_external_flow: bool = True
+    summary_vectors: list[str] = Field(default_factory=lambda: ["FOPR", "FWPR", "FWIR", "WOPR", "WWPR", "WBHP", "WWCT"])
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class Field2DPrepareResponse(BaseModel):
+    scenario_id: str
+    wells: list[dict[str, Any]] = Field(default_factory=list)
+    regions: list[dict[str, Any]] = Field(default_factory=list)
+    well_regions: list[dict[str, Any]] = Field(default_factory=list)
+    grid: dict[str, Any] = Field(default_factory=dict)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
+class Field2DRunResponse(BaseModel):
+    simulation_run: SimulationRun
+    preparation: Field2DPrepareResponse
+    analysis: dict[str, Any] = Field(default_factory=dict)
+
+
+class OpmBlackOilModelPrepareRequest(Field2DRunFromScenarioRequest):
+    forecast_method: str = "opm_flow_blackoil"
+    model_radius_m: float | None = Field(default=None, gt=0)
+
+
+class CrmConnectivityRequest(BaseModel):
+    run_id: str | None = None
+    history_window: dict[str, Any] = Field(default_factory=dict)
+    crm: dict[str, Any] = Field(default_factory=dict)
+
+
+class CrmConnectivityResponse(BaseModel):
+    scenario_id: str
+    run_id: str | None = None
+    connectivity: list[dict[str, Any]] = Field(default_factory=list)
+    region_cube: dict[str, Any] = Field(default_factory=dict)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
+class RegionCubeBuildRequest(BaseModel):
+    run_id: str | None = None
+    connectivity_result_id: str | None = None
+    allocation: dict[str, Any] = Field(default_factory=dict)
+
+
+class RegionCubeBuildResponse(BaseModel):
+    scenario_id: str
+    run_id: str | None = None
+    region_cube: dict[str, Any] = Field(default_factory=dict)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
+class CalibrationStartRequest(BaseModel):
+    run_id: str | None = None
+    connectivity_result_id: str | None = None
+    history_window: dict[str, Any] = Field(default_factory=dict)
+    criteria: dict[str, Any] = Field(default_factory=dict)
+    objective_weights: dict[str, Any] = Field(default_factory=dict)
+    search: dict[str, Any] = Field(default_factory=dict)
+    parameter_bounds: dict[str, Any] = Field(default_factory=dict)
+    run_external_flow: bool = True
+
+
+class CalibrationRunResponse(BaseModel):
+    calibration_id: str
+    scenario_id: str
+    run_id: str
+    status: str
+    current_iteration: int = 0
+    best_objective: float | None = None
+    simulation_run: SimulationRun | None = None
+    report: dict[str, Any] = Field(default_factory=dict)
+    artifacts: list[SimulationArtifact] = Field(default_factory=list)

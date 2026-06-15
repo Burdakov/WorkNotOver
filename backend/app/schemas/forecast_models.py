@@ -36,6 +36,7 @@ class ScenarioInputBindings(BaseModel):
     perforations: ForecastDatasetSelection | None = None
     production_history: ForecastDatasetSelection | None = None
     injection_history: ForecastDatasetSelection | None = None
+    pvt_properties: ForecastDatasetSelection | None = None
     manual_input_set_id: str | None = None
 
 
@@ -60,6 +61,7 @@ class ScenarioContextResponse(BaseModel):
     perforations_dataset: DatasetReference | None = None
     production_history_dataset: DatasetReference | None = None
     injection_history_dataset: DatasetReference | None = None
+    pvt_properties_dataset: DatasetReference | None = None
     manual_input_set: ManualInputReference | None = None
 
 
@@ -79,6 +81,7 @@ class ScenarioInputValidationResponse(BaseModel):
     perforations: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
     production_history: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
     injection_history: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
+    pvt_properties: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
     manual_input_set: ScenarioInputNodeValidation = Field(default_factory=ScenarioInputNodeValidation)
     is_forecast_ready: bool = False
     issues: list[str] = Field(default_factory=list)

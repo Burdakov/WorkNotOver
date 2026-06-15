@@ -30,16 +30,107 @@ const WATERFLOOD_NETWORK_WIDTH = 920
 const WATERFLOOD_NETWORK_HEIGHT = 300
 const OPM_ANALYSIS_MAP_WIDTH = 1100
 const OPM_ANALYSIS_MAP_HEIGHT = 520
+const FIELD_2D_MAP_WIDTH = 1100
+const FIELD_2D_MAP_HEIGHT = 640
 const OPM_ANALYSIS_PROPERTIES = [
   { key: 'pressure', label: 'Давление', kind: 'dynamic', unit: 'бар' },
   { key: 'saturation', label: 'Насыщенность', kind: 'dynamic', unit: 'д. ед.' },
   { key: 'pore_volume', label: 'Поровый объем', kind: 'static', unit: 'м3' },
   { key: 'permeability', label: 'Проницаемость', kind: 'static', unit: 'мД' },
 ]
+const FIELD_2D_CUBE_OPTIONS = [
+  { key: 'current_compensation', label: 'COMP', unit: 'ratio', fields: ['current_compensation'], scale: 'continuous' },
+  { key: 'pressure', label: 'PRESSURE', unit: 'bar', fields: ['pressure'], scale: 'continuous' },
+  { key: 'swat', label: 'SWAT', unit: 'frac', fields: ['swat', 'saturation'], scale: 'continuous' },
+  { key: 'sgas', label: 'SGAS', unit: 'frac', fields: ['sgas'], scale: 'continuous' },
+  { key: 'poro', label: 'PORO', unit: 'frac', fields: ['poro', 'porosity'], scale: 'continuous' },
+  { key: 'permx', label: 'PERMX', unit: 'mD', fields: ['permx', 'permeability'], scale: 'continuous' },
+  { key: 'pv', label: 'PV', unit: 'm3', fields: ['pv', 'pore_volume'], scale: 'continuous' },
+  { key: 'actnum', label: 'ACTNUM', unit: '', fields: ['actnum', 'active'], scale: 'discrete' },
+  { key: 'region_id', label: 'REGION', unit: '', fields: ['region_id', 'connection_region_id'], scale: 'discrete' },
+  { key: 'well_region_id', label: 'WELLREG', unit: '', fields: ['well_region_id'], scale: 'discrete' },
+  { key: 'pvtnum', label: 'PVTNUM', unit: '', fields: ['pvtnum'], scale: 'discrete' },
+  { key: 'satnum', label: 'SATNUM', unit: '', fields: ['satnum'], scale: 'discrete' },
+  { key: 'rocknum', label: 'ROCKNUM', unit: '', fields: ['rocknum'], scale: 'discrete' },
+  { key: 'fipnum', label: 'FIPNUM', unit: '', fields: ['fipnum'], scale: 'discrete' },
+]
+const FIELD_2D_DYNAMIC_CUBE_KEYS = new Set(['pressure', 'swat', 'sgas'])
+const FIELD_2D_DISCRETE_COLORS = [
+  '#2563eb',
+  '#16a34a',
+  '#f59e0b',
+  '#dc2626',
+  '#7c3aed',
+  '#0891b2',
+  '#db2777',
+  '#4f46e5',
+  '#65a30d',
+  '#9333ea',
+  '#0f766e',
+  '#475569',
+]
 const OPM_ANALYSIS_GROUP_LEVELS = [
   { key: 'lu', label: 'LU' },
   { key: 'pad', label: 'Куст' },
   { key: 'well', label: 'Скважина' },
+]
+const FIELD_2D_DECK_SECTIONS = [
+  {
+    key: 'data',
+    label: 'DATA',
+    file: '.data',
+    keywords: 'RUNSPEC / GRID / PROPS / REGIONS / SOLUTION / SCHEDULE / SUMMARY',
+    manual: 'Master deck that orders Eclipse/OPM sections and INCLUDE files.',
+  },
+  {
+    key: 'runspec',
+    label: 'RUNSPEC',
+    file: 'runspec.inc',
+    keywords: 'DIMENS, OIL, WATER, GAS, FIELD, START, TABDIMS, WELLDIMS',
+    manual: 'Model dimensions and table/well limits. TABDIMS sizes saturation/PVT/FIP tables.',
+  },
+  {
+    key: 'grid',
+    label: 'GRID',
+    file: 'grid.inc',
+    keywords: 'DX, DY, DZ, TOPS, PORO, PERMX, PERMY, PERMZ, MULTPV, ACTNUM',
+    manual: 'Static Cartesian grid geometry and cell properties.',
+  },
+  {
+    key: 'props',
+    label: 'PROPS',
+    file: 'props.inc',
+    keywords: 'DENSITY, PVTW, PVTO, PVDG, ROCK, SWOF, SGOF',
+    manual: 'Fluid, rock and relative permeability tables used by the solver.',
+  },
+  {
+    key: 'regions',
+    label: 'REGIONS',
+    file: 'regions.inc',
+    keywords: 'PVTNUM, SATNUM, ROCKNUM, FIPNUM',
+    manual: 'Cell-to-table and fluid-in-place region arrays.',
+  },
+  {
+    key: 'solution',
+    label: 'SOLUTION',
+    file: 'init.inc',
+    keywords: 'EQUIL, PRESSURE, SWAT, SGAS',
+    manual: 'Initial pressure and saturation state.',
+  },
+  {
+    key: 'schedule',
+    label: 'SCHEDULE',
+    file: 'schedule.inc',
+    keywords: 'WELSPECS, COMPDAT, WCONPROD, WCONINJE, DATES, RPTRST, RPTSCHED',
+    manual: 'Wells, completions, controls, history dates and report/restart output controls.',
+  },
+  {
+    key: 'summary',
+    label: 'SUMMARY',
+    file: 'summary.inc',
+    keywords: 'FOPR, FWPR, FGPR, WOPR, WWPR, WBHP, WWCT',
+    manual: 'Requested field and well summary vectors.',
+  },
 ]
 const HISTORY_CHART_WIDTH = 1280
 const HISTORY_CHART_HEIGHT = 360
@@ -48,6 +139,11 @@ const HISTORY_CHART_RIGHT = 260
 const HISTORY_CHART_TOP = 26
 const HISTORY_CHART_BOTTOM = 58
 const HISTORY_METRIC_OPTIONS = [
+  { key: 'q_oil_calc', label: 'Calc oil', unit: 'm3/month', color: '#22c55e', aggregate: 'sum', axis: 'liquid', dash: true },
+  { key: 'q_liq_calc', label: 'Calc liquid', unit: 'm3/month', color: '#14b8a6', aggregate: 'sum', axis: 'liquid', dash: true },
+  { key: 'watercut_calc', label: 'Calc WC', unit: '%', color: '#fb923c', aggregate: 'ratio', axis: 'watercut', dash: true },
+  { key: 'bhp_calc', label: 'Calc BHP', unit: 'bar', color: '#f87171', aggregate: 'avg', axis: 'pressure', dash: true },
+  { key: 'p_res_calc', label: 'Calc P', unit: 'bar', color: '#38bdf8', aggregate: 'avg', axis: 'pressure', dash: true },
   { key: 'q_oil', label: 'Нефть', unit: 'м3/мес', color: '#166534', aggregate: 'sum', axis: 'liquid' },
   { key: 'q_water', label: 'Вода добыча', unit: 'м3/мес', color: '#0284c7', aggregate: 'sum', axis: 'liquid' },
   { key: 'q_liq', label: 'Жидкость', unit: 'м3/мес', color: '#0f766e', aggregate: 'sum', axis: 'liquid' },
@@ -101,7 +197,7 @@ const SOURCE_KIND_META = {
   },
   well_trajectories: {
     title: 'Well trajectories',
-    description: 'Normalized well trajectory points for Module B contact interval and 1D model preparation.',
+    description: 'Normalized well trajectory points for Module B 2D OPM field model preparation.',
     fields: ['well', 'trajectory_point_id', 'md', 'x', 'y', 'z'],
   },
   perforations: {
@@ -116,8 +212,13 @@ const SOURCE_KIND_META = {
   },
   injection_history: {
     title: 'Injection history',
-    description: 'Normalized injection history for injector-producer allocation and 1D model preparation.',
+    description: 'Normalized injection history for injector-producer region allocation and 2D OPM model preparation.',
     fields: ['date', 'well', 'injector_id', 'q_water_inj', 'bhp', 'whp', 'thp', 'p_res', 'wefac'],
+  },
+  pvt_properties: {
+    title: 'PVT / SCAL / ROCK include',
+    description: 'Raw OPM Flow include file used directly in PROPS for the 2D field model.',
+    fields: [],
   },
   niz: {
     title: 'Р—Р°РіСЂСѓР·РёС‚СЊ NIZ РїРѕ СЃРєРІР°Р¶РёРЅР°Рј',
@@ -430,6 +531,24 @@ const getProductionWellMetricTotal = (well, metric) => Number(well?.[productionM
 
 const formatCompactNumber = (value) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Number(value || 0))
 const formatCompactDecimal = (value, digits = 1) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: digits }).format(Number(value || 0))
+const formatCrmGain = (value) => {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '—'
+  if (number !== 0 && Math.abs(number) < 0.0001) return number.toExponential(2)
+  return formatCompactDecimal(number, 5)
+}
+const formatArtifactSize = (value) => {
+  const bytes = Number(value || 0)
+  if (!Number.isFinite(bytes) || bytes <= 0) return bytes === 0 ? '0 B' : '—'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let size = bytes
+  let unitIndex = 0
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+  return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+}
 const formatRatioPercent = (value, digits = 1) => {
   const number = Number(value)
   return Number.isFinite(number) ? `${(number * 100).toFixed(digits)}%` : '—'
@@ -600,6 +719,11 @@ const gtmWellMatchRows = ref([])
 const loadingNizWellMatches = ref(false)
 const loadingGtmWellMatches = ref(false)
 const manualNizRows = ref([])
+const uploadAccept = computed(() => (
+  selectedUploadSourceKind.value === 'pvt_properties'
+    ? ''
+    : '.xlsx,.xls,.xlsm,.txt,.inc,.data'
+))
 
 const selectedDatasets = reactive({
   wells: null,
@@ -612,6 +736,7 @@ const selectedDatasets = reactive({
   perforations: null,
   production_history: null,
   injection_history: null,
+  pvt_properties: null,
 })
 const selectedDatasetKeys = reactive({
   wells: '',
@@ -624,6 +749,7 @@ const selectedDatasetKeys = reactive({
   perforations: '',
   production_history: '',
   injection_history: '',
+  pvt_properties: '',
 })
 const wellsFundStateFilter = ref('all')
 
@@ -738,10 +864,20 @@ const waterfloodAnalysis = ref(null)
 const waterfloodLoading = ref(false)
 const opmSimulationLoading = ref(false)
 const opmSimulationRun = ref(null)
+const drainageRunLoading = ref(false)
+const drainageRunAnalysisLoading = ref(false)
+const drainageSimulationRun = ref(null)
+const drainageSimulationAnalysis = ref(null)
 const drainagePreparationLoading = ref(false)
 const drainagePreparation = ref(null)
 const opmAnalysisProperty = ref('pressure')
 const opmAnalysisGroupLevel = ref('well')
+const field2DSelectedCube = ref('pressure')
+const field2DShowTrajectories = ref(true)
+const field2DShowPerforations = ref(true)
+const field2DShowInactiveCells = ref(false)
+const field2DSelectedStepIndex = ref(0)
+const field2DZoom = ref(1)
 const selectedDrainageConnectionId = ref('')
 const selectedDrainageMatrixKey = ref('drainage:total')
 const expandedDrainageKeys = ref([])
@@ -755,6 +891,20 @@ const opmSimulationForm = reactive({
   forecast_end_date: '2018-03-01',
   history_match_iterations: 12,
   influence_radius_m: 3000,
+  well_region_radius_m: 150,
+  region_corridor_width_m: 225,
+  grid_padding_m: 450,
+  initial_pressure_bar: 220,
+  initial_water_saturation: 0.30,
+  initial_gas_saturation: 0.04,
+  datum_depth_m: 2000,
+  top_depth_m: 2000,
+  pressure_tolerance_bar: 5,
+  watercut_tolerance_fraction: 0.03,
+  max_models: 12,
+  run_selected_only: false,
+  run_external_flow: true,
+  allow_generated_pvt: false,
   pressure_weight: 0.45,
   watercut_weight: 0.35,
   rate_weight: 0.2,
@@ -796,6 +946,7 @@ const datasetTypes = computed(() => {
     perforations: [],
     production_history: [],
     injection_history: [],
+    pvt_properties: [],
   }
   datasets.value.forEach((item) => {
     const type = item.dataset_reference.dataset_type
@@ -898,6 +1049,7 @@ const scenarioContextReferenceByType = computed(() => ({
   perforations: selectedScenarioContext.value?.perforations_dataset || null,
   production_history: selectedScenarioContext.value?.production_history_dataset || null,
   injection_history: selectedScenarioContext.value?.injection_history_dataset || null,
+  pvt_properties: selectedScenarioContext.value?.pvt_properties_dataset || null,
 }))
 const selectedDatasetMatchesScenarioContext = (type) => {
   const selectedReference = selectedDatasets[type]
@@ -941,6 +1093,9 @@ const scenarioContextStatus = computed(() => ({
   injection_history: selectedDatasetMatchesScenarioContext('injection_history')
     ? (selectedScenarioValidation.value?.injection_history?.state || (selectedDatasets.injection_history ? 'ready' : 'empty'))
     : (selectedDatasets.injection_history ? 'ready' : 'empty'),
+  pvt_properties: selectedDatasetMatchesScenarioContext('pvt_properties')
+    ? (selectedScenarioValidation.value?.pvt_properties?.state || (selectedDatasets.pvt_properties ? 'ready' : 'empty'))
+    : (selectedDatasets.pvt_properties ? 'ready' : 'empty'),
 }))
 const reservoirInputStatus = computed(() => resolveTouchedStatus(
   reservoirConfigs.value,
@@ -999,6 +1154,7 @@ const localDatasetStatuses = computed(() => ({
   perforations: datasetValidationForType('perforations'),
   production_history: datasetValidationForType('production_history'),
   injection_history: datasetValidationForType('injection_history'),
+  pvt_properties: datasetValidationForType('pvt_properties'),
 }))
 const inputNodeStatuses = computed(() => ({
   wells: localDatasetStatuses.value.wells.state,
@@ -1010,6 +1166,7 @@ const inputNodeStatuses = computed(() => ({
   perforations: localDatasetStatuses.value.perforations.state,
   production_history: localDatasetStatuses.value.production_history.state,
   injection_history: localDatasetStatuses.value.injection_history.state,
+  pvt_properties: localDatasetStatuses.value.pvt_properties.state,
   reservoir: reservoirInputStatus.value,
   economics: economicsInputStatus.value,
   krs: krsInputStatus.value,
@@ -1024,6 +1181,7 @@ const inputNodePartialIssues = computed(() => ({
   perforations: localDatasetStatuses.value.perforations.issue,
   production_history: localDatasetStatuses.value.production_history.issue,
   injection_history: localDatasetStatuses.value.injection_history.issue,
+  pvt_properties: localDatasetStatuses.value.pvt_properties.issue,
   reservoir: reservoirInputStatus.value === 'partial' ? 'Есть незаполненные обязательные поля в характеристике вытеснения.' : '',
   economics: economicsInputStatus.value === 'partial' ? 'Есть незаполненные обязательные поля в экономических вводных.' : '',
   krs: krsInputStatus.value === 'partial' ? 'Есть незаполненные обязательные поля в ограничениях КРС.' : '',
@@ -1055,8 +1213,8 @@ const scenarioReadiness = computed(() => {
       : scenarioFlowMode.value === 'planner'
         ? (isPlannerDerivedScenario.value || plannerRevisions.value.length > 0)
         : true
-  const forecastMethod = String(selectedScenario?.metadata?.forecast_method || 'opm_flow_1d_drainage')
-  const isDrainage1D = forecastMethod === 'opm_flow_1d_drainage'
+  const forecastMethod = String(selectedScenario?.metadata?.forecast_method || 'opm_flow_blackoil')
+  const isField2D = forecastMethod === 'opm_flow_blackoil' || forecastMethod === 'opm_flow_2d_field'
   const hasLegacyInputs = Boolean(
     scenarioContextStatus.value.wells === 'ready'
     && scenarioContextStatus.value.niz === 'ready'
@@ -1064,14 +1222,16 @@ const scenarioReadiness = computed(() => {
     && scenarioContextStatus.value.manual_input === 'ready'
     && (scenarioFlowMode.value !== 'external' || scenarioContextStatus.value.external_krs_schedule === 'ready'),
   )
-  const hasDrainageInputs = Boolean(
+  const hasField2DInputs = Boolean(
     scenarioContextStatus.value.well_groups === 'ready'
+    && scenarioContextStatus.value.niz === 'ready'
     && scenarioContextStatus.value.well_trajectories === 'ready'
     && scenarioContextStatus.value.perforations === 'ready'
     && scenarioContextStatus.value.production_history === 'ready'
-    && scenarioContextStatus.value.injection_history === 'ready',
+    && scenarioContextStatus.value.injection_history === 'ready'
+    && scenarioContextStatus.value.pvt_properties === 'ready',
   )
-  const hasInputs = isDrainage1D ? hasDrainageInputs : hasLegacyInputs
+  const hasInputs = isField2D ? hasField2DInputs : hasLegacyInputs
   const hasResult = Boolean(scenarioDetail.value?.production_summary)
   const isPlannerDerived = isPlannerDerivedScenario.value
   const hasPlannerVersion = Boolean(activeVersion.value)
@@ -1118,7 +1278,7 @@ const workflowSteps = computed(() => {
     {
       key: 'inputs',
       label: '3. Входы сценария',
-      description: isDrainage1D
+      description: isField2D
         ? (hasInputs ? 'GRUP, TRAJ, PERF, production/injection history привязаны.' : 'Нужно привязать GRUP, TRAJ, PERF, production_history и injection_history.')
         : (hasInputs ? 'Wells, NIZ, GTM и ManualInputSet привязаны.' : 'Нужно привязать Wells, NIZ, GTM и ManualInputSet.'),
       ready: hasInputs,
@@ -1991,6 +2151,7 @@ const nodeInspectorTitle = computed(() => {
     case 'scenario': return scenarioFlowMode.value === 'external' ? 'Внешний график КРС' : 'Сценарий'
     case 'wells': return 'Wells'
     case 'well_groups': return 'GRUP'
+    case 'pvt_properties': return 'PVT properties'
     case 'gtm': return 'ГТМ'
     case 'infrastructure': return 'Infrastructure'
     case 'reservoir': return 'Характеристика вытеснения'
@@ -2348,11 +2509,92 @@ const waterfloodDeltaClass = (value) => {
 }
 const waterfloodAggregateLevelLabel = computed(() => WATERFLOOD_AGGREGATE_LEVELS.find((item) => item.key === waterfloodAggregateLevel.value)?.label || 'Скважина')
 const opmAnalysisPropertyOption = computed(() => OPM_ANALYSIS_PROPERTIES.find((item) => item.key === opmAnalysisProperty.value) || OPM_ANALYSIS_PROPERTIES[0])
-const drainageContacts = computed(() => Array.isArray(drainagePreparation.value?.contact_intervals) ? drainagePreparation.value.contact_intervals : [])
-const drainageConnections = computed(() => Array.isArray(drainagePreparation.value?.connections) ? drainagePreparation.value.connections : [])
-const drainageModelSpecs = computed(() => Array.isArray(drainagePreparation.value?.model_specs) ? drainagePreparation.value.model_specs : [])
+const drainageContacts = computed(() => {
+  const wells = Array.isArray(drainagePreparation.value?.wells)
+    ? drainagePreparation.value.wells
+    : (Array.isArray(drainageSimulationAnalysis.value?.wells) ? drainageSimulationAnalysis.value.wells : [])
+  return wells.map((well) => ({
+    well_name: well.well_name,
+    lu_id: well.lu_id || '',
+    sloy_id: well.sloy_id || '',
+    well_pad_id: well.well_pad_id || '',
+    center_x: well.x,
+    center_y: well.y,
+    center_z: well.z,
+    well_type: well.well_type,
+  }))
+})
+const drainageConnections = computed(() => {
+  const regions = Array.isArray(drainagePreparation.value?.regions)
+    ? drainagePreparation.value.regions
+    : (Array.isArray(drainageSimulationAnalysis.value?.regions) ? drainageSimulationAnalysis.value.regions : [])
+  return regions.map((region) => ({
+    ...region,
+    connection_id: region.connection_id || `region:${region.region_id}`,
+    injector_name: region.injector_name,
+    producer_name: region.producer_name,
+    alpha: Number(region.alpha ?? region.participation_factor ?? 1),
+    alpha_prior: Number(region.alpha_prior ?? region.participation_factor_prior ?? region.alpha ?? 1),
+    pv: Number(region.pore_volume || 0),
+    distance_m: Number(region.distance_m || 0),
+    tau_days: Number(region.tau_days || 0),
+    crm_source: region.crm_source || region.crmQuality?.source || '',
+    crm_engine: region.crm_quality?.engine || region.crm_engine || '',
+    crm_fit_status: region.crm_quality?.fit_status || '',
+    crm_fit_message: region.crm_quality?.fit_message || '',
+    crm_raw_gain: Number(region.crm_quality?.raw_gain ?? region.crm_raw_gain ?? 0),
+    crm_score: Number(region.crm_quality?.score ?? 0),
+    crm_rmse: numberOrNull(region.crm_quality?.producer_rmse),
+  }))
+})
+const drainageConnectionIdByRegionId = computed(() => new Map(
+  drainageConnections.value
+    .filter((connection) => Number(connection.region_id || 0))
+    .map((connection) => [Number(connection.region_id), connection.connection_id]),
+))
+const field2DCellConnectionId = (cell) => {
+  const explicit = String(cell?.connection_id || '').trim()
+  if (explicit) return explicit
+  const connectionRegionId = Number(cell?.connection_region_id || 0)
+  if (connectionRegionId && drainageConnectionIdByRegionId.value.has(connectionRegionId)) {
+    return drainageConnectionIdByRegionId.value.get(connectionRegionId)
+  }
+  const regionId = Number(cell?.region_id || 0)
+  if (regionId && drainageConnectionIdByRegionId.value.has(regionId)) {
+    return drainageConnectionIdByRegionId.value.get(regionId)
+  }
+  return regionId ? `region:${regionId}` : ''
+}
+const drainageModelSpecs = computed(() => drainageConnections.value.map((region) => ({
+  connection_id: region.connection_id,
+  model_name: region.region_name || region.connection_id,
+  pore_volume: Number(region.pore_volume || region.pv || 0),
+  allocated_ooip: Number(region.allocated_ooip || 0),
+  nx: Number(drainagePreparation.value?.grid?.nx || 0),
+})))
 const drainageDiagnostics = computed(() => drainagePreparation.value?.diagnostics || {})
 const drainageModelSpecByConnectionId = computed(() => new Map(drainageModelSpecs.value.map((model) => [model.connection_id, model])))
+const drainageAnalysisGridCells = computed(() => Array.isArray(drainageSimulationAnalysis.value?.grid_cells) ? drainageSimulationAnalysis.value.grid_cells : [])
+const drainageAnalysisTimeseries = computed(() => Array.isArray(drainageSimulationAnalysis.value?.timeseries) ? drainageSimulationAnalysis.value.timeseries : [])
+const drainageAnalysisConnectionMetrics = computed(() => {
+  if (Array.isArray(drainageSimulationAnalysis.value?.region_metrics)) return drainageSimulationAnalysis.value.region_metrics
+  if (Array.isArray(drainageSimulationAnalysis.value?.connection_metrics)) return drainageSimulationAnalysis.value.connection_metrics
+  return []
+})
+const drainageAnalysisModelRuns = computed(() => drainageAnalysisConnectionMetrics.value)
+const drainageAnalysisCellsByConnectionId = computed(() => {
+  const grouped = new Map()
+  drainageAnalysisGridCells.value.forEach((cell) => {
+    const connectionId = field2DCellConnectionId(cell)
+    if (!connectionId) return
+    if (!grouped.has(connectionId)) grouped.set(connectionId, [])
+    grouped.get(connectionId).push(cell)
+  })
+  grouped.forEach((items) => items.sort((left, right) => Number(left.cell_index || 0) - Number(right.cell_index || 0)))
+  return grouped
+})
+const drainageAnalysisMetricsByConnectionId = computed(() => new Map(drainageAnalysisConnectionMetrics.value.map((item) => [item.connection_id, item])))
+const drainageAnalysisRunByConnectionId = computed(() => new Map(drainageAnalysisModelRuns.value.map((item) => [item.connection_id, item])))
 const drainageWellMap = computed(() => {
   const wells = new Map()
   drainageContacts.value.forEach((contact) => {
@@ -2426,6 +2668,14 @@ const drainageMapPoint = (x, y) => {
   }
 }
 const clamp01 = (value) => Math.max(0, Math.min(1, Number(value || 0)))
+const drainageCellPropertyValue = (cell) => {
+  if (!cell) return null
+  if (opmAnalysisProperty.value === 'pressure') return numberOrNull(cell.pressure)
+  if (opmAnalysisProperty.value === 'saturation') return numberOrNull(cell.swat ?? cell.saturation)
+  if (opmAnalysisProperty.value === 'pore_volume') return numberOrNull(cell.pv ?? cell.pore_volume)
+  if (opmAnalysisProperty.value === 'permeability') return numberOrNull(cell.permx ?? cell.permeability)
+  return null
+}
 const drainagePropertyValue = (connection, model, ratio = 0.5) => {
   const alpha = Number(connection?.alpha || 0)
   const pv = Number(model?.pore_volume || connection?.pv || 0)
@@ -2476,40 +2726,265 @@ const selectedDrainageModelSpec = computed(() => selectedDrainageConnection.valu
 const selectedDrainageMapConnection = computed(() => selectedDrainageConnection.value
   ? drainageMapConnections.value.find((connection) => connection.connection_id === selectedDrainageConnection.value.connection_id)
   : null)
+const selectedDrainageRunMetric = computed(() => selectedDrainageConnection.value
+  ? drainageAnalysisMetricsByConnectionId.value.get(selectedDrainageConnection.value.connection_id)
+  : null)
 const drainageGridCells = computed(() => {
-  const connection = selectedDrainageMapConnection.value
-  const model = selectedDrainageModelSpec.value
-  if (!connection?.injector || !connection?.producer || !model) return []
-  const nx = Math.max(1, Number(model.nx || 1))
-  const visibleCount = Math.min(nx, 96)
-  const step = nx / visibleCount
-  return Array.from({ length: visibleCount }, (_, index) => {
-    const cellIndex = Math.floor(index * step)
-    const ratio = (cellIndex + 0.5) / nx
-    const x = connection.injector.viewX + (connection.producer.viewX - connection.injector.viewX) * ratio
-    const y = connection.injector.viewY + (connection.producer.viewY - connection.injector.viewY) * ratio
-    const value = drainagePropertyValue(connection, model, ratio)
+  const analysisCells = drainageAnalysisGridCells.value.length
+    ? drainageAnalysisGridCells.value
+    : (Array.isArray(drainagePreparation.value?.grid?.cells) ? drainagePreparation.value.grid.cells : [])
+  const selectedRow = selectedDrainageMatrixRow.value
+  const selectedConnectionIds = new Set(selectedRow?.connectionIds ? [...selectedRow.connectionIds] : [])
+  const filtered = selectedConnectionIds.size && selectedRow?.nodeType !== 'total'
+    ? analysisCells.filter((cell) => selectedConnectionIds.has(field2DCellConnectionId(cell)))
+    : analysisCells
+  const maxVisibleCells = 2600
+  const step = Math.max(1, Math.ceil(filtered.length / maxVisibleCells))
+  return filtered
+    .filter((_, index) => index % step === 0)
+    .map((cell, index) => {
+      const value = drainageCellPropertyValue(cell)
+      const point = drainageMapPoint(cell.x, cell.y)
+      return {
+        key: cell.cell_id || `${cell.i}:${cell.j}:${cell.k}:${index}`,
+        index: cell.cell_id || index + 1,
+        ...point,
+        value,
+        color: drainagePropertyColor(value),
+        regionId: cell.region_id || 0,
+        source: cell.source || 'field_2d',
+      }
+    })
+})
+const field2DAnalysisScenarioId = computed(() => String(drainageSimulationAnalysis.value?.scenario_id || ''))
+const field2DAnalysisRunId = computed(() => String(drainageSimulationAnalysis.value?.run_id || ''))
+const field2DActiveRun = computed(() => {
+  const candidates = [drainageSimulationRun.value, opmSimulationRun.value].filter(Boolean)
+  return candidates.find((run) => (
+    String(run.scenario_id || '') === String(selectedScenarioId.value || '')
+    && (!field2DAnalysisRunId.value || String(run.run_id || '') === field2DAnalysisRunId.value)
+  )) || null
+})
+const field2DRunSyncStatus = computed(() => {
+  if (!drainageSimulationAnalysis.value) return 'no analysis loaded'
+  if (field2DAnalysisScenarioId.value !== String(selectedScenarioId.value || '')) return 'scenario mismatch'
+  if (field2DAnalysisRunId.value && !field2DActiveRun.value?.run_id) return 'run metadata missing'
+  if (field2DActiveRun.value?.run_id && field2DAnalysisRunId.value && String(field2DActiveRun.value.run_id) !== field2DAnalysisRunId.value) return 'run mismatch'
+  return 'synced'
+})
+const field2DRunWarnings = computed(() => [
+  ...(Array.isArray(field2DActiveRun.value?.opm_case_manifest?.validation_warnings) ? field2DActiveRun.value.opm_case_manifest.validation_warnings : []),
+  ...(Array.isArray(field2DActiveRun.value?.import_result?.warnings) ? field2DActiveRun.value.import_result.warnings : []),
+])
+const artifactPathText = (artifact) => String(artifact?.path || artifact?.name || '')
+const artifactFileName = (artifact) => artifactPathText(artifact).replaceAll('\\', '/').split('/').filter(Boolean).pop() || artifact?.artifact_type || 'artifact'
+const artifactExtension = (artifact) => {
+  const name = artifactFileName(artifact).toUpperCase()
+  const match = name.match(/\.([A-Z0-9]+)$/)
+  return match ? match[1] : String(artifact?.format || '').toUpperCase()
+}
+const artifactDirectory = (artifact) => {
+  const path = artifactPathText(artifact).replaceAll('\\', '/').toLowerCase()
+  if (path.includes('/normalized/')) return 'normalized'
+  if (path.includes('/output/')) return 'output'
+  if (path.includes('/input/includes/')) return 'input/includes'
+  if (path.includes('/input/')) return 'input'
+  return 'run'
+}
+const classifyField2DArtifact = (artifact) => {
+  const name = artifactFileName(artifact).toLowerCase()
+  const path = artifactPathText(artifact).replaceAll('\\', '/').toLowerCase()
+  const extension = artifactExtension(artifact)
+  const type = String(artifact?.artifact_type || '').toLowerCase()
+  if (path.includes('/normalized/')) {
+    return { side: 'normalized', family: 'Normalized payload', role: 'Field2D JSON result', manual: 'Scenario-bound Field2DPreparation, grid cells, region metrics or time series.' }
+  }
+  if (name.endsWith('.data') || type.includes('deck')) {
+    return { side: 'input', family: 'Deck', role: 'Master DATA deck', manual: 'Top-level Eclipse/OPM deck with section INCLUDE order.' }
+  }
+  if (name === 'runspec.inc') return { side: 'input', family: 'RUNSPEC', role: 'Run dimensions', manual: 'DIMENS, phases, START, TABDIMS and WELLDIMS.' }
+  if (name === 'grid.inc') return { side: 'input', family: 'GRID', role: 'Input grid arrays', manual: 'DX/DY/DZ/TOPS and static cell arrays such as PORO/PERM/ACTNUM.' }
+  if (name === 'props.inc') return { side: 'input', family: 'PROPS', role: 'PVT/SCAL/ROCK tables', manual: 'Fluid, rock and relative permeability tables.' }
+  if (name === 'regions.inc') return { side: 'input', family: 'REGIONS', role: 'Region arrays', manual: 'PVTNUM/SATNUM/ROCKNUM/FIPNUM cell arrays.' }
+  if (name === 'init.inc') return { side: 'input', family: 'SOLUTION', role: 'Initial state', manual: 'Initial pressure and saturations.' }
+  if (name === 'schedule.inc') return { side: 'input', family: 'SCHEDULE', role: 'Wells/history/reporting', manual: 'WELSPECS, COMPDAT, controls, DATES, RPTRST and RPTSCHED.' }
+  if (name === 'summary.inc') return { side: 'input', family: 'SUMMARY', role: 'Summary vectors', manual: 'Requested field and well vectors for summary output.' }
+  if (extension === 'EGRID') return { side: 'output', family: 'Output grid', role: 'EGRID geometry', manual: 'Binary grid geometry generated by the simulator.' }
+  if (extension === 'INIT' || extension === 'X0000') return { side: 'output', family: 'Initial state output', role: 'INIT/X0000 arrays', manual: 'Initial grid state arrays when written by restart output.' }
+  if (extension === 'UNRST' || /^X\d{4}$/.test(extension)) return { side: 'output', family: 'Restart states', role: 'Restart grid arrays', manual: 'RPTRST-controlled dynamic grid arrays such as PRESSURE, SWAT, SGAS and flows.' }
+  if (extension === 'SMSPEC') return { side: 'output', family: 'Summary metadata', role: 'SMSPEC vectors', manual: 'Summary vector metadata for field/well time series.' }
+  if (extension === 'UNSMRY' || extension === 'ESMRY' || /^S\d{4}$/.test(extension)) return { side: 'output', family: 'Summary values', role: 'Summary time series', manual: 'SUMMARY/RPTSCHED time-series result files.' }
+  if (extension === 'PRT') return { side: 'output', family: 'Print report', role: 'Simulator PRT report', manual: 'Human-readable run report and schedule output.' }
+  if (extension === 'DBG') return { side: 'output', family: 'Debug report', role: 'Simulator debug output', manual: 'Debug output requested or emitted by the simulator.' }
+  if (extension === 'TXT' || name === 'stdout.txt' || name === 'stderr.txt') return { side: 'output', family: 'Runner logs', role: 'stdout/stderr', manual: 'External runner logs, not Eclipse keywords.' }
+  return { side: artifactDirectory(artifact).startsWith('input') ? 'input' : 'output', family: 'Other artifact', role: extension || type || 'artifact', manual: 'Stored simulation evidence file.' }
+}
+const field2DArtifacts = computed(() => {
+  const artifacts = Array.isArray(field2DActiveRun.value?.artifacts) ? field2DActiveRun.value.artifacts : []
+  return artifacts.map((artifact, index) => {
+    const classification = classifyField2DArtifact(artifact)
+    const name = artifactFileName(artifact)
     return {
-      key: `${connection.connection_id}:cell:${cellIndex}`,
-      index: cellIndex + 1,
-      x,
-      y,
-      value,
-      color: drainagePropertyColor(value),
+      ...artifact,
+      ...classification,
+      key: artifact.artifact_id || `${name}:${index}`,
+      name,
+      extension: artifactExtension(artifact),
+      directory: artifactDirectory(artifact),
+      sizeLabel: formatArtifactSize(artifact.size_bytes),
+      checksumShort: artifact.checksum ? String(artifact.checksum).slice(0, 12) : '—',
     }
   })
 })
-const opmOutputArtifacts = computed(() => {
-  const artifacts = Array.isArray(opmSimulationRun.value?.artifacts) ? opmSimulationRun.value.artifacts : []
-  return artifacts.filter((artifact) => {
-    const text = `${artifact.artifact_type || ''} ${artifact.path || ''} ${artifact.name || ''}`.toLowerCase()
-    return text.includes('output') || text.includes('.smspec') || text.includes('.unsmry') || text.includes('.egrid') || text.includes('.init') || text.includes('.x')
+const field2DInputArtifacts = computed(() => field2DArtifacts.value.filter((artifact) => artifact.side === 'input'))
+const field2DOutputArtifacts = computed(() => field2DArtifacts.value.filter((artifact) => artifact.side === 'output'))
+const field2DNormalizedArtifacts = computed(() => field2DArtifacts.value.filter((artifact) => artifact.side === 'normalized'))
+const opmOutputArtifacts = computed(() => field2DOutputArtifacts.value.concat(field2DNormalizedArtifacts.value))
+const field2DDeckSectionRows = computed(() => FIELD_2D_DECK_SECTIONS.map((section) => {
+  const artifact = field2DInputArtifacts.value.find((item) => {
+    const name = item.name.toLowerCase()
+    return section.file.startsWith('.') ? name.endsWith(section.file) : name === section.file
+  })
+  return {
+    ...section,
+    artifact,
+    fileName: artifact?.name || 'missing',
+    path: artifact?.path || '',
+    sizeLabel: artifact?.sizeLabel || '—',
+    checksumShort: artifact?.checksumShort || '—',
+  }
+}))
+const field2DArtifactFamilyRows = computed(() => {
+  const rows = new Map()
+  field2DArtifacts.value.forEach((artifact) => {
+    const key = `${artifact.side}:${artifact.family}`
+    if (!rows.has(key)) {
+      rows.set(key, {
+        key,
+        side: artifact.side,
+        family: artifact.family,
+        role: artifact.role,
+        count: 0,
+        sizeBytes: 0,
+        examples: [],
+      })
+    }
+    const row = rows.get(key)
+    row.count += 1
+    row.sizeBytes += Number(artifact.size_bytes || 0)
+    if (row.examples.length < 3) row.examples.push(artifact.name)
+  })
+  return [...rows.values()]
+    .map((row) => ({ ...row, sizeLabel: formatArtifactSize(row.sizeBytes), examplesLabel: row.examples.join(', ') }))
+    .sort((left, right) => `${left.side}:${left.family}`.localeCompare(`${right.side}:${right.family}`))
+})
+const field2DGridSource = computed(() => (
+  drainageSimulationAnalysis.value?.preparation?.grid
+  || drainagePreparation.value?.grid
+  || field2DActiveRun.value?.opm_case_manifest?.metadata?.grid
+  || {}
+))
+const field2DGridCells = computed(() => {
+  if (drainageAnalysisGridCells.value.length) return drainageAnalysisGridCells.value
+  if (Array.isArray(drainageSimulationAnalysis.value?.preparation?.grid?.cells)) return drainageSimulationAnalysis.value.preparation.grid.cells
+  if (Array.isArray(drainagePreparation.value?.grid?.cells)) return drainagePreparation.value.grid.cells
+  return []
+})
+const field2DGridSummaryRows = computed(() => {
+  const grid = field2DGridSource.value || {}
+  const cells = field2DGridCells.value
+  const activeCount = cells.length
+    ? cells.filter((cell) => Number(cell.actnum ?? (cell.active ? 1 : 0)) > 0).length
+    : Number(grid.active_cell_count || grid.active_grid_cell_count || 0)
+  const totalCount = Number(grid.cell_count || grid.grid_cell_count || 0) || cells.length || (Number(grid.nx || 0) * Number(grid.ny || 0) * Number(grid.nz || 0))
+  const config = field2DActiveRun.value?.metadata?.field_2d_config || {}
+  return [
+    { label: 'NX x NY x NZ', value: `${Number(grid.nx || 0)} x ${Number(grid.ny || 0)} x ${Number(grid.nz || 0)}` },
+    { label: 'Cell size', value: `${formatCompactDecimal(grid.dx_m || 0, 1)} x ${formatCompactDecimal(grid.dy_m || 0, 1)} x ${formatCompactDecimal(grid.dz_m || 0, 1)} m` },
+    { label: 'Cells / active', value: `${formatCompactNumber(totalCount)} / ${formatCompactNumber(activeCount)}` },
+    { label: 'Influence radius', value: `${formatCompactNumber(config.influence_radius_m || opmSimulationForm.influence_radius_m)} m` },
+    { label: 'Well region radius', value: `${formatCompactNumber(config.well_region_radius_m || opmSimulationForm.well_region_radius_m)} m` },
+    { label: 'Initial pressure', value: `${formatCompactDecimal(config.initial_pressure_bar || opmSimulationForm.initial_pressure_bar, 1)} bar` },
+  ]
+})
+const field2DVisibleGridRows = computed(() => {
+  const cells = field2DGridCells.value
+  const selectedRow = selectedDrainageMatrixRow.value
+  const selectedConnectionIds = new Set(selectedRow?.connectionIds ? [...selectedRow.connectionIds] : [])
+  const filtered = selectedConnectionIds.size && selectedRow?.nodeType !== 'total'
+    ? cells.filter((cell) => selectedConnectionIds.has(field2DCellConnectionId(cell)))
+    : cells
+  const maxRows = 500
+  const step = Math.max(1, Math.ceil(filtered.length / maxRows))
+  return filtered
+    .filter((_, index) => index % step === 0)
+    .slice(0, maxRows)
+    .map((cell, index) => ({
+      key: cell.cell_id || `${cell.i}:${cell.j}:${cell.k}:${index}`,
+      cell_id: cell.cell_id || `${cell.i}:${cell.j}:${cell.k}`,
+      ijk: `${cell.i || 0}, ${cell.j || 0}, ${cell.k || 1}`,
+      x: cell.x,
+      y: cell.y,
+      actnum: Number(cell.actnum ?? (cell.active ? 1 : 0)),
+      region_id: cell.region_id ?? cell.connection_region_id ?? 0,
+      well_region_id: cell.well_region_id ?? 0,
+      pvtnum: cell.pvtnum ?? 1,
+      satnum: cell.satnum ?? 1,
+      rocknum: cell.rocknum ?? 1,
+      fipnum: cell.fipnum ?? 1,
+      poro: cell.poro,
+      permx: cell.permx ?? cell.permeability,
+      pv: cell.pv ?? cell.pore_volume,
+      pressure: cell.pressure,
+      swat: cell.swat ?? cell.saturation,
+      sgas: cell.sgas,
+    }))
+})
+const field2DGridRowsInfo = computed(() => ({
+  shown: field2DVisibleGridRows.value.length,
+  total: field2DGridCells.value.length,
+}))
+const field2DRegionRows = computed(() => {
+  const metricsByConnectionId = new Map(drainageAnalysisConnectionMetrics.value.map((item) => [item.connection_id, item]))
+  return drainageConnections.value.slice(0, 300).map((region) => {
+    const metric = metricsByConnectionId.get(region.connection_id) || {}
+    return {
+      key: region.connection_id || region.region_id,
+      region_id: region.region_id,
+      connection_id: region.connection_id,
+      injector_name: region.injector_name,
+      producer_name: region.producer_name,
+      alpha: region.alpha,
+      pv: region.pv || region.pore_volume,
+      pressure_mae_bar: metric.pressure_mae_bar,
+      watercut_mae_fraction: metric.watercut_mae_fraction,
+      run_status: metric.run_status || field2DActiveRun.value?.status || 'prepared',
+    }
   })
 })
+const field2DWellRows = computed(() => drainageContacts.value.slice(0, 300).map((well) => ({
+  key: well.well_name,
+  well_name: well.well_name,
+  well_type: well.well_type || '',
+  lu_id: well.lu_id || '',
+  sloy_id: well.sloy_id || '',
+  well_pad_id: well.well_pad_id || '',
+  x: well.center_x,
+  y: well.center_y,
+  z: well.center_z,
+})))
 const drainageStatusCards = computed(() => [
   { label: 'Контакты пласт-скважина', value: drainageContacts.value.length },
   { label: 'Связи injector-producer', value: drainageConnections.value.length },
-  { label: 'Активные 1D модели', value: drainageModelSpecs.value.length },
+  { label: '2D regions', value: drainageModelSpecs.value.length },
+  { label: 'OPM 2D metrics', value: drainageAnalysisModelRuns.value.length },
+  { label: 'OPM output files', value: opmOutputArtifacts.value.length },
+])
+const field2DStatusCards = computed(() => [
+  { label: 'Wells', value: drainageContacts.value.length },
+  { label: 'Injector-producer regions', value: drainageConnections.value.length },
+  { label: '2D grid cells', value: drainageAnalysisGridCells.value.length || drainagePreparation.value?.grid?.cells?.length || 0 },
+  { label: 'Region metrics', value: drainageAnalysisConnectionMetrics.value.length },
   { label: 'OPM output files', value: opmOutputArtifacts.value.length },
 ])
 const drainageGraphRows = computed(() => {
@@ -2569,6 +3044,11 @@ const drainageMatrixRows = computed(() => {
         injectorNames: new Set(),
         producerNames: new Set(),
         alphaByProducer: new Map(),
+        crmSources: new Set(),
+        crmFitStatuses: new Set(),
+        crmRawGains: [],
+        crmScores: [],
+        tauDays: [],
       })
       if (parentKey && nodes.has(parentKey)) nodes.get(parentKey).children.push(nodes.get(key))
     }
@@ -2600,6 +3080,11 @@ const drainageMatrixRows = computed(() => {
           (node.alphaByProducer.get(connection.producer_name) || 0) + Number(connection.alpha || 0),
         )
       }
+      if (connection.crm_source || connection.crm_engine) node.crmSources.add(connection.crm_source || connection.crm_engine)
+      if (connection.crm_fit_status) node.crmFitStatuses.add(connection.crm_fit_status)
+      if (Number.isFinite(Number(connection.crm_raw_gain))) node.crmRawGains.push(Number(connection.crm_raw_gain))
+      if (Number.isFinite(Number(connection.crm_score))) node.crmScores.push(Number(connection.crm_score))
+      if (Number.isFinite(Number(connection.tau_days))) node.tauDays.push(Number(connection.tau_days))
     })
   })
   return [...nodes.values()].map((node) => buildDrainageMatrixMetrics(node))
@@ -2627,6 +3112,647 @@ const numberOrNull = (value) => {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
 }
+const positiveNumberOrNull = (value) => {
+  const parsed = numberOrNull(value)
+  return parsed !== null && parsed > 0 ? parsed : null
+}
+const scenarioTrajectoryRows = computed(() => datasetRowsFromReference(
+  selectedScenarioContext.value?.well_trajectories_dataset || selectedDatasets.well_trajectories,
+))
+const scenarioPerforationRows = computed(() => datasetRowsFromReference(
+  selectedScenarioContext.value?.perforations_dataset || selectedDatasets.perforations,
+))
+const field2DSelectedCubeOption = computed(() => (
+  FIELD_2D_CUBE_OPTIONS.find((item) => item.key === field2DSelectedCube.value) || FIELD_2D_CUBE_OPTIONS[0]
+))
+const field2DAverage = (rows, field) => {
+  const values = rows.map((row) => numberOrNull(row?.[field])).filter((value) => value !== null)
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null
+}
+const field2DBaseRegionStateById = computed(() => {
+  const grouped = new Map()
+  field2DGridCells.value.forEach((cell) => {
+    const regionId = Number(cell.connection_region_id ?? cell.region_id ?? 0)
+    if (!regionId) return
+    if (!grouped.has(regionId)) grouped.set(regionId, [])
+    grouped.get(regionId).push(cell)
+  })
+  const states = new Map()
+  grouped.forEach((cells, regionId) => {
+    states.set(regionId, {
+      region_id: regionId,
+      pressure: field2DAverage(cells, 'pressure') ?? 0,
+      swat: field2DAverage(cells, 'swat') ?? field2DAverage(cells, 'saturation') ?? 0,
+      sgas: field2DAverage(cells, 'sgas') ?? 0.04,
+    })
+  })
+  return states
+})
+const field2DGridStates = computed(() => (
+  Array.isArray(drainageSimulationAnalysis.value?.grid_states) ? drainageSimulationAnalysis.value.grid_states : []
+))
+const field2DDerivedGridStates = computed(() => {
+  const rowsByDate = new Map()
+  drainageAnalysisTimeseries.value.forEach((row) => {
+    const date = String(row.date || '').slice(0, 10)
+    const regionId = Number(row.region_id || 0)
+    if (!date || !regionId) return
+    if (!rowsByDate.has(date)) rowsByDate.set(date, new Map())
+    rowsByDate.get(date).set(regionId, row)
+  })
+  const regionIds = new Set([
+    ...field2DBaseRegionStateById.value.keys(),
+    ...drainageConnections.value.map((region) => Number(region.region_id || 0)).filter(Boolean),
+  ])
+  const latestPressureByRegion = new Map()
+  rowsByDate.forEach((rowsByRegion) => {
+    rowsByRegion.forEach((row, regionId) => {
+      const fact = positiveNumberOrNull(row.p_res_fact)
+      const calc = positiveNumberOrNull(row.p_res_calc)
+      if (fact !== null || calc !== null) latestPressureByRegion.set(regionId, { fact, calc })
+    })
+  })
+  const lastStateByRegion = new Map([...regionIds].map((regionId) => {
+    const base = field2DBaseRegionStateById.value.get(regionId) || { pressure: 220, swat: 0.30, sgas: 0.04 }
+    return [regionId, { pressure: positiveNumberOrNull(base.pressure) ?? 220, swat: base.swat || 0.30, sgas: base.sgas || 0.04 }]
+  }))
+  return [...rowsByDate.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([date, rowsByRegion], stepIndex) => {
+      const regionStates = [...regionIds].map((regionId) => {
+        const row = rowsByRegion.get(regionId) || {}
+        const base = lastStateByRegion.get(regionId) || field2DBaseRegionStateById.value.get(regionId) || { pressure: 220, swat: 0.30, sgas: 0.04 }
+        const factPressure = positiveNumberOrNull(row.p_res_fact)
+        const calcPressure = positiveNumberOrNull(row.p_res_calc)
+        const latestPressure = latestPressureByRegion.get(regionId) || {}
+        const pressureOffset = latestPressure.fact !== null && latestPressure.fact !== undefined && latestPressure.calc !== null && latestPressure.calc !== undefined
+          ? latestPressure.calc - latestPressure.fact
+          : 0
+        const pressure = positiveNumberOrNull(
+          factPressure !== null ? factPressure + pressureOffset : (calcPressure ?? base.pressure ?? 220),
+        ) ?? positiveNumberOrNull(base.pressure) ?? 220
+        const swat = Math.max(0.05, Math.min(0.95, numberOrNull(row.watercut_calc) ?? base.swat))
+        const qGas = numberOrNull(row.q_gas_calc) || 0
+        const qLiq = numberOrNull(row.q_liq_calc) || 0
+        const gasFraction = qGas / Math.max(1, qGas + qLiq)
+        const sgas = Math.max(0, Math.min(0.4, base.sgas + gasFraction * 0.08 - (swat - base.swat) * 0.2))
+        lastStateByRegion.set(regionId, { pressure, swat, sgas })
+        return {
+          region_id: regionId,
+          connection_id: row.connection_id || `region:${regionId}`,
+          pressure,
+          swat,
+          sgas,
+          source: 'frontend_timeseries_region_state',
+        }
+      })
+      return {
+        report_step: stepIndex,
+        date,
+        source: 'frontend_timeseries_region_state',
+        region_states: regionStates,
+      }
+    })
+})
+const field2DInitialGridState = computed(() => ({
+  report_step: 0,
+  date: 'initial',
+  source: 'field_2d_initial_cell_state',
+  region_states: [...field2DBaseRegionStateById.value.values()],
+}))
+const field2DTimeSteps = computed(() => {
+  const source = field2DGridStates.value.length ? field2DGridStates.value : field2DDerivedGridStates.value
+  const states = source.length ? source : [field2DInitialGridState.value]
+  return states.map((state, index) => ({
+    ...state,
+    index,
+    report_step: Number(state.report_step ?? index),
+    label: state.date && state.date !== 'initial'
+      ? `Step ${Number(state.report_step ?? index)} · ${String(state.date).slice(0, 10)}`
+      : `Step ${Number(state.report_step ?? index)} · initial`,
+  }))
+})
+const field2DSelectedTimeStep = computed(() => {
+  if (!field2DTimeSteps.value.length) return field2DInitialGridState.value
+  const index = Math.max(0, Math.min(field2DTimeSteps.value.length - 1, Number(field2DSelectedStepIndex.value || 0)))
+  return field2DTimeSteps.value[index]
+})
+const field2DRegionStateById = computed(() => {
+  const rows = Array.isArray(field2DSelectedTimeStep.value?.region_states) ? field2DSelectedTimeStep.value.region_states : []
+  return new Map(rows.map((row) => [Number(row.region_id || 0), row]))
+})
+const field2DStepMax = computed(() => Math.max(0, field2DTimeSteps.value.length - 1))
+const field2DStepLabel = computed(() => field2DSelectedTimeStep.value?.label || 'Step 0 · initial')
+const field2DSetZoom = (value) => {
+  const zoom = Number(value)
+  field2DZoom.value = Math.max(1, Math.min(8, Number.isFinite(zoom) ? zoom : 1))
+}
+const field2DZoomIn = () => field2DSetZoom(field2DZoom.value + 0.25)
+const field2DZoomOut = () => field2DSetZoom(field2DZoom.value - 0.25)
+const field2DResetZoom = () => field2DSetZoom(1)
+const handleField2DMapWheel = (event) => {
+  const delta = event.deltaY < 0 ? 0.2 : -0.2
+  field2DSetZoom(field2DZoom.value + delta)
+}
+const field2DLooseValue = (row, keys) => {
+  if (!row) return null
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null && String(row[key]).trim() !== '') return row[key]
+  }
+  const entries = Object.entries(row)
+  for (const key of keys) {
+    const normalizedKey = String(key).toLowerCase()
+    const match = entries.find(([entryKey, value]) => entryKey.toLowerCase() === normalizedKey && value !== null && value !== undefined && String(value).trim() !== '')
+    if (match) return match[1]
+  }
+  return null
+}
+const field2DStringValue = (row, keys) => {
+  const value = field2DLooseValue(row, keys)
+  return value === null || value === undefined ? '' : String(value).trim()
+}
+const field2DNumberValue = (row, keys) => numberOrNull(field2DLooseValue(row, keys))
+const field2DWellNameFromRow = (row) => field2DStringValue(row, ['well_name', 'well', 'well_id', 'bore', 'uwi'])
+const field2DFormatValue = (value, digits = 2) => {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '--'
+  return formatCompactDecimal(value, digits)
+}
+const field2DTrajectoryPoints = computed(() => scenarioTrajectoryRows.value
+  .map((row, index) => ({
+    key: field2DStringValue(row, ['trajectory_id', 'point_id', 'id']) || `trajectory:${index}`,
+    wellName: field2DWellNameFromRow(row),
+    md: field2DNumberValue(row, ['md', 'measured_depth', 'depth_md', 'tvd_md']),
+    x: field2DNumberValue(row, ['x', 'coord_x', 'x_m', 'center_x']),
+    y: field2DNumberValue(row, ['y', 'coord_y', 'y_m', 'center_y']),
+    z: field2DNumberValue(row, ['z', 'tvd', 'depth', 'center_z']),
+    sourceIndex: index,
+  }))
+  .filter((point) => point.wellName && Number.isFinite(point.x) && Number.isFinite(point.y)))
+const field2DTrajectoryGroups = computed(() => {
+  const groups = new Map()
+  field2DTrajectoryPoints.value.forEach((point) => {
+    if (!groups.has(point.wellName)) groups.set(point.wellName, [])
+    groups.get(point.wellName).push(point)
+  })
+  return [...groups.entries()]
+    .map(([wellName, points]) => ({
+      wellName,
+      points: points
+        .slice()
+        .sort((left, right) => (left.md ?? left.sourceIndex) - (right.md ?? right.sourceIndex)),
+    }))
+    .filter((group) => group.points.length)
+})
+const field2DTrajectoryByWell = computed(() => new Map(field2DTrajectoryGroups.value.map((group) => [group.wellName, group.points])))
+const field2DWellCenterByName = computed(() => {
+  const rows = new Map()
+  field2DWellRows.value.forEach((well) => {
+    if (!well.well_name) return
+    const x = numberOrNull(well.x)
+    const y = numberOrNull(well.y)
+    if (x === null || y === null) return
+    rows.set(String(well.well_name), {
+      wellName: String(well.well_name),
+      x,
+      y,
+      z: numberOrNull(well.z),
+      role: String(well.well_type || '').toLowerCase().includes('inj') ? 'injector' : 'producer',
+      wellPadId: well.well_pad_id || '',
+    })
+  })
+  field2DTrajectoryGroups.value.forEach((group) => {
+    if (rows.has(group.wellName)) return
+    const points = group.points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+    if (!points.length) return
+    rows.set(group.wellName, {
+      wellName: group.wellName,
+      x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+      y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+      z: points.reduce((sum, point) => sum + Number(point.z || 0), 0) / points.length,
+      role: 'producer',
+      wellPadId: '',
+    })
+  })
+  drainageConnections.value.forEach((connection) => {
+    if (rows.has(connection.injector_name)) rows.get(connection.injector_name).role = 'injector'
+    if (rows.has(connection.producer_name) && rows.get(connection.producer_name).role !== 'injector') rows.get(connection.producer_name).role = 'producer'
+  })
+  return rows
+})
+const interpolateField2DTrajectory = (points, md) => {
+  if (!points?.length) return null
+  if (points.length === 1 || md === null || md === undefined) return points[Math.floor(points.length / 2)]
+  const ordered = points.filter((point) => point.md !== null && point.md !== undefined).sort((left, right) => left.md - right.md)
+  if (ordered.length < 2) return points[Math.floor(points.length / 2)]
+  if (md <= ordered[0].md) return ordered[0]
+  if (md >= ordered[ordered.length - 1].md) return ordered[ordered.length - 1]
+  for (let index = 1; index < ordered.length; index += 1) {
+    const left = ordered[index - 1]
+    const right = ordered[index]
+    if (md <= right.md) {
+      const span = Math.max(1e-9, right.md - left.md)
+      const ratio = Math.max(0, Math.min(1, (md - left.md) / span))
+      return {
+        wellName: left.wellName,
+        md,
+        x: left.x + (right.x - left.x) * ratio,
+        y: left.y + (right.y - left.y) * ratio,
+        z: Number(left.z || 0) + (Number(right.z || 0) - Number(left.z || 0)) * ratio,
+      }
+    }
+  }
+  return ordered[ordered.length - 1]
+}
+const field2DPerforationIntervals = computed(() => scenarioPerforationRows.value
+  .map((row, index) => {
+    const wellName = field2DWellNameFromRow(row)
+    const topMd = field2DNumberValue(row, ['top_md', 'md_top', 'start_md', 'top', 'from_md'])
+    const bottomMd = field2DNumberValue(row, ['bottom_md', 'md_bottom', 'end_md', 'bottom', 'to_md'])
+    const centerMd = topMd !== null && bottomMd !== null ? (topMd + bottomMd) / 2 : (topMd ?? bottomMd)
+    const trajectory = field2DTrajectoryByWell.value.get(wellName) || []
+    const explicitPoint = {
+      x: field2DNumberValue(row, ['x', 'coord_x', 'x_m']),
+      y: field2DNumberValue(row, ['y', 'coord_y', 'y_m']),
+      z: field2DNumberValue(row, ['z', 'tvd', 'depth']),
+    }
+    const center = Number.isFinite(explicitPoint.x) && Number.isFinite(explicitPoint.y)
+      ? explicitPoint
+      : interpolateField2DTrajectory(trajectory, centerMd)
+        || field2DWellCenterByName.value.get(wellName)
+        || null
+    if (!wellName || !center || !Number.isFinite(center.x) || !Number.isFinite(center.y)) return null
+    return {
+      key: field2DStringValue(row, ['perforation_id', 'id']) || `perf:${wellName}:${index}`,
+      wellName,
+      topMd,
+      bottomMd,
+      centerMd,
+      center,
+      topPoint: interpolateField2DTrajectory(trajectory, topMd),
+      bottomPoint: interpolateField2DTrajectory(trajectory, bottomMd),
+      layer: field2DStringValue(row, ['sloy', 'sloy_id', 'layer']),
+      lu: field2DStringValue(row, ['lu', 'lu_id']),
+    }
+  })
+  .filter(Boolean))
+const field2DFilteredGridCells = computed(() => {
+  const cells = field2DGridCells.value
+  const selectedRow = selectedDrainageMatrixRow.value
+  const selectedConnectionIds = new Set(selectedRow?.connectionIds ? [...selectedRow.connectionIds] : [])
+  const selected = selectedConnectionIds.size && selectedRow?.nodeType !== 'total'
+    ? cells.filter((cell) => selectedConnectionIds.has(field2DCellConnectionId(cell)))
+    : cells
+  return field2DShowInactiveCells.value
+    ? selected
+    : selected.filter((cell) => Number(cell.actnum ?? (cell.active ? 1 : 0)) > 0)
+})
+const field2DMapRawCells = computed(() => {
+  const maxCells = 45000
+  const cellsWithCoordinates = field2DFilteredGridCells.value.filter((cell) => numberOrNull(cell.x) !== null && numberOrNull(cell.y) !== null)
+  const step = Math.max(1, Math.ceil(cellsWithCoordinates.length / maxCells))
+  return cellsWithCoordinates.filter((_, index) => index % step === 0)
+})
+const field2DCellCubeValue = (cell) => {
+  const option = field2DSelectedCubeOption.value
+  if (option.key === 'current_compensation') {
+    const regionId = Number(cell?.connection_region_id ?? cell?.region_id ?? 0)
+    const value = field2DCurrentCompensationByRegionId.value.get(regionId)
+    return value === undefined ? null : value
+  }
+  if (FIELD_2D_DYNAMIC_CUBE_KEYS.has(option.key)) {
+    const regionId = Number(cell?.connection_region_id ?? cell?.region_id ?? 0)
+    const regionState = field2DRegionStateById.value.get(regionId)
+    const dynamicValue = numberOrNull(regionState?.[option.key])
+    if (dynamicValue !== null) return dynamicValue
+  }
+  for (const field of option.fields) {
+    const value = numberOrNull(cell?.[field])
+    if (value !== null) return value
+  }
+  return null
+}
+const field2DCubeValues = computed(() => field2DMapRawCells.value
+  .map((cell) => field2DCellCubeValue(cell))
+  .filter((value) => value !== null && Number.isFinite(value)))
+const field2DCubeStats = computed(() => {
+  const values = field2DCubeValues.value
+  if (!values.length) return { min: 0, max: 1, span: 1, uniqueValues: [] }
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const uniqueValues = [...new Set(values.map((value) => Number.isInteger(value) ? String(value) : field2DFormatValue(value, 3)))]
+  return { min, max, span: Math.max(1e-9, max - min), uniqueValues }
+})
+const field2DColorRamp = (ratio) => {
+  const stops = [
+    [37, 99, 235],
+    [20, 184, 166],
+    [245, 158, 11],
+    [220, 38, 38],
+  ]
+  const bounded = Math.max(0, Math.min(1, Number(ratio || 0)))
+  const scaled = bounded * (stops.length - 1)
+  const index = Math.min(stops.length - 2, Math.floor(scaled))
+  const local = scaled - index
+  const left = stops[index]
+  const right = stops[index + 1]
+  const channel = (item) => Math.round(left[item] + (right[item] - left[item]) * local)
+  return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`
+}
+const field2DDiscreteColor = (value) => {
+  if (value === null || value === undefined) return '#cbd5e1'
+  const index = Math.abs(Math.trunc(Number(value) || 0)) % FIELD_2D_DISCRETE_COLORS.length
+  return FIELD_2D_DISCRETE_COLORS[index]
+}
+const field2DCellFill = (cell) => {
+  if (Number(cell.actnum ?? (cell.active ? 1 : 0)) <= 0) return '#d7dee8'
+  const value = field2DCellCubeValue(cell)
+  if (field2DSelectedCubeOption.value.scale === 'discrete') return field2DDiscreteColor(value)
+  return field2DColorRamp((Number(value || 0) - field2DCubeStats.value.min) / field2DCubeStats.value.span)
+}
+const field2DGridSpacing = computed(() => {
+  const grid = field2DGridSource.value || {}
+  const cells = field2DGridCells.value
+  const inferSpacing = (field) => {
+    const values = [...new Set(cells.map((cell) => numberOrNull(cell[field])).filter((value) => value !== null))]
+      .sort((left, right) => left - right)
+    let best = null
+    for (let index = 1; index < values.length; index += 1) {
+      const diff = values[index] - values[index - 1]
+      if (diff > 1e-6 && (best === null || diff < best)) best = diff
+    }
+    return best || 150
+  }
+  return {
+    dx: numberOrNull(grid.dx_m) || inferSpacing('x'),
+    dy: numberOrNull(grid.dy_m) || inferSpacing('y'),
+  }
+})
+const field2DMapBounds = computed(() => {
+  const coords = []
+  field2DGridCells.value.forEach((cell) => {
+    const x = numberOrNull(cell.x)
+    const y = numberOrNull(cell.y)
+    if (x !== null && y !== null) coords.push({ x, y })
+  })
+  field2DPerforationIntervals.value.forEach((interval) => coords.push({ x: interval.center.x, y: interval.center.y }))
+  field2DWellCenterByName.value.forEach((well) => coords.push({ x: well.x, y: well.y }))
+  if (!coords.length) return { minX: 0, maxX: 1, minY: 0, maxY: 1, spanX: 1, spanY: 1 }
+  const xValues = coords.map((point) => point.x)
+  const yValues = coords.map((point) => point.y)
+  const minX = Math.min(...xValues)
+  const maxX = Math.max(...xValues)
+  const minY = Math.min(...yValues)
+  const maxY = Math.max(...yValues)
+  const pad = Math.max(field2DGridSpacing.value.dx, field2DGridSpacing.value.dy, (maxX - minX) * 0.03, (maxY - minY) * 0.03, 50)
+  return {
+    minX: minX - pad,
+    maxX: maxX + pad,
+    minY: minY - pad,
+    maxY: maxY + pad,
+    spanX: Math.max(1, maxX - minX + pad * 2),
+    spanY: Math.max(1, maxY - minY + pad * 2),
+  }
+})
+const field2DMapPoint = (x, y) => {
+  const bounds = field2DMapBounds.value
+  return {
+    viewX: 46 + ((Number(x || 0) - bounds.minX) / bounds.spanX) * (FIELD_2D_MAP_WIDTH - 92),
+    viewY: FIELD_2D_MAP_HEIGHT - 46 - ((Number(y || 0) - bounds.minY) / bounds.spanY) * (FIELD_2D_MAP_HEIGHT - 92),
+  }
+}
+const field2DMapTransform = computed(() => {
+  const zoom = Math.max(1, Math.min(8, Number(field2DZoom.value || 1)))
+  const cx = FIELD_2D_MAP_WIDTH / 2
+  const cy = FIELD_2D_MAP_HEIGHT / 2
+  return `translate(${cx} ${cy}) scale(${zoom}) translate(${-cx} ${-cy})`
+})
+const field2DMapCellSize = computed(() => {
+  const bounds = field2DMapBounds.value
+  return {
+    width: Math.max(1.4, Math.min(28, (field2DGridSpacing.value.dx / bounds.spanX) * (FIELD_2D_MAP_WIDTH - 92) + 0.5)),
+    height: Math.max(1.4, Math.min(28, (field2DGridSpacing.value.dy / bounds.spanY) * (FIELD_2D_MAP_HEIGHT - 92) + 0.5)),
+  }
+})
+const field2DMapCells = computed(() => field2DMapRawCells.value.map((cell, index) => {
+  const point = field2DMapPoint(cell.x, cell.y)
+  const value = field2DCellCubeValue(cell)
+  const option = field2DSelectedCubeOption.value
+  return {
+    key: cell.cell_id || `${cell.i}:${cell.j}:${cell.k}:${index}`,
+    ...cell,
+    ...point,
+    rectX: point.viewX - field2DMapCellSize.value.width / 2,
+    rectY: point.viewY - field2DMapCellSize.value.height / 2,
+    rectWidth: field2DMapCellSize.value.width,
+    rectHeight: field2DMapCellSize.value.height,
+    fill: field2DCellFill(cell),
+    opacity: Number(cell.actnum ?? (cell.active ? 1 : 0)) > 0 ? 0.92 : 0.28,
+    value,
+    title: `${cell.cell_id || `${cell.i || 0},${cell.j || 0},${cell.k || 1}`} ${field2DStepLabel.value} ${option.label}: ${field2DFormatValue(value, option.scale === 'discrete' ? 0 : 3)} ${option.unit}`.trim(),
+  }
+}))
+const field2DMapTrajectories = computed(() => field2DTrajectoryGroups.value.map((group) => {
+  const points = group.points.map((point) => ({ ...point, ...field2DMapPoint(point.x, point.y) }))
+  return {
+    ...group,
+    points,
+    path: points.map((point, index) => `${index ? 'L' : 'M'} ${point.viewX.toFixed(1)} ${point.viewY.toFixed(1)}`).join(' '),
+  }
+}))
+const field2DMapPerforations = computed(() => field2DPerforationIntervals.value.map((interval) => {
+  const center = field2DMapPoint(interval.center.x, interval.center.y)
+  const topPoint = interval.topPoint && Number.isFinite(interval.topPoint.x) && Number.isFinite(interval.topPoint.y)
+    ? field2DMapPoint(interval.topPoint.x, interval.topPoint.y)
+    : null
+  const bottomPoint = interval.bottomPoint && Number.isFinite(interval.bottomPoint.x) && Number.isFinite(interval.bottomPoint.y)
+    ? field2DMapPoint(interval.bottomPoint.x, interval.bottomPoint.y)
+    : null
+  const hasSegment = topPoint && bottomPoint && Math.hypot(topPoint.viewX - bottomPoint.viewX, topPoint.viewY - bottomPoint.viewY) >= 4
+  return {
+    ...interval,
+    ...center,
+    topView: topPoint,
+    bottomView: bottomPoint,
+    hasSegment,
+    title: `${interval.wellName} PERF ${field2DFormatValue(interval.topMd, 1)}-${field2DFormatValue(interval.bottomMd, 1)} m`,
+  }
+}))
+const field2DMapWells = computed(() => [...field2DWellCenterByName.value.values()]
+  .map((well, index) => ({
+    ...well,
+    key: well.wellName,
+    labelVisible: index < 120,
+    ...field2DMapPoint(well.x, well.y),
+  }))
+  .sort((left, right) => left.wellName.localeCompare(right.wellName, 'ru')))
+const field2DPerforationsByWell = computed(() => {
+  const rows = new Map()
+  field2DMapPerforations.value.forEach((perf) => {
+    if (!rows.has(perf.wellName)) rows.set(perf.wellName, [])
+    rows.get(perf.wellName).push(perf)
+  })
+  return rows
+})
+const selectedCrmDrainageConnections = computed(() => {
+  const row = selectedDrainageMatrixRow.value
+  const selectedConnectionIds = new Set(row?.connectionIds ? [...row.connectionIds] : [])
+  if (!selectedConnectionIds.size || row?.nodeType === 'total') return drainageConnections.value
+  return drainageConnections.value.filter((connection) => selectedConnectionIds.has(connection.connection_id))
+})
+const crmBoundarySegmentsForConnection = (connection) => {
+  const producerName = String(connection.producer_name || '')
+  const perforations = field2DPerforationsByWell.value.get(producerName) || []
+  const segments = perforations
+    .map((perf) => {
+      const start = perf.hasSegment ? perf.topView : { viewX: perf.viewX, viewY: perf.viewY }
+      const end = perf.hasSegment ? perf.bottomView : { viewX: perf.viewX, viewY: perf.viewY }
+      if (!start || !end) return null
+      return {
+        key: `${connection.connection_id}:${perf.key}`,
+        producerName,
+        start,
+        end,
+        center: {
+          viewX: (Number(start.viewX) + Number(end.viewX)) / 2,
+          viewY: (Number(start.viewY) + Number(end.viewY)) / 2,
+        },
+      }
+    })
+    .filter(Boolean)
+  if (segments.length) return segments
+  const producer = field2DWellCenterByName.value.get(producerName)
+  if (!producer) return []
+  const point = field2DMapPoint(producer.x, producer.y)
+  return [{
+    key: `${connection.connection_id}:producer-center`,
+    producerName,
+    start: point,
+    end: point,
+    center: point,
+  }]
+}
+const field2DPointPath = (points) => points.map((point, index) => `${index ? 'L' : 'M'} ${point.viewX.toFixed(1)} ${point.viewY.toFixed(1)}`).join(' ')
+const field2DConvexHull = (points) => {
+  const unique = []
+  const seen = new Set()
+  points.forEach((point) => {
+    const key = `${point.viewX.toFixed(2)}:${point.viewY.toFixed(2)}`
+    if (seen.has(key)) return
+    seen.add(key)
+    unique.push(point)
+  })
+  if (unique.length <= 3) return unique
+  const sorted = unique.slice().sort((left, right) => left.viewX === right.viewX ? left.viewY - right.viewY : left.viewX - right.viewX)
+  const cross = (origin, left, right) => (
+    (left.viewX - origin.viewX) * (right.viewY - origin.viewY)
+    - (left.viewY - origin.viewY) * (right.viewX - origin.viewX)
+  )
+  const lower = []
+  sorted.forEach((point) => {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) lower.pop()
+    lower.push(point)
+  })
+  const upper = []
+  sorted.slice().reverse().forEach((point) => {
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) upper.pop()
+    upper.push(point)
+  })
+  return lower.slice(0, -1).concat(upper.slice(0, -1))
+}
+const crmDrainageMapCells = computed(() => {
+  const grouped = new Map()
+  selectedCrmDrainageConnections.value.forEach((connection) => {
+    const injectorName = String(connection.injector_name || '')
+    if (!injectorName) return
+    if (!grouped.has(injectorName)) grouped.set(injectorName, [])
+    grouped.get(injectorName).push(connection)
+  })
+  return [...grouped.entries()].map(([injectorName, connections]) => {
+    const injector = field2DWellCenterByName.value.get(injectorName) || drainageWellMap.value.get(injectorName)
+    const center = injector && Number.isFinite(Number(injector.x)) && Number.isFinite(Number(injector.y))
+      ? field2DMapPoint(injector.x, injector.y)
+      : null
+    const segments = connections.flatMap((connection) => crmBoundarySegmentsForConnection(connection))
+    const boundaryPoints = segments.flatMap((segment) => [segment.start, segment.end])
+    let polygon = field2DConvexHull(boundaryPoints)
+    if (polygon.length < 3 && center && boundaryPoints.length === 1) {
+      const point = boundaryPoints[0]
+      const dx = Number(point.viewX) - Number(center.viewX)
+      const dy = Number(point.viewY) - Number(center.viewY)
+      const length = Math.max(1, Math.hypot(dx, dy))
+      const offsetX = (-dy / length) * 18
+      const offsetY = (dx / length) * 18
+      polygon = [
+        center,
+        { viewX: Number(point.viewX) + offsetX, viewY: Number(point.viewY) + offsetY },
+        { viewX: Number(point.viewX) - offsetX, viewY: Number(point.viewY) - offsetY },
+      ]
+    } else if (polygon.length < 3 && center) {
+      polygon = [center, ...boundaryPoints]
+    }
+    const values = connections
+      .map((connection) => crmConnectionCurrentCompensation.value.get(connection.connection_id)?.value)
+      .filter((value) => value !== null && value !== undefined && Number.isFinite(Number(value)))
+    const compensation = values.length ? values.reduce((sum, value) => sum + Number(value), 0) / values.length : null
+    const sourceSet = new Set(connections.map((connection) => connection.crm_source || connection.crm_engine || 'unknown'))
+    return {
+      key: `crm-cell:${injectorName}`,
+      injectorName,
+      connections,
+      center,
+      segments,
+      polygon,
+      path: polygon.length >= 3 ? `${field2DPointPath(polygon)} Z` : '',
+      compensation,
+      fill: crmCompensationColor(compensation),
+      sourceLabel: [...sourceSet].join(', '),
+    }
+  })
+})
+const crmDrainageMapSummaryRows = computed(() => {
+  const crmDiagnostics = drainageDiagnostics.value?.crm || drainageSimulationAnalysis.value?.diagnostics?.crm || {}
+  return [
+    { label: 'CRM engine', value: crmDiagnostics.engine || 'not loaded' },
+    { label: 'pywaterflood', value: crmDiagnostics.pywaterflood_available ? `available ${crmDiagnostics.pywaterflood_version || ''}` : 'not available' },
+    { label: 'Fit status', value: crmDiagnostics.pywaterflood_fit?.status || '--' },
+    { label: 'Cells', value: formatCompactNumber(crmDrainageMapCells.value.length) },
+    { label: 'Connections', value: formatCompactNumber(selectedCrmDrainageConnections.value.length) },
+  ]
+})
+const field2DLegendRows = computed(() => {
+  const option = field2DSelectedCubeOption.value
+  if (option.scale === 'discrete') {
+    return field2DCubeStats.value.uniqueValues.slice(0, 12).map((value) => ({
+      label: value,
+      color: field2DDiscreteColor(Number(value)),
+    }))
+  }
+  return [
+    { label: `min ${field2DFormatValue(field2DCubeStats.value.min, 3)}`, color: field2DColorRamp(0) },
+    { label: `mid ${field2DFormatValue((field2DCubeStats.value.min + field2DCubeStats.value.max) / 2, 3)}`, color: field2DColorRamp(0.5) },
+    { label: `max ${field2DFormatValue(field2DCubeStats.value.max, 3)}`, color: field2DColorRamp(1) },
+  ]
+})
+const field2DMapSummaryRows = computed(() => {
+  const grid = field2DGridSource.value || {}
+  const option = field2DSelectedCubeOption.value
+  return [
+    { label: 'Run sync', value: field2DRunSyncStatus.value },
+    { label: 'Analysis run', value: field2DAnalysisRunId.value ? field2DAnalysisRunId.value.slice(0, 8) : '--' },
+    { label: 'Report step', value: field2DStepLabel.value },
+    { label: 'Rendered cells', value: `${formatCompactNumber(field2DMapCells.value.length)} / ${formatCompactNumber(field2DFilteredGridCells.value.length)}` },
+    { label: 'Grid', value: `${Number(grid.nx || 0)} x ${Number(grid.ny || 0)} x ${Number(grid.nz || 0)}` },
+    { label: 'Trajectories', value: formatCompactNumber(field2DMapTrajectories.value.length) },
+    { label: 'Perforations', value: formatCompactNumber(field2DMapPerforations.value.length) },
+    { label: 'Zoom', value: `${field2DFormatValue(field2DZoom.value, 2)}x` },
+    { label: 'Cube range', value: option.scale === 'discrete' ? `${field2DCubeStats.value.uniqueValues.length} values` : `${field2DFormatValue(field2DCubeStats.value.min, 3)} - ${field2DFormatValue(field2DCubeStats.value.max, 3)} ${option.unit}` },
+  ]
+})
+watch(() => field2DTimeSteps.value.length, (length) => {
+  if (field2DSelectedStepIndex.value > Math.max(0, length - 1)) {
+    field2DSelectedStepIndex.value = Math.max(0, length - 1)
+  }
+})
 const reservoirConditionFluidVolume = (liquid, gas) => Number(liquid || 0) + Number(gas || 0) / 1000
 const resetCurrentProductionStats = (stat, date) => {
   stat.latestDate = date
@@ -2726,6 +3852,48 @@ const injectionStatsByWell = computed(() => {
   })
   return stats
 })
+const crmConnectionCurrentCompensation = computed(() => {
+  const rows = new Map()
+  drainageConnections.value.forEach((connection) => {
+    const producerStat = productionStatsByWell.value.get(connection.producer_name)
+    const injectorStat = injectionStatsByWell.value.get(connection.injector_name)
+    const currentReservoirFluid = Number(producerStat?.currentReservoirFluid || 0)
+    const weightedInjection = Number(injectorStat?.currentInjection || 0) * Math.max(0, Number(connection.alpha || 0))
+    const value = currentReservoirFluid > 0 ? weightedInjection / currentReservoirFluid : null
+    rows.set(connection.connection_id, {
+      connectionId: connection.connection_id,
+      regionId: Number(connection.region_id || 0),
+      injectorName: connection.injector_name,
+      producerName: connection.producer_name,
+      value,
+      weightedInjection,
+      currentReservoirFluid,
+    })
+  })
+  return rows
+})
+const field2DCurrentCompensationByRegionId = computed(() => {
+  const rows = new Map()
+  crmConnectionCurrentCompensation.value.forEach((item) => {
+    if (item.regionId) rows.set(item.regionId, item.value)
+  })
+  drainageAnalysisConnectionMetrics.value.forEach((metric) => {
+    const regionId = Number(metric.region_id || 0)
+    const value = numberOrNull(metric.current_compensation)
+    if (regionId && value !== null) rows.set(regionId, value)
+  })
+  return rows
+})
+const crmCompensationColor = (value) => {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '#d7dee8'
+  const ratio = Math.max(0, Math.min(1.5, Number(value))) / 1.5
+  if (ratio < 0.67) {
+    const local = ratio / 0.67
+    return `rgb(${Math.round(220 + (245 - 220) * local)}, ${Math.round(38 + (158 - 38) * local)}, ${Math.round(38 + (11 - 38) * local)})`
+  }
+  const local = (ratio - 0.67) / 0.33
+  return `rgb(${Math.round(245 + (22 - 245) * local)}, ${Math.round(158 + (163 - 158) * local)}, ${Math.round(11 + (74 - 11) * local)})`
+}
 const aggregateProductionStats = (producerNames) => {
   const names = [...producerNames]
   const result = {
@@ -2788,23 +3956,30 @@ const aggregateConnectionStats = (connectionIds) => {
     pResCalcWeight: 0,
     bhpCalcWeighted: 0,
     bhpCalcWeight: 0,
+    artifactCount: 0,
+    completedModelCount: 0,
   }
   ;[...connectionIds].forEach((connectionId) => {
     const connection = drainageConnections.value.find((item) => item.connection_id === connectionId)
     if (!connection) return
     const model = drainageModelSpecByConnectionId.value.get(connectionId)
-    const pv = Number(model?.pore_volume || connection.pv || 0)
+    const analysisMetric = drainageAnalysisMetricsByConnectionId.value.get(connectionId)
+    const pv = Number(analysisMetric?.pore_volume || model?.pore_volume || connection.pv || 0)
     result.poreVolume += pv
     const weight = Math.max(1, pv)
-    result.pResCalcWeighted += connectionPressureEstimate(connection, 0.5) * weight
+    result.pResCalcWeighted += Number(analysisMetric?.p_res_calc ?? connectionPressureEstimate(connection, 0.5)) * weight
     result.pResCalcWeight += weight
-    result.bhpCalcWeighted += connectionPressureEstimate(connection, 0.95) * weight
+    result.bhpCalcWeighted += Number(analysisMetric?.bhp_calc ?? connectionPressureEstimate(connection, 0.95)) * weight
     result.bhpCalcWeight += weight
+    result.artifactCount += Number(analysisMetric?.artifact_count || 0)
+    if (analysisMetric?.run_status === 'completed' || analysisMetric?.run_status === 'imported') result.completedModelCount += 1
   })
   return {
     poreVolume: result.poreVolume,
     pResCalc: result.pResCalcWeight > 0 ? result.pResCalcWeighted / result.pResCalcWeight : null,
     bhpCalc: result.bhpCalcWeight > 0 ? result.bhpCalcWeighted / result.bhpCalcWeight : null,
+    artifactCount: result.artifactCount,
+    completedModelCount: result.completedModelCount,
   }
 }
 const buildDrainageMatrixMetrics = (node) => {
@@ -2813,6 +3988,9 @@ const buildDrainageMatrixMetrics = (node) => {
   const connection = aggregateConnectionStats(node.connectionIds)
   const alphaValues = [...node.alphaByProducer.values()]
   const alpha = alphaValues.length ? alphaValues.reduce((sum, value) => sum + value, 0) / alphaValues.length : null
+  const avg = (values) => values.length ? values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length : null
+  const crmSourceValues = [...node.crmSources].filter(Boolean)
+  const crmFitValues = [...node.crmFitStatuses].filter(Boolean)
   return {
     ...node,
     connectionCount: node.connectionIds.size,
@@ -2831,8 +4009,15 @@ const buildDrainageMatrixMetrics = (node) => {
     currentLiquid: production.currentLiquid,
     watercut: production.watercut,
     alpha,
+    crmSource: crmSourceValues.length === 1 ? crmSourceValues[0] : (crmSourceValues.length ? 'mixed' : ''),
+    crmFitStatus: crmFitValues.length === 1 ? crmFitValues[0] : (crmFitValues.length ? 'mixed' : ''),
+    crmRawGain: avg(node.crmRawGains),
+    crmScore: avg(node.crmScores),
+    tauDays: avg(node.tauDays),
     bhpFact: production.bhpFact,
     bhpCalc: connection.bhpCalc,
+    artifactCount: connection.artifactCount,
+    completedModelCount: connection.completedModelCount,
   }
 }
 const selectedHistoryWellSets = computed(() => {
@@ -2853,10 +4038,24 @@ const categoryInjectionHistoryRows = computed(() => {
   if (!injectors.size) return scenarioInjectionHistoryRows.value
   return scenarioInjectionHistoryRows.value.filter((row) => injectors.has(historyWellName(row)))
 })
+const categoryDrainageAnalysisRows = computed(() => {
+  const row = selectedDrainageMatrixRow.value
+  const connectionIds = new Set(row?.connectionIds ? [...row.connectionIds] : [])
+  const producers = selectedHistoryWellSets.value.producers
+  const injectors = selectedHistoryWellSets.value.injectors
+  if (!connectionIds.size && !producers.size && !injectors.size) return drainageAnalysisTimeseries.value
+  return drainageAnalysisTimeseries.value.filter((item) => {
+    if (connectionIds.size && connectionIds.has(item.connection_id)) return true
+    if (producers.size && producers.has(item.producer_name)) return true
+    if (injectors.size && injectors.has(item.injector_name)) return true
+    return false
+  })
+})
 const historyAvailableDateBounds = computed(() => {
   const dates = [
     ...categoryProductionHistoryRows.value.map(historyDateKey),
     ...categoryInjectionHistoryRows.value.map(historyDateKey),
+    ...categoryDrainageAnalysisRows.value.map(historyDateKey),
   ].filter(Boolean).sort()
   return {
     min: dates[0] || '',
@@ -2908,14 +4107,27 @@ const historyBuckets = computed(() => {
     addAverageValue(bucket, 'p_res', row.p_res)
     addAverageValue(bucket, 'wefac', row.wefac)
   })
+  categoryDrainageAnalysisRows.value.forEach((row) => {
+    const date = historyDateKey(row)
+    if (!date) return
+    const bucket = ensureBucket(date)
+    bucket.q_oil_calc = (bucket.q_oil_calc || 0) + (numberOrNull(row.q_oil_calc) || 0)
+    bucket.q_liq_calc = (bucket.q_liq_calc || 0) + (numberOrNull(row.q_liq_calc) || 0)
+    addAverageValue(bucket, 'watercut_calc', row.watercut_calc)
+    addAverageValue(bucket, 'bhp_calc', row.bhp_calc)
+    addAverageValue(bucket, 'p_res_calc', row.p_res_calc)
+  })
   return [...buckets.values()]
     .map((bucket) => ({
       ...bucket,
       watercut: bucket.q_liq > 0 ? bucket.q_water / bucket.q_liq : null,
+      watercut_calc: bucket.watercut_calcCount ? bucket.watercut_calcSum / bucket.watercut_calcCount : null,
       bhp: bucket.bhpCount ? bucket.bhpSum / bucket.bhpCount : null,
+      bhp_calc: bucket.bhp_calcCount ? bucket.bhp_calcSum / bucket.bhp_calcCount : null,
       thp: bucket.thpCount ? bucket.thpSum / bucket.thpCount : null,
       whp: bucket.whpCount ? bucket.whpSum / bucket.whpCount : null,
       p_res: bucket.p_resCount ? bucket.p_resSum / bucket.p_resCount : null,
+      p_res_calc: bucket.p_res_calcCount ? bucket.p_res_calcSum / bucket.p_res_calcCount : null,
       wefac: bucket.wefacCount ? bucket.wefacSum / bucket.wefacCount : null,
     }))
     .sort((left, right) => left.date.localeCompare(right.date))
@@ -3504,6 +4716,7 @@ const applyScenarioContext = async (context) => {
     perforations: context.perforations_dataset,
     production_history: context.production_history_dataset,
     injection_history: context.injection_history_dataset,
+    pvt_properties: context.pvt_properties_dataset,
   }
   for (const [type, reference] of Object.entries(mapping)) {
     if (reference) {
@@ -3517,6 +4730,86 @@ const applyScenarioContext = async (context) => {
     scenarioSourceMode.value = 'existing_krs'
   } else if (scenarioSourceMode.value !== 'planner') {
     scenarioSourceMode.value = 'new_krs'
+  }
+}
+
+const field2DSummaryVectors = () => String(opmSimulationForm.summary_vectors || '')
+  .split(',')
+  .map((item) => item.trim().toUpperCase())
+  .filter(Boolean)
+
+const numberOrFallback = (value, fallback) => {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : fallback
+}
+
+const buildField2DConfig = () => ({
+  dx_m: 150,
+  dy_m: 150,
+  dz_m: 5,
+  porosity: 0.10,
+  permeability_md: 500,
+  formation_volume_factor: 1.15,
+  initial_oil_saturation: 0.65,
+  initial_pressure_bar: numberOrFallback(opmSimulationForm.initial_pressure_bar, 220),
+  initial_water_saturation: numberOrFallback(opmSimulationForm.initial_water_saturation, 0.30),
+  initial_gas_saturation: numberOrFallback(opmSimulationForm.initial_gas_saturation, 0.04),
+  datum_depth_m: numberOrFallback(opmSimulationForm.datum_depth_m, 2000),
+  top_depth_m: numberOrFallback(opmSimulationForm.top_depth_m, 2000),
+  nearest_producers_per_injector: numberOrFallback(opmSimulationForm.max_models, 4),
+  influence_radius_m: numberOrFallback(opmSimulationForm.influence_radius_m, 3000),
+  well_region_radius_m: numberOrFallback(opmSimulationForm.well_region_radius_m, 150),
+  region_corridor_width_m: numberOrFallback(opmSimulationForm.region_corridor_width_m, 225),
+  grid_padding_m: numberOrFallback(opmSimulationForm.grid_padding_m, 450),
+  max_grid_cells: 60000,
+  history_match_iterations: numberOrFallback(opmSimulationForm.history_match_iterations, 8),
+  pressure_weight: numberOrFallback(opmSimulationForm.pressure_weight, 0.45),
+  watercut_weight: numberOrFallback(opmSimulationForm.watercut_weight, 0.35),
+  rate_weight: numberOrFallback(opmSimulationForm.rate_weight, 0.20),
+  pressure_tolerance_bar: numberOrFallback(opmSimulationForm.pressure_tolerance_bar, 5),
+  watercut_tolerance_fraction: numberOrFallback(opmSimulationForm.watercut_tolerance_fraction, 0.03),
+  run_external_flow: Boolean(opmSimulationForm.run_external_flow),
+  allow_generated_pvt: Boolean(opmSimulationForm.allow_generated_pvt),
+  summary_vectors: field2DSummaryVectors(),
+})
+
+const applyField2DConfig = (config) => {
+  if (!config || typeof config !== 'object') return
+  const numericKeys = [
+    'initial_pressure_bar',
+    'initial_water_saturation',
+    'initial_gas_saturation',
+    'datum_depth_m',
+    'top_depth_m',
+    'influence_radius_m',
+    'well_region_radius_m',
+    'region_corridor_width_m',
+    'grid_padding_m',
+    'history_match_iterations',
+    'pressure_weight',
+    'watercut_weight',
+    'rate_weight',
+    'pressure_tolerance_bar',
+    'watercut_tolerance_fraction',
+  ]
+  numericKeys.forEach((key) => {
+    if (config[key] !== undefined && config[key] !== null) {
+      opmSimulationForm[key] = Number(config[key])
+    }
+  })
+  if (config.nearest_producers_per_injector !== undefined && config.nearest_producers_per_injector !== null) {
+    opmSimulationForm.max_models = Number(config.nearest_producers_per_injector)
+  }
+  if (config.run_external_flow !== undefined) {
+    opmSimulationForm.run_external_flow = Boolean(config.run_external_flow)
+  }
+  if (config.allow_generated_pvt !== undefined) {
+    opmSimulationForm.allow_generated_pvt = Boolean(config.allow_generated_pvt)
+  }
+  if (Array.isArray(config.summary_vectors)) {
+    opmSimulationForm.summary_vectors = config.summary_vectors.join(', ')
+  } else if (typeof config.summary_vectors === 'string') {
+    opmSimulationForm.summary_vectors = config.summary_vectors
   }
 }
 
@@ -3539,16 +4832,19 @@ const buildScenarioRequestPayload = () => ({
     perforations: datasetSelectionPayload(selectedDatasets.perforations),
     production_history: datasetSelectionPayload(selectedDatasets.production_history),
     injection_history: datasetSelectionPayload(selectedDatasets.injection_history),
+    pvt_properties: datasetSelectionPayload(selectedDatasets.pvt_properties),
     manual_input_set_id: selectedManualInputSetId.value || null,
   },
   metadata: {
-    forecast_method: 'opm_flow_1d_drainage',
+    forecast_method: 'opm_flow_blackoil',
+    runtime_profile: 'opm_flow_2d_field',
     scenario_source_mode: scenarioSourceMode.value,
     run_mode: optimizerForm.run_mode,
     objective: optimizerForm.objective,
     infra_policy: optimizerForm.infra_policy,
     heuristic_mode: optimizerForm.heuristic_mode,
     notes: optimizerForm.notes,
+    field_2d_config: buildField2DConfig(),
   },
 })
 
@@ -3718,7 +5014,7 @@ const uploadSourceFile = async (event) => {
     await loadUploadedFiles()
     prefillSuggestedMappings({ overwrite: true })
     showMappingModal.value = true
-    showMessage('Excel загружен в Module A.', 'success')
+    showMessage('Файл загружен в Module A.', 'success')
   } catch (error) {
     showMessage(error.message, 'error')
   } finally {
@@ -3957,6 +5253,12 @@ const selectCanvasNode = async (nodeKey) => {
     currentInputsTab.value = 'upload'
     selectedUploadSourceKind.value = 'niz'
     if (selectedDatasets.niz) await openDatasetDetail(selectedDatasets.niz)
+    return
+  }
+  if (nodeKey === 'pvt_properties') {
+    currentInputsTab.value = 'upload'
+    selectedUploadSourceKind.value = 'pvt_properties'
+    if (selectedDatasets.pvt_properties) await openDatasetDetail(selectedDatasets.pvt_properties)
     return
   }
   if (nodeKey === 'gtm') {
@@ -4239,9 +5541,10 @@ const calculateForecast = async () => {
 const loadWaterfloodAnalysis = async ({ silent = false } = {}) => {
   waterfloodLoading.value = true
   try {
-    const query = selectedScenarioId.value ? `?scenario_id=${encodeURIComponent(selectedScenarioId.value)}` : ''
-    const response = await request(`/forecast/waterflood/mock-analysis${query}`)
-    waterfloodAnalysis.value = await response.json()
+    if (!selectedScenarioId.value) return
+    const response = await request(`/forecast/opm-flow/scenarios/${selectedScenarioId.value}/field-2d/latest-analysis`)
+    const result = await response.json()
+    waterfloodAnalysis.value = result.analysis || null
     if (!selectedWaterfloodCellId.value && waterfloodAnalysis.value?.cells?.length) {
       selectedWaterfloodCellId.value = waterfloodAnalysis.value.cells[0].cell_id
     }
@@ -4265,22 +5568,24 @@ const prepareDrainageModelsFromScenario = async () => {
   drainagePreparationLoading.value = true
   try {
     const payload = {
-      influence_radius_m: Number(opmSimulationForm.influence_radius_m || 3000),
-      grid_block_length_m: 50,
-      grid_block_width_m: 50,
-      grid_thickness_m: 5,
-      metadata: { ui_section: 'production.analysis', source: 'scenario_context' },
+      ...buildField2DConfig(),
+      run_external_flow: false,
+      metadata: { ui_section: 'production.analysis', source: 'scenario_context', model: 'field_2d' },
     }
-    const response = await request(`/forecast/opm-flow/scenarios/${selectedScenarioId.value}/drainage-1d/prepare-from-context`, {
+    const response = await request(`/forecast/opm-flow/scenarios/${selectedScenarioId.value}/field-2d/run-from-context`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    drainagePreparation.value = await response.json()
-    selectedDrainageConnectionId.value = drainagePreparation.value?.connections?.[0]?.connection_id || ''
+    const result = await response.json()
+    drainageSimulationRun.value = result.simulation_run || null
+    drainagePreparation.value = result.preparation || null
+    drainageSimulationAnalysis.value = result.analysis || null
+    field2DSelectedStepIndex.value = 0
+    selectedDrainageConnectionId.value = drainagePreparation.value?.regions?.[0]?.connection_id || ''
     selectedDrainageMatrixKey.value = 'drainage:total'
     expandedDrainageKeys.value = ['drainage:total']
-    showMessage('1D модели подготовлены из контекста сценария.', 'success')
+    showMessage('2D OPM deck prepared and saved to simulation_runs.', 'success')
   } catch (error) {
     showMessage(error.message, 'error')
   } finally {
@@ -4288,31 +5593,75 @@ const prepareDrainageModelsFromScenario = async () => {
   }
 }
 
+const runDrainageModelsFromScenario = async () => {
+  if (!selectedScenarioId.value) {
+    showMessage('Сначала выберите сценарий.', 'error')
+    return
+  }
+  drainageRunLoading.value = true
+  try {
+    const payload = {
+      ...buildField2DConfig(),
+      metadata: { ui_section: 'production.analysis', source: 'scenario_context', model: 'field_2d' },
+    }
+    const response = await request(`/forecast/opm-flow/scenarios/${selectedScenarioId.value}/field-2d/run-from-context`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const result = await response.json()
+    drainageSimulationRun.value = result.simulation_run || null
+    drainagePreparation.value = result.preparation || drainagePreparation.value
+    drainageSimulationAnalysis.value = result.analysis || null
+    field2DSelectedStepIndex.value = 0
+    selectedDrainageConnectionId.value = drainageSimulationAnalysis.value?.region_metrics?.[0]?.connection_id || selectedDrainageConnectionId.value
+    if (!expandedDrainageKeys.value.includes('drainage:total')) expandedDrainageKeys.value = ['drainage:total', ...expandedDrainageKeys.value]
+    if (drainageSimulationRun.value?.status === 'failed') {
+      showMessage(drainageSimulationRun.value?.metadata?.runner_error || 'OPM Flow 2D run failed.', 'error')
+      return
+    }
+    showMessage('OPM Flow 2D run completed, metrics loaded.', 'success')
+  } catch (error) {
+    showMessage(error.message, 'error')
+  } finally {
+    drainageRunLoading.value = false
+  }
+}
+
+const loadLatestDrainageAnalysis = async (silent = false) => {
+  if (!selectedScenarioId.value) return
+  drainageRunAnalysisLoading.value = true
+  try {
+    const response = await request(`/forecast/opm-flow/scenarios/${selectedScenarioId.value}/field-2d/latest-analysis`)
+    const result = await response.json()
+    drainageSimulationRun.value = result.simulation_run || null
+    drainageSimulationAnalysis.value = result.analysis || null
+    drainagePreparation.value = drainageSimulationAnalysis.value?.preparation || drainagePreparation.value
+    field2DSelectedStepIndex.value = 0
+    if (!silent) showMessage('Latest OPM Flow 2D result loaded.', 'success')
+  } catch (error) {
+    if (!silent) showMessage(error.message, 'error')
+  } finally {
+    drainageRunAnalysisLoading.value = false
+  }
+}
+
 const runTemplateOpmSyntheticSimulation = async () => {
   opmSimulationLoading.value = true
   try {
     const payload = {
+      ...buildField2DConfig(),
       scenario_id: selectedScenarioId.value || 'template-synthetic',
       scenario_name: selectedScenarioSummary.value?.name || optimizerForm.scenario_name || 'Template synthetic OPM',
       case_name: opmSimulationForm.case_name || 'data_templates_opm_synthetic',
       forecast_start_date: opmSimulationForm.forecast_start_date,
       forecast_end_date: opmSimulationForm.forecast_end_date,
-      history_match_iterations: Number(opmSimulationForm.history_match_iterations || 12),
-      influence_radius_m: Number(opmSimulationForm.influence_radius_m || 3000),
-      pressure_weight: Number(opmSimulationForm.pressure_weight || 0),
-      watercut_weight: Number(opmSimulationForm.watercut_weight || 0),
-      rate_weight: Number(opmSimulationForm.rate_weight || 0),
-      summary_vectors: String(opmSimulationForm.summary_vectors || '')
-        .split(',')
-        .map((item) => item.trim().toUpperCase())
-        .filter(Boolean),
-      run_external_flow: true,
       metadata: {
         ui_section: 'production.analysis',
         template_source: 'docs/forecast-module/data_templates',
       },
     }
-    const response = await request('/forecast/opm-flow/templates/synthetic-history', {
+    const response = await request(`/forecast/opm-flow/scenarios/${selectedScenarioId.value || 'template-synthetic'}/field-2d/run-from-context`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -4350,6 +5699,7 @@ const loadScenarioDetail = async (scenarioId) => {
     optimizerForm.forecast_start_date = scenarioDetail.value.scenario?.forecast_start_date || optimizerForm.forecast_start_date
     optimizerForm.forecast_end_date = scenarioDetail.value.scenario?.forecast_end_date || optimizerForm.forecast_end_date
     scenarioSourceMode.value = scenarioDetail.value.scenario?.metadata?.scenario_source_mode || (scenarioDetail.value.context?.external_krs_schedule_dataset ? 'existing_krs' : 'new_krs')
+    applyField2DConfig(scenarioDetail.value.scenario?.metadata?.field_2d_config)
     const pureBaseScenarioId = scenarioDetail.value.source_payload?.pure_base_scenario_id || scenarioDetail.value.scenario?.metadata?.pure_base_scenario_id || ''
     if (scenarioDetail.value.scenario?.metadata?.scenario_role !== 'pure_base' && pureBaseScenarioId) {
       const pureBaseResponse = await request(`/scenarios/${pureBaseScenarioId}`)
@@ -4369,6 +5719,7 @@ const loadScenarioDetail = async (scenarioId) => {
     selectedPlannerRevisionId.value = scenarioDetail.value.scenario?.metadata?.planner_revision_id || selectedPlannerRevisionId.value
     if (currentSection.value === 'production') {
       await loadWaterfloodAnalysis({ silent: true })
+      await loadLatestDrainageAnalysis(true)
     }
   } catch (error) {
     showMessage(error.message, 'error')
@@ -4678,9 +6029,13 @@ const exportPlannerVersion = async () => {
 
 watch(selectedScenarioId, async (scenarioId) => {
   drainagePreparation.value = null
+  drainageSimulationRun.value = null
+  drainageSimulationAnalysis.value = null
+  opmSimulationRun.value = null
   selectedDrainageConnectionId.value = ''
   selectedDrainageMatrixKey.value = 'drainage:total'
   expandedDrainageKeys.value = []
+  field2DSelectedStepIndex.value = 0
   historyDateFrom.value = ''
   historyDateTo.value = ''
   if (typeof window !== 'undefined') {
@@ -4698,6 +6053,7 @@ watch(selectedScenarioId, async (scenarioId) => {
   await loadScenarioDetail(scenarioId)
   if (currentSection.value === 'production' && productionSubsection.value === 'analysis') {
     await ensureScenarioHistoryLoaded()
+    await loadLatestDrainageAnalysis(true)
   }
   if (currentSection.value === 'planner') {
     await syncPlannerWithActiveScenario({ silent: true })
@@ -4710,6 +6066,7 @@ watch(currentSection, async (section) => {
   }
   if (section === 'production' && productionSubsection.value === 'analysis') {
     await ensureScenarioHistoryLoaded()
+    await loadLatestDrainageAnalysis(true)
   }
 })
 
@@ -4720,6 +6077,7 @@ watch(productionTimeMode, () => {
 watch(productionSubsection, async (section) => {
   if (currentSection.value === 'production' && section === 'analysis') {
     await ensureScenarioHistoryLoaded()
+    await loadLatestDrainageAnalysis(true)
     if (drainageMatrixRows.value.length) {
       expandedDrainageKeys.value = ['drainage:total']
     }
@@ -4939,6 +6297,14 @@ onMounted(async () => {
                 <input v-model="optimizerForm.forecast_end_date" type="date" />
               </div>
             </label>
+            <label class="compact-field">
+              <span>2D радиус, м</span>
+              <input v-model.number="opmSimulationForm.influence_radius_m" type="number" min="100" step="100" class="compact-dropdown" />
+            </label>
+            <label class="compact-field">
+              <span>P init, бар</span>
+              <input v-model.number="opmSimulationForm.initial_pressure_bar" type="number" min="1" step="1" class="compact-dropdown" />
+            </label>
             <div class="compact-actions">
               <button class="button primary" :disabled="loading" @click="saveScenarioContextAction">Сохранить контекст</button>
               <button class="button primary" :disabled="loading || !canCalculateScenario" :title="scenarioBlockingIssue || ''" @click="calculateForecast">Рассчитать</button>
@@ -4995,7 +6361,7 @@ onMounted(async () => {
               <div class="flow-down-arrow" aria-hidden="true">↓</div>
 
               <div class="flow-main-row">
-                <div class="canvas-node inputs-group" :class="{ ready: scenarioReadiness.hasInputs, active: ['wells', 'well_groups', 'niz', 'gtm', 'reservoir', 'economics', 'krs', 'infrastructure'].includes(activeCanvasNode) }">
+                <div class="canvas-node inputs-group" :class="{ ready: scenarioReadiness.hasInputs, active: ['wells', 'well_groups', 'niz', 'pvt_properties', 'gtm', 'reservoir', 'economics', 'krs', 'infrastructure'].includes(activeCanvasNode) }">
                   <span class="canvas-node-kicker">Module A + Manual Inputs</span>
                   <strong>Исходные данные</strong>
                   <small>Загрузка datasets и настройка ручных вводных.</small>
@@ -5011,6 +6377,11 @@ onMounted(async () => {
                     <button type="button" class="input-mini-node seq-niz" :class="[inputNodeStatuses.niz, { active: activeCanvasNode === 'niz' }]" @click="selectCanvasNode('niz')">
                       <span class="input-mini-label">NIZ</span>
                       <span v-if="inputNodeStatuses.niz !== 'empty'" class="input-mini-status" :title="inputNodePartialReason('niz')">{{ inputNodeStatuses.niz === 'ready' ? '✓' : '−' }}</span>
+                    </button>
+                    <span class="input-seq-arrow">→</span>
+                    <button type="button" class="input-mini-node seq-pvt" :class="[inputNodeStatuses.pvt_properties, { active: activeCanvasNode === 'pvt_properties' }]" @click="selectCanvasNode('pvt_properties')">
+                      <span class="input-mini-label">PVT</span>
+                      <span v-if="inputNodeStatuses.pvt_properties !== 'empty'" class="input-mini-status" :title="inputNodePartialReason('pvt_properties')">{{ inputNodeStatuses.pvt_properties === 'ready' ? '✓' : '−' }}</span>
                     </button>
                     <button type="button" class="input-mini-node seq-gtm" :class="[inputNodeStatuses.gtm, { active: activeCanvasNode === 'gtm' }]" @click="selectCanvasNode('gtm')">
                       <span class="input-mini-label">ГТМ</span>
@@ -5094,6 +6465,7 @@ onMounted(async () => {
                 <template v-else-if="activeCanvasNode === 'wells'">Версия wells dataset и сводная иерархия `LU -> куст -> скважина`.</template>
                 <template v-else-if="activeCanvasNode === 'well_groups'">TXT GRUP: связь скважин с группами. Последний group перед скважиной используется как well_pad, уровни выше — как SLOY/LU/infrastructure.</template>
                 <template v-else-if="activeCanvasNode === 'niz'">Версия NIZ dataset и сводная иерархия `LU -> куст -> скважина` по связанным скважинам.</template>
+                <template v-else-if="activeCanvasNode === 'pvt_properties'">Raw OPM Flow include с PVT / SCAL / ROCK свойствами для единой 2D модели.</template>
                 <template v-else-if="activeCanvasNode === 'gtm'">Версия GTM dataset и сводная иерархия `LU -> куст -> скважина` с приростами.</template>
                 <template v-else-if="activeCanvasNode === 'reservoir'">LU / SLOY, характеристика вытеснения и годовые темпы падения жидкости.</template>
                 <template v-else-if="activeCanvasNode === 'economics'">Net back по LU и стоимости мероприятий по типам ГТМ.</template>
@@ -5168,14 +6540,14 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div v-else-if="activeCanvasNode === 'wells' || activeCanvasNode === 'well_groups' || activeCanvasNode === 'niz' || activeCanvasNode === 'gtm' || activeCanvasNode === 'infrastructure' || (activeCanvasNode === 'scenario' && scenarioFlowMode === 'external')" class="page-stack">
+        <div v-else-if="activeCanvasNode === 'wells' || activeCanvasNode === 'well_groups' || activeCanvasNode === 'niz' || activeCanvasNode === 'pvt_properties' || activeCanvasNode === 'gtm' || activeCanvasNode === 'infrastructure' || (activeCanvasNode === 'scenario' && scenarioFlowMode === 'external')" class="page-stack">
           <div class="page-stack">
             <div class="panel soft">
               <h2>{{ SOURCE_KIND_META[selectedUploadSourceKind].title }}</h2>
               <p class="subtitle">{{ SOURCE_KIND_META[selectedUploadSourceKind].description }}</p>
               <div class="dataset-kind-strip">
                 <button
-                  v-for="kind in ['wells', 'well_groups', 'well_trajectories', 'perforations', 'production_history', 'injection_history', 'niz', 'gtm', 'infrastructure', 'external_krs_schedule']"
+                  v-for="kind in ['wells', 'well_groups', 'well_trajectories', 'perforations', 'production_history', 'injection_history', 'niz', 'pvt_properties', 'gtm', 'infrastructure', 'external_krs_schedule']"
                   :key="kind"
                   type="button"
                   class="dataset-kind-pill"
@@ -5185,7 +6557,7 @@ onMounted(async () => {
                   {{ SOURCE_KIND_META[kind]?.title || kind }}
                 </button>
               </div>
-              <input ref="uploadInputRef" type="file" accept=".xlsx,.xls,.xlsm,.txt" class="hidden-file-input" @change="uploadSourceFile" />
+              <input ref="uploadInputRef" type="file" :accept="uploadAccept" class="hidden-file-input" @change="uploadSourceFile" />
               <div class="upload-compact-row">
                 <label class="compact-field">
                   <span>Файл</span>
@@ -5390,7 +6762,7 @@ onMounted(async () => {
             </div>
 
             <div v-if="inputFile?.preview?.length" class="panel preview-panel">
-              <h2>Preview исходного Excel</h2>
+              <h2>Preview исходного файла</h2>
               <div class="preview-clip">
                 <div class="table-wrap preview-wrap">
                 <div class="preview-scroll-shell">
@@ -5937,21 +7309,27 @@ onMounted(async () => {
             <div class="panel opm-analysis-control-panel">
               <div class="toolbar between align-start">
                 <div>
-                  <h2>OPM Flow 1D: анализ и настройка</h2>
-                  <p class="subtitle">Экран работает от активного сценария: траектории + перфорации формируют контакты, связи injector-producer формируют 1D модели и матрицу дренирования.</p>
+                  <h2>OPM Flow 2D: анализ и настройка</h2>
+                  <p class="subtitle">Экран работает от активного сценария: GRUP, траектории, перфорации, история, NIZ и PVT формируют единую 2D модель месторождения и регионы injector-producer.</p>
                 </div>
                 <div class="toolbar-actions">
                   <span class="status-pill" :class="drainagePreparation ? 'ready' : 'pending'">
                     {{ drainagePreparation ? 'контекст подготовлен' : 'нет подготовки' }}
                   </span>
                   <button class="button" :disabled="drainagePreparationLoading || !selectedScenarioId" @click="prepareDrainageModelsFromScenario">
-                    {{ drainagePreparationLoading ? 'Подготовка...' : 'Подготовить 1D из сценария' }}
+                    {{ drainagePreparationLoading ? 'Подготовка...' : 'Подготовить 2D из сценария' }}
+                  </button>
+                  <button class="button primary" :disabled="drainageRunLoading || !selectedScenarioId" @click="runDrainageModelsFromScenario">
+                    {{ drainageRunLoading ? 'Расчет 2D...' : 'Запустить 2D OPM' }}
+                  </button>
+                  <button class="button ghost" :disabled="drainageRunAnalysisLoading || !selectedScenarioId" @click="loadLatestDrainageAnalysis(false)">
+                    {{ drainageRunAnalysisLoading ? 'Загрузка...' : 'Загрузить результат' }}
                   </button>
                 </div>
               </div>
               <div class="opm-analysis-toolbar">
                 <div class="opm-property-switch">
-                  <span>Свойство карты</span>
+                  <span>Grid value focus</span>
                   <button
                     v-for="property in OPM_ANALYSIS_PROPERTIES"
                     :key="property.key"
@@ -5968,9 +7346,21 @@ onMounted(async () => {
                   <span>Радиус связности, м</span>
                   <input v-model.number="opmSimulationForm.influence_radius_m" type="number" min="100" step="100" />
                 </label>
+                <label class="opm-radius-control">
+                  <span>Моделей за запуск</span>
+                  <input v-model.number="opmSimulationForm.max_models" type="number" min="1" max="500" step="1" />
+                </label>
+                <label class="opm-check-control">
+                  <input v-model="opmSimulationForm.run_selected_only" type="checkbox" />
+                  <span>Только выбранная связь</span>
+                </label>
+                <label class="opm-check-control">
+                  <input v-model="opmSimulationForm.run_external_flow" type="checkbox" />
+                  <span>Запускать внешний flow</span>
+                </label>
               </div>
               <div class="opm-status-grid">
-                <div v-for="card in drainageStatusCards" :key="card.label" class="opm-status-card">
+                <div v-for="card in field2DStatusCards" :key="card.label" class="opm-status-card">
                   <span>{{ card.label }}</span>
                   <strong>{{ formatCompactNumber(card.value) }}</strong>
                 </div>
@@ -5985,23 +7375,430 @@ onMounted(async () => {
             </div>
 
             <div v-else-if="!drainagePreparation" class="panel empty-state">
-              Подготовка 1D моделей еще не выполнена. Нажмите `Подготовить 1D из сценария`, чтобы построить контакты, связи и стартовую матрицу дренирования.
+              Подготовка 2D модели еще не выполнена. Нажмите `Подготовить 2D из сценария`, чтобы построить сетку, регионы и стартовую матрицу дренирования.
             </div>
 
             <template v-else>
-              <div class="panel opm-map-panel">
+              <div class="panel opm-results-panel">
                 <div class="toolbar between align-start">
                   <div>
-                    <h2>Карта скважин и 1D grid</h2>
-                    <p class="subtitle">Показаны скважины из сценария, связи injector-producer и ячейки выбранной 1D модели. Цвет ячеек соответствует свойству: {{ opmAnalysisPropertyOption.label }}.</p>
+                    <h2>OPM Flow 2D run files and grid</h2>
+                    <p class="subtitle">Deck inputs, simulator output files, normalized Field2D payloads and grid-cell arrays from the selected scenario run. Keyword grouping follows the Eclipse/OPM manual sections.</p>
                   </div>
-                  <div class="opm-map-legend">
-                    <span><i class="legend-dot injector"></i>Нагнетательная</span>
-                    <span><i class="legend-dot producer"></i>Добывающая</span>
-                    <span><i class="legend-line"></i>Связь / alpha</span>
+                  <div class="opm-run-tags">
+                    <span :class="['status-pill', field2DActiveRun?.status === 'completed' ? 'ready' : 'pending']">{{ field2DActiveRun?.status || 'no run' }}</span>
+                    <span v-if="field2DActiveRun?.run_id">run {{ field2DActiveRun.run_id.slice(0, 8) }}</span>
+                    <span v-if="field2DActiveRun?.metadata?.flow_return_code !== undefined">flow rc {{ field2DActiveRun.metadata.flow_return_code }}</span>
                   </div>
                 </div>
-                <div class="opm-map-layout">
+
+                <div class="opm-results-browser">
+                  <div class="opm-run-summary-grid">
+                    <div class="opm-result-kv">
+                      <span>Case</span>
+                      <strong>{{ field2DActiveRun?.opm_case_manifest?.case_name || field2DActiveRun?.case_name || '—' }}</strong>
+                    </div>
+                    <div class="opm-result-kv">
+                      <span>Run folder</span>
+                      <strong>{{ field2DActiveRun?.case_root || '—' }}</strong>
+                    </div>
+                    <div class="opm-result-kv">
+                      <span>Created</span>
+                      <strong>{{ formatDateCell(field2DActiveRun?.created_at || field2DActiveRun?.started_at) }}</strong>
+                    </div>
+                    <div class="opm-result-kv">
+                      <span>Import mode</span>
+                      <strong>{{ drainageSimulationAnalysis?.opm_import_mode || field2DActiveRun?.import_result?.status || '—' }}</strong>
+                    </div>
+                  </div>
+                  <div v-if="field2DRunWarnings.length" class="notice warning">
+                    {{ field2DRunWarnings.join(' ') }}
+                  </div>
+                  <div v-if="field2DRunSyncStatus !== 'synced' && drainageSimulationAnalysis" class="notice warning">
+                    Field2D analysis is not synchronized with the selected scenario/run: {{ field2DRunSyncStatus }}.
+                  </div>
+
+                  <div class="opm-results-section field2d-map-section">
+                    <div class="field2d-step-bar">
+                      <div>
+                        <span>Report step</span>
+                        <strong>{{ field2DStepLabel }}</strong>
+                      </div>
+                      <input
+                        v-model.number="field2DSelectedStepIndex"
+                        type="range"
+                        min="0"
+                        :max="field2DStepMax"
+                        step="1"
+                        :disabled="field2DTimeSteps.length <= 1"
+                      />
+                      <b>{{ field2DSelectedStepIndex + 1 }} / {{ field2DTimeSteps.length }}</b>
+                    </div>
+                    <div class="toolbar between align-start compact">
+                      <div>
+                        <h3>Field2D top-view map</h3>
+                        <p class="subtitle">Grid cube cells rendered from normalized Field2D arrays with scenario well trajectories and perforations overlaid.</p>
+                      </div>
+                      <div class="field2d-map-controls">
+                        <label class="field2d-select-control">
+                          <span>Cube</span>
+                          <select v-model="field2DSelectedCube" class="compact-dropdown">
+                            <option v-for="cube in FIELD_2D_CUBE_OPTIONS" :key="cube.key" :value="cube.key">
+                              {{ cube.label }}
+                            </option>
+                          </select>
+                        </label>
+                        <label class="field2d-toggle-control">
+                          <input v-model="field2DShowTrajectories" type="checkbox" />
+                          <span>Trajectories</span>
+                        </label>
+                        <label class="field2d-toggle-control">
+                          <input v-model="field2DShowPerforations" type="checkbox" />
+                          <span>Perforations</span>
+                        </label>
+                        <label class="field2d-toggle-control">
+                          <input v-model="field2DShowInactiveCells" type="checkbox" />
+                          <span>Inactive cells</span>
+                        </label>
+                        <div class="field2d-zoom-control">
+                          <button type="button" class="icon-button" title="Zoom out" @click="field2DZoomOut">-</button>
+                          <input
+                            v-model.number="field2DZoom"
+                            type="range"
+                            min="1"
+                            max="8"
+                            step="0.25"
+                            aria-label="Map zoom"
+                          />
+                          <button type="button" class="icon-button" title="Zoom in" @click="field2DZoomIn">+</button>
+                          <button type="button" class="button ghost compact-button" @click="field2DResetZoom">Reset</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="field2d-map-layout">
+                      <div class="field2d-map-canvas-wrap">
+                        <svg
+                          class="field2d-map-svg"
+                          :viewBox="`0 0 ${FIELD_2D_MAP_WIDTH} ${FIELD_2D_MAP_HEIGHT}`"
+                          role="img"
+                          aria-label="Field2D top view grid cube map"
+                          @wheel.prevent="handleField2DMapWheel"
+                        >
+                          <defs>
+                            <pattern id="field2d-map-grid" width="44" height="44" patternUnits="userSpaceOnUse">
+                              <path d="M 44 0 L 0 0 0 44" fill="none" stroke="#e2e8f0" stroke-width="1" />
+                            </pattern>
+                          </defs>
+                          <rect x="0" y="0" :width="FIELD_2D_MAP_WIDTH" :height="FIELD_2D_MAP_HEIGHT" fill="#f8fafc" />
+                          <rect x="0" y="0" :width="FIELD_2D_MAP_WIDTH" :height="FIELD_2D_MAP_HEIGHT" fill="url(#field2d-map-grid)" opacity="0.5" />
+                          <g class="field2d-map-viewport" :transform="field2DMapTransform">
+                            <g class="field2d-cell-layer">
+                              <rect
+                                v-for="cell in field2DMapCells"
+                                :key="cell.key"
+                                :x="cell.rectX"
+                                :y="cell.rectY"
+                                :width="cell.rectWidth"
+                                :height="cell.rectHeight"
+                                :fill="cell.fill"
+                                :opacity="cell.opacity"
+                              >
+                                <title>{{ cell.title }}</title>
+                              </rect>
+                            </g>
+                            <g v-if="field2DShowTrajectories" class="field2d-trajectory-layer">
+                              <path
+                                v-for="trajectory in field2DMapTrajectories"
+                                :key="trajectory.wellName"
+                                :d="trajectory.path"
+                                class="field2d-trajectory-path"
+                              >
+                                <title>{{ trajectory.wellName }} trajectory: {{ trajectory.points.length }} points</title>
+                              </path>
+                            </g>
+                            <g v-if="field2DShowPerforations" class="field2d-perforation-layer">
+                              <g v-for="perf in field2DMapPerforations" :key="perf.key" class="field2d-perforation">
+                                <line
+                                  v-if="perf.hasSegment"
+                                  :x1="perf.topView.viewX"
+                                  :y1="perf.topView.viewY"
+                                  :x2="perf.bottomView.viewX"
+                                  :y2="perf.bottomView.viewY"
+                                />
+                                <circle v-else :cx="perf.viewX" :cy="perf.viewY" r="5.5" />
+                                <title>{{ perf.title }}</title>
+                              </g>
+                            </g>
+                            <g class="field2d-well-layer">
+                              <g
+                                v-for="well in field2DMapWells"
+                                :key="well.key"
+                                :class="['field2d-well', well.role]"
+                              >
+                                <circle :cx="well.viewX" :cy="well.viewY" :r="well.role === 'injector' ? 7.5 : 6.5">
+                                  <title>{{ well.wellName }}</title>
+                                </circle>
+                                <text v-if="well.labelVisible" :x="well.viewX + 10" :y="well.viewY - 8">{{ well.wellName }}</text>
+                              </g>
+                            </g>
+                          </g>
+                          <text v-if="!field2DMapCells.length" :x="FIELD_2D_MAP_WIDTH / 2" :y="FIELD_2D_MAP_HEIGHT / 2" class="field2d-empty-label">
+                            No 2D grid cells loaded
+                          </text>
+                        </svg>
+                      </div>
+                      <aside class="field2d-map-inspector">
+                        <span>Active cube</span>
+                        <strong>{{ field2DSelectedCubeOption.label }}</strong>
+                        <div class="field2d-map-summary">
+                          <div v-for="row in field2DMapSummaryRows" :key="row.label">
+                            <span>{{ row.label }}</span>
+                            <b>{{ row.value }}</b>
+                          </div>
+                        </div>
+                        <div class="field2d-cube-legend">
+                          <span>Legend</span>
+                          <div class="field2d-legend-row" v-for="row in field2DLegendRows" :key="row.label">
+                            <i :style="{ background: row.color }"></i>
+                            <b>{{ row.label }}</b>
+                          </div>
+                        </div>
+                        <div class="field2d-layer-legend">
+                          <span><i class="legend-line trajectory"></i>Trajectory</span>
+                          <span><i class="legend-line perforation"></i>Perforation</span>
+                          <span><i class="legend-dot injector"></i>Injector</span>
+                          <span><i class="legend-dot producer"></i>Producer</span>
+                        </div>
+                      </aside>
+                    </div>
+                  </div>
+
+                  <div class="opm-family-grid">
+                    <div v-for="row in field2DArtifactFamilyRows" :key="row.key" class="opm-family-row">
+                      <span>{{ row.side }}</span>
+                      <strong>{{ row.family }}</strong>
+                      <em>{{ row.count }} files / {{ row.sizeLabel }}</em>
+                      <small>{{ row.examplesLabel }}</small>
+                    </div>
+                  </div>
+
+                  <div class="opm-results-section">
+                    <div class="toolbar between align-start compact">
+                      <div>
+                        <h3>Input deck sections</h3>
+                        <p class="subtitle">RUNSPEC/GRID/PROPS/REGIONS/SOLUTION/SCHEDULE/SUMMARY include files used to build the model.</p>
+                      </div>
+                    </div>
+                    <div class="opm-result-table-wrap">
+                      <table class="opm-result-table">
+                        <thead>
+                          <tr>
+                            <th>Section</th>
+                            <th>Keywords</th>
+                            <th>File</th>
+                            <th>Size</th>
+                            <th>Manual role</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="row in field2DDeckSectionRows" :key="row.key">
+                            <td><strong>{{ row.label }}</strong></td>
+                            <td>{{ row.keywords }}</td>
+                            <td class="opm-artifact-path">{{ row.fileName }}</td>
+                            <td>{{ row.sizeLabel }}</td>
+                            <td>{{ row.manual }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div class="opm-results-section">
+                    <div class="toolbar between align-start compact">
+                      <div>
+                        <h3>Simulator output files</h3>
+                        <p class="subtitle">EGRID, restart X####/UNRST, summary S####/ESMRY/SMSPEC, PRT/DBG and runner logs.</p>
+                      </div>
+                      <span class="status-pill ready">{{ field2DOutputArtifacts.length }} files</span>
+                    </div>
+                    <div class="opm-result-table-wrap tall">
+                      <table class="opm-result-table">
+                        <thead>
+                          <tr>
+                            <th>Family</th>
+                            <th>Role</th>
+                            <th>File</th>
+                            <th>Directory</th>
+                            <th>Size</th>
+                            <th>Checksum</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="artifact in field2DOutputArtifacts" :key="artifact.key">
+                            <td>{{ artifact.family }}</td>
+                            <td>{{ artifact.role }}</td>
+                            <td class="opm-artifact-path">{{ artifact.name }}</td>
+                            <td>{{ artifact.directory }}</td>
+                            <td>{{ artifact.sizeLabel }}</td>
+                            <td>{{ artifact.checksumShort }}</td>
+                          </tr>
+                          <tr v-if="!field2DOutputArtifacts.length">
+                            <td colspan="6">No simulator output files are attached to the active run yet.</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div class="opm-results-section">
+                    <div class="toolbar between align-start compact">
+                      <div>
+                        <h3>Normalized Field2D payloads</h3>
+                        <p class="subtitle">JSON files used by the UI for grid cells, region metrics and time series.</p>
+                      </div>
+                      <span class="status-pill ready">{{ field2DNormalizedArtifacts.length }} files</span>
+                    </div>
+                    <div class="opm-result-table-wrap">
+                      <table class="opm-result-table">
+                        <thead>
+                          <tr>
+                            <th>File</th>
+                            <th>Role</th>
+                            <th>Size</th>
+                            <th>Checksum</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="artifact in field2DNormalizedArtifacts" :key="artifact.key">
+                            <td class="opm-artifact-path">{{ artifact.name }}</td>
+                            <td>{{ artifact.role }}</td>
+                            <td>{{ artifact.sizeLabel }}</td>
+                            <td>{{ artifact.checksumShort }}</td>
+                          </tr>
+                          <tr v-if="!field2DNormalizedArtifacts.length">
+                            <td colspan="4">No normalized Field2D files are attached to the active run yet.</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div class="opm-results-section">
+                    <div class="toolbar between align-start compact">
+                      <div>
+                        <h3>Input and normalized grid cells</h3>
+                        <p class="subtitle">Static input grid arrays and current normalized cell state. Output restart files are listed above when binary import is pending.</p>
+                      </div>
+                      <span class="status-pill">{{ field2DGridRowsInfo.shown }} / {{ field2DGridRowsInfo.total }} rows</span>
+                    </div>
+                    <div class="opm-grid-summary">
+                      <div v-for="row in field2DGridSummaryRows" :key="row.label" class="opm-result-kv compact">
+                        <span>{{ row.label }}</span>
+                        <strong>{{ row.value }}</strong>
+                      </div>
+                    </div>
+                    <div class="opm-result-table-wrap tall">
+                      <table class="opm-result-table grid-table">
+                        <thead>
+                          <tr>
+                            <th>Cell</th>
+                            <th>I,J,K</th>
+                            <th>X</th>
+                            <th>Y</th>
+                            <th>ACTNUM</th>
+                            <th>Region</th>
+                            <th>Well region</th>
+                            <th>PVT/SAT/ROCK/FIP</th>
+                            <th>PORO</th>
+                            <th>PERMX</th>
+                            <th>PV</th>
+                            <th>PRESSURE</th>
+                            <th>SWAT</th>
+                            <th>SGAS</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="cell in field2DVisibleGridRows" :key="cell.key">
+                            <td>{{ cell.cell_id }}</td>
+                            <td>{{ cell.ijk }}</td>
+                            <td>{{ formatCompactDecimal(cell.x, 1) }}</td>
+                            <td>{{ formatCompactDecimal(cell.y, 1) }}</td>
+                            <td>{{ cell.actnum }}</td>
+                            <td>{{ cell.region_id }}</td>
+                            <td>{{ cell.well_region_id }}</td>
+                            <td>{{ cell.pvtnum }}/{{ cell.satnum }}/{{ cell.rocknum }}/{{ cell.fipnum }}</td>
+                            <td>{{ formatCompactDecimal(cell.poro, 3) }}</td>
+                            <td>{{ formatCompactDecimal(cell.permx, 1) }}</td>
+                            <td>{{ formatCompactNumber(cell.pv) }}</td>
+                            <td>{{ formatCompactDecimal(cell.pressure, 1) }}</td>
+                            <td>{{ formatCompactDecimal(cell.swat, 3) }}</td>
+                            <td>{{ formatCompactDecimal(cell.sgas, 3) }}</td>
+                          </tr>
+                          <tr v-if="!field2DVisibleGridRows.length">
+                            <td colspan="14">Grid-cell payload is not loaded yet.</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div class="opm-results-section opm-two-column">
+                    <div>
+                      <h3>Wells</h3>
+                      <div class="opm-result-table-wrap medium">
+                        <table class="opm-result-table">
+                          <thead>
+                            <tr>
+                              <th>Well</th>
+                              <th>Type</th>
+                              <th>Pad</th>
+                              <th>X</th>
+                              <th>Y</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr v-for="well in field2DWellRows" :key="well.key">
+                              <td>{{ well.well_name }}</td>
+                              <td>{{ well.well_type }}</td>
+                              <td>{{ well.well_pad_id || '—' }}</td>
+                              <td>{{ formatCompactDecimal(well.x, 1) }}</td>
+                              <td>{{ formatCompactDecimal(well.y, 1) }}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                    <div>
+                      <h3>Regions and matching metrics</h3>
+                      <div class="opm-result-table-wrap medium">
+                        <table class="opm-result-table">
+                          <thead>
+                            <tr>
+                              <th>Region</th>
+                              <th>Injector</th>
+                              <th>Producer</th>
+                              <th>Alpha</th>
+                              <th>PV</th>
+                              <th>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr v-for="row in field2DRegionRows" :key="row.key">
+                              <td>{{ row.region_id }}</td>
+                              <td>{{ row.injector_name || '—' }}</td>
+                              <td>{{ row.producer_name || '—' }}</td>
+                              <td>{{ formatCompactDecimal(row.alpha, 4) }}</td>
+                              <td>{{ formatCompactNumber(row.pv) }}</td>
+                              <td>{{ row.run_status }}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="false" class="opm-map-layout">
                   <svg class="opm-map-svg" :viewBox="`0 0 ${OPM_ANALYSIS_MAP_WIDTH} ${OPM_ANALYSIS_MAP_HEIGHT}`">
                     <defs>
                       <pattern id="opm-map-grid" width="44" height="44" patternUnits="userSpaceOnUse">
@@ -6048,7 +7845,7 @@ onMounted(async () => {
                     </g>
                   </svg>
                   <aside class="opm-link-inspector">
-                    <span>Выбранная 1D модель</span>
+                    <span>Выбранный регион 2D модели</span>
                     <strong>{{ selectedDrainageModelSpec?.model_name || 'Нет выбранной модели' }}</strong>
                     <dl v-if="selectedDrainageConnection">
                       <dt>Связь</dt>
@@ -6061,11 +7858,13 @@ onMounted(async () => {
                       <dd>{{ formatCompactNumber(selectedDrainageConnection.distance_m) }} м / {{ selectedDrainageModelSpec?.nx || 0 }} × 1 × 1</dd>
                       <dt>Tau</dt>
                       <dd>{{ formatCompactNumber(selectedDrainageConnection.tau_days) }} сут</dd>
+                      <dt>2D run</dt>
+                      <dd>{{ selectedDrainageRunMetric?.run_status || 'not_run' }} / files {{ selectedDrainageRunMetric?.artifact_count || 0 }}</dd>
                     </dl>
                     <div class="opm-output-box">
                       <strong>OPM output files</strong>
                       <p v-if="opmOutputArtifacts.length">Найдено файлов: {{ opmOutputArtifacts.length }}</p>
-                      <p v-else>Выходные файлы OPM Flow для выбранного сценария еще не импортированы. Карта показывает подготовленную 1D геометрию и расчетные стартовые параметры.</p>
+                      <p v-else>Выходные файлы OPM Flow для выбранного сценария еще не импортированы. Карта показывает подготовленную 2D геометрию и расчетные стартовые параметры.</p>
                     </div>
                   </aside>
                 </div>
@@ -6123,14 +7922,16 @@ onMounted(async () => {
                     </label>
                   </div>
                 </div>
-                <div v-if="!scenarioProductionHistoryRows.length && !scenarioInjectionHistoryRows.length" class="empty-inline">
-                  В контексте сценария нет загруженной production/injection history.
-                </div>
-                <div v-else-if="!filteredHistoryBuckets.length" class="empty-inline">
-                  Нет исторических точек для выбранной категории и диапазона дат.
-                </div>
-                <div v-else class="history-chart-wrap">
-                  <svg class="history-chart" :viewBox="`0 0 ${HISTORY_CHART_WIDTH} ${HISTORY_CHART_HEIGHT}`">
+                <div class="history-drainage-layout">
+                  <div class="history-chart-column">
+                    <div v-if="!scenarioProductionHistoryRows.length && !scenarioInjectionHistoryRows.length" class="empty-inline">
+                      В контексте сценария нет загруженной production/injection history.
+                    </div>
+                    <div v-else-if="!filteredHistoryBuckets.length" class="empty-inline">
+                      Нет исторических точек для выбранной категории и диапазона дат.
+                    </div>
+                    <div v-else class="history-chart-wrap">
+                      <svg class="history-chart" :viewBox="`0 0 ${HISTORY_CHART_WIDTH} ${HISTORY_CHART_HEIGHT}`">
                     <line
                       v-for="tick in historyPrimaryGridTicks"
                       :key="`y:${tick.value}`"
@@ -6183,6 +7984,7 @@ onMounted(async () => {
                         fill="none"
                         :stroke="series.color"
                         stroke-width="2.8"
+                        :stroke-dasharray="series.dash ? '7 5' : ''"
                         stroke-linejoin="round"
                         stroke-linecap="round"
                       />
@@ -6199,7 +8001,94 @@ onMounted(async () => {
                         <title>{{ series.label }} / {{ formatDateCell(point.date) }}: {{ formatCompactDecimal(point.value, series.key === 'watercut' ? 2 : 1) }} {{ series.unit }}</title>
                       </circle>
                     </g>
-                  </svg>
+                      </svg>
+                    </div>
+                  </div>
+                  <aside class="crm-drainage-map-card">
+                    <div class="crm-drainage-map-head">
+                      <div>
+                        <span>CRM drainage cells</span>
+                        <strong>{{ historyCategoryLabel }}</strong>
+                      </div>
+                      <b>{{ crmDrainageMapCells.length }} cells</b>
+                    </div>
+                    <svg class="crm-drainage-map-svg" :viewBox="`0 0 ${FIELD_2D_MAP_WIDTH} ${FIELD_2D_MAP_HEIGHT}`" role="img" aria-label="CRM drainage cell map">
+                      <rect x="0" y="0" :width="FIELD_2D_MAP_WIDTH" :height="FIELD_2D_MAP_HEIGHT" fill="#f8fafc" />
+                      <g class="crm-drainage-cell-layer">
+                        <path
+                          v-for="cell in crmDrainageMapCells"
+                          :key="cell.key"
+                          v-show="cell.path"
+                          :d="cell.path"
+                          :fill="cell.fill"
+                        >
+                          <title>{{ cell.injectorName }} compensation {{ field2DFormatValue(cell.compensation, 3) }} / {{ cell.sourceLabel }}</title>
+                        </path>
+                      </g>
+                      <g class="crm-drainage-link-layer">
+                        <g v-for="cell in crmDrainageMapCells" :key="`${cell.key}:links`">
+                          <template v-if="cell.center">
+                            <line
+                              v-for="segment in cell.segments"
+                              :key="`${segment.key}:link`"
+                              :x1="cell.center.viewX"
+                              :y1="cell.center.viewY"
+                              :x2="segment.center.viewX"
+                              :y2="segment.center.viewY"
+                            />
+                          </template>
+                        </g>
+                      </g>
+                      <g class="crm-drainage-boundary-layer">
+                        <g v-for="cell in crmDrainageMapCells" :key="`${cell.key}:edges`">
+                          <line
+                            v-for="segment in cell.segments"
+                            :key="segment.key"
+                            :x1="segment.start.viewX"
+                            :y1="segment.start.viewY"
+                            :x2="segment.end.viewX"
+                            :y2="segment.end.viewY"
+                          >
+                            <title>{{ segment.producerName }} perforated boundary</title>
+                          </line>
+                        </g>
+                      </g>
+                      <g v-if="field2DShowTrajectories" class="crm-drainage-trajectory-layer">
+                        <path
+                          v-for="trajectory in field2DMapTrajectories"
+                          :key="trajectory.wellName"
+                          :d="trajectory.path"
+                        />
+                      </g>
+                      <g v-if="field2DShowPerforations" class="crm-drainage-perforation-layer">
+                        <g v-for="perf in field2DMapPerforations" :key="perf.key">
+                          <line
+                            v-if="perf.hasSegment"
+                            :x1="perf.topView.viewX"
+                            :y1="perf.topView.viewY"
+                            :x2="perf.bottomView.viewX"
+                            :y2="perf.bottomView.viewY"
+                          />
+                          <circle v-else :cx="perf.viewX" :cy="perf.viewY" r="4" />
+                        </g>
+                      </g>
+                      <g class="crm-drainage-well-layer">
+                        <g v-for="well in field2DMapWells" :key="well.key" :class="well.role">
+                          <circle :cx="well.viewX" :cy="well.viewY" :r="well.role === 'injector' ? 7 : 5" />
+                          <text :x="well.viewX + 8" :y="well.viewY - 7">{{ well.wellName }}</text>
+                        </g>
+                      </g>
+                      <text v-if="!crmDrainageMapCells.length" :x="FIELD_2D_MAP_WIDTH / 2" :y="FIELD_2D_MAP_HEIGHT / 2" class="field2d-empty-label">
+                        No CRM drainage cells
+                      </text>
+                    </svg>
+                    <div class="crm-drainage-map-summary">
+                      <span v-for="row in crmDrainageMapSummaryRows" :key="row.label">
+                        <b>{{ row.label }}</b>
+                        <em>{{ row.value }}</em>
+                      </span>
+                    </div>
+                  </aside>
                 </div>
                 <div class="history-summary-row">
                   <span>Production rows: {{ categoryProductionHistoryRows.length }}</span>
@@ -6270,8 +8159,14 @@ onMounted(async () => {
                         <th>Жидк. тек.</th>
                         <th>Обв.</th>
                         <th>α</th>
+                        <th>CRM source</th>
+                        <th>CRM fit</th>
+                        <th>CRM gain</th>
+                        <th>Tau</th>
                         <th>BHP факт</th>
                         <th>BHP расч.</th>
+                        <th>2D run</th>
+                        <th>Файлы</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -6300,8 +8195,14 @@ onMounted(async () => {
                         <td>{{ row.nodeType === 'injector' ? '—' : formatCompactNumber(row.currentLiquid) }}</td>
                         <td>{{ row.nodeType === 'injector' || row.watercut === null ? '—' : formatRatioPercent(row.watercut, 1) }}</td>
                         <td>{{ row.alpha === null ? '—' : formatCompactDecimal(row.alpha, 4) }}</td>
+                        <td class="crm-source-cell">{{ row.crmSource || '—' }}</td>
+                        <td>{{ row.crmFitStatus || '—' }}</td>
+                        <td>{{ row.crmRawGain === null ? '—' : formatCrmGain(row.crmRawGain) }}</td>
+                        <td>{{ row.tauDays === null ? '—' : formatCompactDecimal(row.tauDays, 1) }}</td>
                         <td>{{ row.nodeType === 'injector' || row.bhpFact === null ? '—' : formatCompactDecimal(row.bhpFact, 1) }}</td>
                         <td>{{ row.nodeType === 'injector' || row.bhpCalc === null ? '—' : formatCompactDecimal(row.bhpCalc, 1) }}</td>
+                        <td>{{ row.completedModelCount || 0 }}</td>
+                        <td>{{ row.artifactCount || 0 }}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -6325,7 +8226,7 @@ onMounted(async () => {
                     {{ waterfloodLoading ? 'Обновление...' : 'Обновить proxy' }}
                   </button>
                   <button class="button" :disabled="drainagePreparationLoading || !selectedScenarioId" @click="prepareDrainageModelsFromScenario">
-                    {{ drainagePreparationLoading ? 'Подготовка...' : 'Подготовить 1D из сценария' }}
+                    {{ drainagePreparationLoading ? 'Подготовка...' : 'Подготовить 2D из сценария' }}
                   </button>
                 </div>
               </div>
@@ -6392,7 +8293,7 @@ onMounted(async () => {
                   <span>PERF rows: {{ drainagePreparation.diagnostics?.perforation_rows || 0 }}</span>
                   <span>Контакты: {{ drainagePreparation.contact_intervals?.length || 0 }}</span>
                   <span>Связи: {{ drainagePreparation.connections?.length || 0 }}</span>
-                  <span>1D модели: {{ drainagePreparation.model_specs?.length || 0 }}</span>
+                  <span>2D regions: {{ drainagePreparation.regions?.length || 0 }}</span>
                 </div>
                 <div v-if="drainagePreparation?.diagnostics?.warnings?.length" class="notice warning">
                   {{ drainagePreparation.diagnostics.warnings.join(' ') }}
@@ -6425,7 +8326,7 @@ onMounted(async () => {
             <div class="panel waterflood-network-panel">
               <div class="toolbar between align-start">
                 <div>
-                  <h2>Ячейки, запасы и 1D связи</h2>
+                  <h2>Ячейки, запасы и 2D регионы</h2>
                   <p class="subtitle">Выберите ячейку: схема показывает связи нагнетательных и добывающих, насыщенность воды и расчетное давление на proxy-линиях.</p>
                 </div>
                 <button v-if="selectedWaterfloodCellId" type="button" class="button ghost" @click="selectedWaterfloodCellId = ''">Все ячейки</button>
@@ -8278,7 +10179,8 @@ th {
 }
 
 .opm-property-switch > span,
-.opm-radius-control span {
+.opm-radius-control span,
+.opm-check-control span {
   color: #74839a;
   font-size: 12px;
   font-weight: 800;
@@ -8313,9 +10215,26 @@ th {
   font-weight: 800;
 }
 
+.opm-check-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid #d9e1ea;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.opm-check-control input {
+  width: 16px;
+  height: 16px;
+  accent-color: #2f80ff;
+}
+
 .opm-status-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
   margin-top: 16px;
 }
@@ -8341,6 +10260,485 @@ th {
   margin-top: 6px;
   color: #142238;
   font-size: 24px;
+}
+
+.opm-results-browser {
+  display: grid;
+  gap: 18px;
+}
+
+.opm-run-tags {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: #5f7088;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.opm-run-summary-grid,
+.opm-grid-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.opm-result-kv {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #dfe8f2;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.opm-result-kv.compact {
+  padding: 8px 10px;
+}
+
+.opm-result-kv span {
+  display: block;
+  color: #6f7f96;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.opm-result-kv strong {
+  display: block;
+  min-width: 0;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: #142238;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.opm-family-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.opm-family-row {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #dfe8f2;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.opm-family-row span,
+.opm-family-row em,
+.opm-family-row small {
+  display: block;
+}
+
+.opm-family-row span {
+  color: #6f7f96;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.opm-family-row strong {
+  display: block;
+  margin-top: 3px;
+  color: #142238;
+  font-size: 14px;
+}
+
+.opm-family-row em {
+  margin-top: 3px;
+  color: #2563eb;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.opm-family-row small {
+  min-width: 0;
+  margin-top: 5px;
+  overflow: hidden;
+  color: #6f7f96;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.opm-results-section {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.opm-results-section h3 {
+  margin: 0;
+  color: #142238;
+  font-size: 18px;
+}
+
+.opm-result-table-wrap {
+  width: 100%;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid #dfe8f2;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.opm-result-table-wrap.medium {
+  max-height: 360px;
+}
+
+.opm-result-table-wrap.tall {
+  max-height: 440px;
+}
+
+.opm-result-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  color: #142238;
+  font-size: 12px;
+}
+
+.opm-result-table.grid-table {
+  min-width: 1280px;
+}
+
+.opm-result-table th,
+.opm-result-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #edf2f7;
+  vertical-align: top;
+  text-align: left;
+}
+
+.opm-result-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f3f7fb;
+  color: #52647c;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.opm-result-table td {
+  font-weight: 700;
+}
+
+.opm-artifact-path {
+  max-width: 360px;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.opm-two-column {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  align-items: start;
+}
+
+.field2d-map-section {
+  gap: 14px;
+}
+
+.field2d-step-bar {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) minmax(180px, 1fr) 72px;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid #dfe8f2;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.field2d-step-bar div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.field2d-step-bar span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.field2d-step-bar strong,
+.field2d-step-bar b {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #142238;
+  font-size: 13px;
+}
+
+.field2d-step-bar input[type='range'],
+.field2d-zoom-control input[type='range'] {
+  width: 100%;
+  accent-color: #2563eb;
+}
+
+.field2d-map-controls {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.field2d-select-control,
+.field2d-toggle-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  color: #52647c;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.field2d-select-control {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.field2d-select-control select {
+  min-width: 150px;
+}
+
+.field2d-toggle-control input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #2563eb;
+}
+
+.field2d-zoom-control {
+  display: grid;
+  grid-template-columns: 34px minmax(96px, 150px) 34px 70px;
+  gap: 6px;
+  align-items: center;
+}
+
+.field2d-zoom-control .icon-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  box-shadow: none;
+  color: #142238;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.compact-button {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.field2d-map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 14px;
+  align-items: stretch;
+}
+
+.field2d-map-canvas-wrap {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #dfe8f2;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.field2d-map-svg {
+  display: block;
+  width: 100%;
+  min-height: 560px;
+  max-height: 720px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.field2d-cell-layer rect {
+  shape-rendering: crispEdges;
+  stroke: rgba(15, 23, 42, 0.08);
+  stroke-width: 0.18;
+}
+
+.field2d-trajectory-path {
+  fill: none;
+  stroke: #9ca3af;
+  stroke-width: 1.15;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.78;
+  vector-effect: non-scaling-stroke;
+}
+
+.field2d-perforation line {
+  stroke: #374151;
+  stroke-width: 5.8;
+  stroke-linecap: round;
+  opacity: 0.9;
+  vector-effect: non-scaling-stroke;
+}
+
+.field2d-perforation circle {
+  fill: #374151;
+  stroke: #ffffff;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.field2d-well circle {
+  stroke: #ffffff;
+  stroke-width: 2.4;
+  filter: drop-shadow(0 3px 7px rgba(15, 23, 42, 0.22));
+  vector-effect: non-scaling-stroke;
+}
+
+.field2d-well.injector circle {
+  fill: #2563eb;
+}
+
+.field2d-well.producer circle {
+  fill: #16a34a;
+}
+
+.field2d-well text {
+  fill: #111827;
+  font-size: 11px;
+  font-weight: 900;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 3px;
+  vector-effect: non-scaling-stroke;
+}
+
+.field2d-empty-label {
+  fill: #64748b;
+  font-size: 18px;
+  font-weight: 900;
+  text-anchor: middle;
+}
+
+.field2d-map-inspector {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #dfe8f2;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.field2d-map-inspector > span,
+.field2d-cube-legend > span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.field2d-map-inspector > strong {
+  color: #142238;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.field2d-map-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.field2d-map-summary div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #edf2f7;
+}
+
+.field2d-map-summary span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.field2d-map-summary b {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #142238;
+  font-size: 13px;
+}
+
+.field2d-cube-legend {
+  display: grid;
+  gap: 8px;
+}
+
+.field2d-legend-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  color: #142238;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.field2d-legend-row i {
+  width: 18px;
+  height: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 3px;
+}
+
+.field2d-layer-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px 12px;
+  flex-wrap: wrap;
+  margin-top: auto;
+  color: #52647c;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.field2d-layer-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.field2d-layer-legend .legend-line {
+  width: 24px;
+  height: 4px;
+  border-radius: 999px;
+  background: #111827;
+}
+
+.field2d-layer-legend .legend-line.perforation {
+  height: 6px;
+  background: #f97316;
 }
 
 .opm-map-layout {
@@ -8677,11 +11075,165 @@ th {
     #ffffff;
 }
 
+.history-drainage-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.history-chart-column {
+  min-width: 0;
+}
+
 .history-chart {
   display: block;
   min-width: 920px;
   width: 100%;
   height: auto;
+}
+
+.crm-drainage-map-card {
+  display: grid;
+  grid-template-rows: auto minmax(260px, 1fr) auto;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e3ebf4;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.crm-drainage-map-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.crm-drainage-map-head div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.crm-drainage-map-head span,
+.crm-drainage-map-summary b {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.crm-drainage-map-head strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #142238;
+  font-size: 14px;
+}
+
+.crm-drainage-map-head b {
+  color: #2563eb;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.crm-drainage-map-svg {
+  display: block;
+  width: 100%;
+  min-height: 260px;
+  border: 1px solid #edf2f7;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.crm-drainage-cell-layer path {
+  opacity: 0.34;
+  stroke: rgba(15, 23, 42, 0.42);
+  stroke-width: 2.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.crm-drainage-link-layer line {
+  stroke: rgba(71, 85, 105, 0.45);
+  stroke-width: 1.2;
+  stroke-dasharray: 5 5;
+  vector-effect: non-scaling-stroke;
+}
+
+.crm-drainage-boundary-layer line,
+.crm-drainage-perforation-layer line {
+  stroke: #374151;
+  stroke-width: 5.2;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.crm-drainage-trajectory-layer path {
+  fill: none;
+  stroke: #9ca3af;
+  stroke-width: 1.05;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.75;
+  vector-effect: non-scaling-stroke;
+}
+
+.crm-drainage-perforation-layer circle {
+  fill: #374151;
+  stroke: #ffffff;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.crm-drainage-well-layer circle {
+  stroke: #ffffff;
+  stroke-width: 2.2;
+  filter: drop-shadow(0 2px 5px rgba(15, 23, 42, 0.22));
+  vector-effect: non-scaling-stroke;
+}
+
+.crm-drainage-well-layer .injector circle {
+  fill: #2563eb;
+}
+
+.crm-drainage-well-layer .producer circle {
+  fill: #16a34a;
+}
+
+.crm-drainage-well-layer text {
+  fill: #111827;
+  font-size: 11px;
+  font-weight: 900;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.9);
+  stroke-width: 3px;
+  vector-effect: non-scaling-stroke;
+}
+
+.crm-drainage-map-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 6px;
+}
+
+.crm-drainage-map-summary span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.crm-drainage-map-summary em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #142238;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
 }
 
 .history-grid-line {
@@ -8735,7 +11287,7 @@ th {
 }
 
 .opm-drainage-table {
-  min-width: 1320px;
+  min-width: 1640px;
   font-size: 12px;
   table-layout: auto;
 }
@@ -8783,6 +11335,13 @@ th {
   text-align: right;
 }
 
+.opm-drainage-table .crm-source-cell {
+  max-width: 190px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
 @media (max-width: 1100px) {
   .opm-status-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -8790,6 +11349,34 @@ th {
 
   .opm-map-layout {
     grid-template-columns: 1fr;
+  }
+
+  .field2d-map-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .history-drainage-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .field2d-step-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .field2d-map-controls {
+    justify-content: flex-start;
+  }
+
+  .field2d-zoom-control {
+    grid-template-columns: 34px minmax(96px, 1fr) 34px 70px;
+  }
+
+  .opm-two-column {
+    grid-template-columns: 1fr;
+  }
+
+  .opm-run-tags {
+    justify-content: flex-start;
   }
 
   .opm-bar-row {

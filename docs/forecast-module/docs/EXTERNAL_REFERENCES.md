@@ -1,35 +1,42 @@
-# External references for implementation alignment
+# External References for Implementation Alignment
 
-These references are included so Codex or a developer can align the proxy model with external simulator conventions.
+These references help align the forecast module with OPM Flow and related
+reservoir-engineering tooling.
 
-## OpenAI Codex project instructions
+## Local Primary References
 
-- Codex AGENTS.md guide: https://developers.openai.com/codex/guides/agents-md
-- Codex customization: https://developers.openai.com/codex/concepts/customization
-- Codex CLI: https://developers.openai.com/codex/cli
+Use these local files before external links when implementing the OPM Flow
+wrapper, case generation, validation, result import, or `simulation_runs`
+artifact layout:
 
-## OPM Flow / OPM common
+- OPM Flow Reference Manual PDF:
+  `docs/forecast-module/references/OPM_Flow_Reference_Manual_2025-10_Rev-0_compressed.pdf`
+- WorkNotOver OPM Flow guide:
+  `docs/forecast-module/docs/OPM_FLOW_REFERENCE_GUIDE.md`
+- Extracted manual index:
+  `docs/forecast-module/references/opm_flow_manual_2025_10_index.json`
+
+The local manual and generated guide are the primary references for OPM deck
+section order, keyword placement, include-file structure, output artifacts, and
+importer expectations. The external links below are supporting references.
+
+## OPM Flow / OPM Common
 
 - OPM Flow page: https://opm-project.org/?page_id=19
 - OPM Flow manual page: https://opm-project.org/?page_id=955
 - OPM opm-common repository: https://github.com/OPM/opm-common
 
-Use OPM/Eclipse deck conventions as the canonical basis for PVT/SCAL/ROCK properties:
+Use OPM/Eclipse deck conventions as the canonical basis for PVT/SCAL/ROCK
+properties:
 
-- DENSITY
-- PVTO / PVDO
-- PVTW
-- PVDG / PVTG
-- ROCK
-- SWOF / SGOF
-- SWFN / SGFN / SOF2 / SOF3
-- PVTNUM / SATNUM / ROCKNUM / FIPNUM
-
-## MRST
-
-- MRST main page: https://www.sintef.no/projectweb/mrst/
-- MRST Flow Diagnostics: https://www.sintef.no/projectweb/mrst/modules/diagnostics/
-- Basic flow diagnostics: https://www.sintef.no/projectweb/mrst/modules/diagnostics/basic-flow-diagnostics/
+- `DENSITY`
+- `PVTO` / `PVDO`
+- `PVTW`
+- `PVDG` / `PVTG`
+- `ROCK`
+- `SWOF` / `SGOF`
+- `SWFN` / `SGFN` / `SOF2` / `SOF3`
+- `PVTNUM` / `SATNUM` / `ROCKNUM` / `FIPNUM`
 
 ## pywaterflood
 

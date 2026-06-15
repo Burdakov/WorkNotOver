@@ -30,6 +30,7 @@ from app.services.importing.excel_utils import (
     TEXT_EXTENSIONS,
     columns_info,
     excel_row_number,
+    is_text_file,
     normalize_text,
     preview_records,
     sheet_df,
@@ -176,6 +177,7 @@ _SOURCE_KIND_MAPPING_FIELDS = {
         "p_res",
         "wefac",
     },
+    "pvt_properties": set(),
 }
 
 
@@ -347,17 +349,20 @@ def _build_well_match_rows(df, resolved_columns, candidate_wells: list[dict[str,
 def upload_excel(file: UploadFile = File(...), db: Session = Depends(get_db)) -> UploadResponse:
     extension = Path(file.filename or "source.xlsx").suffix.lower()
     if extension not in EXCEL_EXTENSIONS | TEXT_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Supported source files: .xlsx, .xls, .xlsm, .txt.")
+        extension = extension or ".txt"
 
     file_id = f"{uuid4()}{extension}"
     stored_path = STORAGE_DIR / file_id
     with stored_path.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    if extension in TEXT_EXTENSIONS:
+    if extension in EXCEL_EXTENSIONS:
+        sheets, selected_sheet, df = sheet_df(stored_path, None)
+    elif is_text_file(stored_path):
         sheets, selected_sheet, df = text_df(stored_path)
     else:
-        sheets, selected_sheet, df = sheet_df(stored_path, None)
+        stored_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Supported source files: Excel workbooks or files containing readable text.")
     DatasetRepository(db).upsert_uploaded_file(file_id, file.filename or file_id, str(stored_path), sheets)
 
     return UploadResponse(
@@ -385,7 +390,7 @@ def get_file_details(file_id: str, sheet_name: str | None = None, db: Session = 
         raise HTTPException(status_code=404, detail="Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ.")
 
     file_path = Path(uploaded.stored_path)
-    if file_path.suffix.lower() in TEXT_EXTENSIONS:
+    if file_path.suffix.lower() not in EXCEL_EXTENSIONS and is_text_file(file_path):
         sheets, selected_sheet, df = text_df(file_path)
     else:
         sheets, selected_sheet, df = sheet_df(file_path, sheet_name)
@@ -511,7 +516,7 @@ def normalize_dataset(payload: NormalizeRequest, db: Session = Depends(get_db)) 
         raise HTTPException(status_code=404, detail="Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ.")
 
     file_path = Path(uploaded.stored_path)
-    if file_path.suffix.lower() in TEXT_EXTENSIONS:
+    if file_path.suffix.lower() not in EXCEL_EXTENSIONS and is_text_file(file_path):
         selected_sheet = "text"
         report = ImportValidationReport(
             source_kind=payload.source_kind,
@@ -527,6 +532,13 @@ def normalize_dataset(payload: NormalizeRequest, db: Session = Depends(get_db)) 
             normalized_payload = normalize_well_trajectories_text(lines, report)
         elif payload.source_kind == "perforations":
             normalized_payload = normalize_perforations_text(lines, report)
+        elif payload.source_kind == "pvt_properties":
+            normalized_payload = {
+                "format": "opm_flow_include",
+                "include_text": "\n".join(lines),
+                "line_count": len(lines),
+            }
+            report.row_count = len(lines)
         else:
             raise HTTPException(status_code=400, detail=f"Text import is not supported for source_kind '{payload.source_kind}'.")
 

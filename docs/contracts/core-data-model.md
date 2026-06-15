@@ -37,6 +37,10 @@
 ### Dataset Types
 
 - `wells`
+- 'trajectories'
+- 'perforations'
+- 'PVT'
+- 'Initialization inputs'
 - `niz`
 - `gtm`
 - `infrastructure`
@@ -44,8 +48,6 @@
 - `production_history`
 - `injection_history`
 - `well_groups`
-- `development_cells`
-- `waterflood_connections`
 - `reservoir_properties`
 - `forecast_model_config`
 - `forecast_scenarios`
@@ -159,7 +161,7 @@
 ### Инварианты
 
 - `lu_id` устойчив во всех модулях;
-- `LU` используется как верхний уровень принадлежности для `SLOY`, кустов и скважин.
+- `LU` используется как верхний уровень принадлежности для `SLOY`, кустов и скважин, обычно связанный единой инфраструктурой.
 
 ---
 
@@ -338,74 +340,9 @@
 
 ---
 
-## Entity: DisplacementConfig
-
-Описывает настройки вытеснения и функции обводнённости.
-
-### Поля
-
-- `config_id: str`
-- `lu_id: str | None`
-- `sloy_id: str | None`
-- `curve_points: list[DisplacementCurvePoint]`
-- `watercut_unit: str`
-- `notes: str | None`
-
-### Related Entity: DisplacementCurvePoint
-
-- `NIZ: float`
-- `watercut: float`
-
-### Инварианты
-
-- `lu_id` и `sloy_id` задают scope конфига по `LU/SLOY`; конфиг может быть привязан к `LU` и при необходимости уточнён до уровня `SLOY`;
-- точки отсортированы по `NIZ`;
-- `NIZ` монотонен;
-- формат `watercut` согласован с `watercut_unit`;
-- в текущей методике `Module B` ось `NIZ` используется как нормализованный показатель, рассчитываемый из `NIZ` и накопленной нефти по формуле, зафиксированной в контракте `Module B`;
-- поле `NIZ` внутри `DisplacementCurvePoint` хранит именно нормализованную координату характеристики вытеснения, а не абсолютный объём начальных извлекаемых запасов;
-- между соседними точками характеристики используется линейная интерполяция.
-
----
-
-## Entity: DeclineConfig
-
-Описывает предпосылки по падению жидкости во времени.
-
-### Поля
-
-- `config_id: str`
-- `lu_id: str | None`
-- `sloy_id: str | None`
-- `base_monthly_decline_values: list[MonthlyDeclinePoint]`
-- `new_wells_monthly_decline_values: list[MonthlyDeclinePoint]`
-- `notes: str | None`
-
-### Related Entity: MonthlyDeclinePoint
-
-- `month_index: int`
-- `liquid_decline_factor: float`
-
-### Интерпретация
-
-- в текущем интерфейсе `Module G` значение `liquid_decline_factor` вводится как годовой темп падения жидкости для соответствующего месяца горизонта;
-- `Module B` не должен трактовать это поле как уже готовый месячный коэффициент, а обязан пересчитывать его во внутренний суточный шаг расчёта.
-
-### Инварианты
-
-- `month_index >= 0`;
-- коэффициенты неотрицательны;
-- `lu_id` и `sloy_id` задают scope конфига по `LU/SLOY`; конфиг может быть привязан к `LU` и при необходимости уточнён до уровня `SLOY`;
-- в текущей методике `Module B` массив `base_monthly_decline_values` используется как характеристика снижения жидкости для фонда `Base`;
-- в текущей методике `Module B` массив `new_wells_monthly_decline_values` используется как характеристика снижения жидкости для `New wells` после даты соответствующего ГТМ или события запуска;
-- годовой темп падения должен пересчитываться `Module B` в эквивалентный суточный коэффициент перед применением к `liquid_rate`;
-- стандартный горизонт ручных рядов decline — 24 месяца, если отдельный сценарий не задаёт иное.
-
----
-
 ## Entity: ProductionHistoryPoint
 
-Описывает историческую точку добычи для калибровки новой waterflood proxy методики.
+Описывает историческую точку добычи для настройки гидродинамичской модели на историю
 
 ### Поля
 
@@ -465,88 +402,6 @@
 
 ---
 
-## Entity: DevelopmentCell
-
-Описывает расчётную ячейку разработки / material-balance cell.
-
-### Поля
-
-- `development_cell_id: str`
-- `region_id: str | None`
-- `lu_id: str | None`
-- `sloy_id: str | None`
-- `well_pad_id: str | None`
-- `pore_volume: float`
-- `ooip: float | None`
-- `initial_pressure: float`
-- `initial_water_saturation: float`
-- `initial_oil_saturation: float | None`
-- `initial_gas_saturation: float | None`
-- `total_compressibility: float | None`
-- `aquifer_index: float | None`
-- `area_m2: float | None`
-- `h_m: float | None`
-- `phi: float | None`
-- `ntg: float | None`
-- `geometry: dict[str, object] | None`
-- `metadata: dict[str, object] | None`
-
-### Инварианты
-
-- `development_cell_id` устойчив внутри dataset;
-- `pore_volume > 0`;
-- насыщенности должны быть в диапазоне `[0, 1]`;
-- если геометрия отсутствует, UI может отображать ячейку как карточку/агрегат, а не как геометрический полигон.
-
----
-
-## Entity: WaterfloodConnection
-
-Описывает injector-producer связь новой proxy-модели заводнения.
-
-### Поля
-
-- `connection_id: str`
-- `injector_id: str`
-- `producer_id: str`
-- `development_cell_id: str | None`
-- `region_id: str | None`
-- `distance_m: float | None`
-- `inside_influence_radius: bool | None`
-- `active: bool`
-- `link_type: str`
-- `alpha_prior: float | None`
-- `alpha: float | None`
-- `eta_prior: float | None`
-- `eta: float | None`
-- `tau_prior_days: float | None`
-- `tau_days: float | None`
-- `pv_prior: float | None`
-- `pv: float | None`
-- `screen_factor: float | None`
-- `channel_factor: float | None`
-- `breakthrough_ipvi: float | None`
-- `displacement_efficiency: float | None`
-- `prior_source: str | None`
-- `prior_weight: float | None`
-- `metadata: dict[str, object] | None`
-
-### Link Types
-
-- `normal`
-- `screen`
-- `channel`
-- `unknown`
-
-### Инварианты
-
-- `injector_id` должен ссылаться на нагнетательную скважину;
-- `producer_id` должен ссылаться на добывающую скважину;
-- первичная связность должна строиться из координат скважин и радиуса влияния до применения MRST/CRM/manual priors;
-- `alpha_prior` нормализуется по нагнетательной скважине для активных связей;
-- `alpha`, `eta`, `tau_days` и `pv` могут быть результатом калибровки.
-
----
 
 ## Entity: RegionMap
 
@@ -573,7 +428,7 @@
 
 ## Entity: ReservoirPropertySet
 
-Описывает набор PVT/SCAL/ROCK-свойств для новой методики.
+Описывает набор PVT/SCAL/ROCK-свойств.
 
 ### Поля
 
@@ -590,75 +445,12 @@
 
 ### Инварианты
 
-- production run новой методики не должен использовать молчаливые константные PVT/SCAL/ROCK-свойства;
+- production run не должен использовать молчаливые константные PVT/SCAL/ROCK-свойства;
 - extrapolation PVT/SCAL запрещён по умолчанию и допустим только при явной настройке с логированием события;
 - таблицы должны быть привязаны к region identifiers, совместимым с `PVTNUM/SATNUM/ROCKNUM/FIPNUM` по смыслу.
 
 ---
 
-## Entity: ForecastModelConfig
-
-Описывает конфигурацию расчётной методики Module B.
-
-### Поля
-
-- `config_id: str`
-- `forecast_method: str`
-- `coordinates: dict[str, object]`
-- `geometry_initializer: dict[str, object]`
-- `link_type_multipliers: dict[str, float]`
-- `edge_pv_initializer: dict[str, object]`
-- `edge_displacement: dict[str, object]`
-- `properties: dict[str, object]`
-- `material_balance: dict[str, object]`
-- `calibration: dict[str, object]`
-- `adapters: dict[str, object] | None`
-- `reporting: dict[str, object] | None`
-- `metadata: dict[str, object] | None`
-
-### Forecast Methods
-
-- `opm_flow_blackoil`
-- `waterflood_proxy_hm`
-- `legacy_decline_liquid`
-
-### Инварианты
-
-- `opm_flow_blackoil` является production-методикой Module B;
-- `waterflood_proxy_hm` допускается как optional reduced-order diagnostic/proxy path;
-- `legacy_decline_liquid` допускается как режим совместимости для старых сценариев и synthetic smoke tests;
-- координатная система должна быть задана явно.
-
----
-
-## Entity: ForecastScenarioDefinition
-
-Описывает forecast scenario case в терминах новой методики.
-
-### Поля
-
-- `scenario_case_id: str`
-- `name: str`
-- `description: str | None`
-- `forecast_start_date: str`
-- `forecast_end_date: str`
-- `injection_multipliers: dict[str, object] | None`
-- `injection_schedule: list[dict[str, object]] | None`
-- `producer_constraints: dict[str, object] | None`
-- `shut_ins: list[dict[str, object]] | None`
-- `well_conversions: list[dict[str, object]] | None`
-- `link_changes: list[dict[str, object]] | None`
-- `pressure_constraints: dict[str, object] | None`
-- `property_multiplier_cases: dict[str, object] | None`
-- `output_aggregation_level: str | None`
-- `metadata: dict[str, object] | None`
-
-### Инварианты
-
-- forecast events из `GTM`, `KrsScheduleScenario` или `PlannerScheduleRevision` должны приводиться к этой модели событий перед запуском новой методики;
-- изменения связей не должны перетирать исходную distance-based диагностику, а должны сохраняться как сценарные overrides.
-
----
 
 ## Entity: SimulationRun
 
@@ -788,7 +580,7 @@
 
 ## Entity: CalibrationResult
 
-Описывает результат history matching новой proxy-модели.
+Описывает результат history matching.
 
 ### Поля
 
@@ -1372,13 +1164,6 @@
 - если сценарий требует `NIZ`, а wells dataset или gtm dataset содержат скважины, для которых отсутствует `NIZ` в привязанном scenario-bound dataset `niz`, соответствующие узлы `wells`, `gtm` и `niz` должны считаться `partial`, а `is_forecast_ready` должно быть `false`;
 - для `metadata.forecast_method = opm_flow_blackoil` сценарий должен иметь привязанные `production_history_dataset`, `injection_history_dataset`, `development_cells_dataset`, `reservoir_properties_dataset`, `forecast_model_config` и schedule source (`gtm`, `external_krs_schedule`, `optimized_krs` или `planner_revision`);
 - для `metadata.forecast_method = opm_flow_blackoil` `wells_dataset` должен содержать добывающие и нагнетательные скважины, координаты/привязку к grid completions или достаточные данные для построения `WELSPECS`/`COMPDAT`;
-- для `metadata.forecast_method = waterflood_proxy_hm` сценарий должен иметь привязанные `well_trajectories_dataset`, `perforations_dataset`, `production_history_dataset`, `injection_history_dataset`, `development_cells_dataset`, `reservoir_properties_dataset` и `forecast_model_config`;
-- для `metadata.forecast_method = opm_flow_1d_drainage` сценарий должен иметь привязанные `well_groups_dataset`, `well_trajectories_dataset`, `perforations_dataset`, `production_history_dataset`, `injection_history_dataset`; `NIZ` / pore volume пока optional на этапе подготовки `Drainage1DModelSpec`, но должен стать обязательным для production run с распределением запасов;
-- для `metadata.forecast_method = waterflood_proxy_hm` `wells_dataset` должен содержать `well_type`, `x`, `y` и согласованную координатную систему для всех добывающих и нагнетательных скважин, участвующих в расчёте;
-- если `reservoir_properties_dataset` не содержит достаточные PVT/SCAL/ROCK-свойства или включает silent extrapolation, `is_forecast_ready` должно быть `false`;
-- `waterflood_connections_dataset` может отсутствовать для `waterflood_proxy_hm` до запуска distance-based initialization; в этом случае Module B обязан построить initial connections из координат и сохранить diagnostics как scenario-bound output;
-- сценарий с `is_forecast_ready = false` не может быть передан в расчет добычи `Module B`.
-
 ---
 
 ## Entity: PlannerScheduleRevision
@@ -1470,42 +1255,6 @@
 
 ---
 
-## Дополнение для новой методики Module B: 1D OPM drainage models
-
-Для новой схемы прогноза добычи `Module B` добавляются scenario-bound datasets:
-
-- `well_groups` — scenario-bound иерархия скважин из GRUP: `well_name`, `well_pad_id`, optional `sloy_id`, `lu_id`, `infrastructure_object_id`, `group_path`; последний group перед скважиной мапится в `well_pad_id`, предыдущий уровень при наличии мапится в `sloy_id`;
-- `well_trajectories` — точки траекторий скважин: `well_name`, `md`, `x`, `y`, `z`, optional `trajectory_point_id`; для TXT TRAJ порядок колонок фиксирован как `X, Y, Z, MD`;
-- `perforations` — интервалы связи скважины с пластом: `well_name`, `top_md`, `bottom_md`, optional `lu_id`, `sloy_id`, `well_pad_id`, `start_date`, `end_date`;
-- `production_history` — история добычи по добывающим скважинам: `date`, `well_name`, `q_oil`, optional `q_water`, `q_liq`, `q_gas`, `bhp`, `thp`, `p_res`, `wefac`;
-- `injection_history` — история закачки по нагнетательным скважинам: `date`, `well_name`, `q_water_inj`, optional `bhp`, `whp`, `thp`, `p_res`, `wefac`.
-
-Для drainage-1D ветки все `well_name`, `well_pad_id`, `sloy_id`, `lu_id` нормализуются в верхний регистр. Объемы истории принимаются в `m3`, давления в `bar`, `wefac` соответствует `Кэкспл` (`работавшее время в месяце / календарное время месяца`).
-
-`Module B` обязан пересекать `well_trajectories` и `perforations`, формируя `ContactInterval`.
-`ContactInterval` является расчетной scenario-bound сущностью и содержит интервал MD, координаты верхней/нижней/центральной точки и иерархию `LU / SLOY / WellPad`, если она доступна.
-
-Первичная матрица дренирования формируется до запуска OPM Flow:
-
-- кандидаты injector-producer строятся между нагнетательными и добывающими скважинами с контактами с пластом;
-- базовый радиус влияния — `3000 m`;
-- обязательная первая догадка `alpha_prior` строится по геометрии/расстоянию;
-- CRM / pywaterflood может использоваться только как optional adapter для уточнения prior, но не как единственный источник связности;
-- для каждого активного ребра создается `Drainage1DModelSpec` с прямолинейной 1D геометрией от центра нагнетательной скважины до центра добывающей скважины.
-
-Минимальная 1D геометрия по умолчанию:
-
-- `dx = 50 m`;
-- `dy = 50 m`;
-- `dz = 5 m`;
-- `nx = ceil(distance_m / dx)`;
-- `ny = 1`;
-- `nz = 1`.
-
-Запасы, поровый объем и закачка распределяются между связанными скважинами пропорционально `alpha` / `alpha_prior` до начала итерационной автоадаптации.
-Все `ContactInterval`, `Drainage1DConnection`, `Drainage1DModelSpec`, результаты запуска OPM Flow и параметры автоадаптации должны иметь `scenario_id`.
-
----
 
 ## Иерархия принадлежности
 

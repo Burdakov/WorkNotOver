@@ -1,4 +1,0 @@
-cell_id,pvt_region,sat_region,rock_region,fip_region,region_name,formation,reservoir,zone
-CELL_01,1,1,1,101,Block_101,FM_A,RES_1,Z1
-CELL_02,1,1,1,102,Block_102,FM_A,RES_1,Z1
-CELL_03,1,1,1,103,Block_103,FM_A,RES_1,Z2

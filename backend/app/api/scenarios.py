@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.api.simulation import _build_field_2d_prepare_request_from_context
 from app.db.session import SessionLocal
 from app.repositories.dataset_repository import DatasetRepository
 from app.repositories.manual_input_repository import ManualInputRepository
@@ -25,13 +26,15 @@ from app.schemas.forecast_models import (
 )
 from app.schemas.schedule_models import ScheduleItem
 from app.services.forecast_service import ForecastService
+from app.services.opm_flow import Field2DModelService
+from app.services.opm_flow.schemas import Field2DRunFromScenarioRequest
 
 router = APIRouter(prefix="/api/scenarios", tags=["scenarios"])
 
 _SCENARIO_CONTEXT_KEY = "scenario_context"
 _PURE_BASE_SCENARIO_NAME = "чистая База"
 _PURE_BASE_SCENARIO_ROLE = "pure_base"
-_NEW_FORECAST_METHODS = {"waterflood_proxy_hm", "opm_flow_blackoil", "opm_flow_1d_drainage"}
+_NEW_FORECAST_METHODS = {"opm_flow_blackoil", "opm_flow_2d_field"}
 
 
 def get_db():
@@ -55,6 +58,7 @@ def _context_to_response(context: dict[str, Any] | None) -> ScenarioContextRespo
         perforations_dataset=DatasetReference(**context["perforations_dataset"]) if context.get("perforations_dataset") else None,
         production_history_dataset=DatasetReference(**context["production_history_dataset"]) if context.get("production_history_dataset") else None,
         injection_history_dataset=DatasetReference(**context["injection_history_dataset"]) if context.get("injection_history_dataset") else None,
+        pvt_properties_dataset=DatasetReference(**context["pvt_properties_dataset"]) if context.get("pvt_properties_dataset") else None,
         manual_input_set=ManualInputReference(**context["manual_input_set"]) if context.get("manual_input_set") else None,
     )
 
@@ -331,6 +335,7 @@ def _build_input_validation(db: Session, scenario, context: ScenarioContextRespo
         perforations=_make_input_node_validation("ready" if context.perforations_dataset else "empty"),
         production_history=_make_input_node_validation("ready" if context.production_history_dataset else "empty"),
         injection_history=_make_input_node_validation("ready" if context.injection_history_dataset else "empty"),
+        pvt_properties=_make_input_node_validation("ready" if context.pvt_properties_dataset else "empty"),
         manual_input_set=_make_input_node_validation("ready" if context.manual_input_set else "empty"),
     )
 
@@ -339,13 +344,14 @@ def _build_input_validation(db: Session, scenario, context: ScenarioContextRespo
     is_new_forecast_method = forecast_method in _NEW_FORECAST_METHODS
     scenario_mode = str(metadata.get("scenario_source_mode") or "")
     requires_external = scenario_mode == "existing_krs"
+    uses_field_2d = forecast_method in {"opm_flow_blackoil", "opm_flow_2d_field"}
 
     issues: list[str] = []
-    if validation.wells.state != "ready" and forecast_method != "opm_flow_1d_drainage":
+    if validation.wells.state != "ready" and not uses_field_2d:
         issue = "Не привязан dataset wells."
         _add_node_issue(validation.wells, issue)
         issues.append(issue)
-    if validation.niz.state != "ready" and forecast_method != "opm_flow_1d_drainage":
+    if validation.niz.state != "ready":
         issue = "Не привязан dataset NIZ."
         _add_node_issue(validation.niz, issue)
         issues.append(issue)
@@ -356,6 +362,7 @@ def _build_input_validation(db: Session, scenario, context: ScenarioContextRespo
             (validation.perforations, "Не привязан dataset perforations."),
             (validation.production_history, "Не привязан dataset production_history."),
             (validation.injection_history, "Не привязан dataset injection_history."),
+            (validation.pvt_properties, "Не привязан dataset pvt_properties."),
         ]
         for node, issue in required_new_nodes:
             if node.state != "ready":
@@ -557,6 +564,177 @@ def _run_forecast_calculation(
     )
 
 
+def _field_2d_run_options_from_metadata(metadata: dict[str, Any] | None) -> Field2DRunFromScenarioRequest:
+    config = metadata.get("field_2d_config") if isinstance(metadata, dict) else None
+    return Field2DRunFromScenarioRequest(**(config if isinstance(config, dict) else {}))
+
+
+def _field_2d_result_payload(analysis: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    rows = [row for row in analysis.get("timeseries", []) if isinstance(row, dict)]
+    wells = [item for item in analysis.get("wells", []) if isinstance(item, dict)]
+    regions = [item for item in analysis.get("regions", []) if isinstance(item, dict)]
+    well_lookup = {str(item.get("well_name") or "").strip(): item for item in wells}
+    producer_region_count: dict[str, int] = {}
+    for region in regions:
+        producer = str(region.get("producer_name") or "").strip()
+        if producer:
+            producer_region_count[producer] = producer_region_count.get(producer, 0) + 1
+
+    field_by_date: dict[str, dict[str, float]] = {}
+    well_by_name: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        date = str(row.get("date") or "")[:10]
+        producer = str(row.get("producer_name") or "").strip()
+        if not date or not producer:
+            continue
+        weight = 1.0 / max(1, producer_region_count.get(producer, 1))
+        oil = _coerce_float(row.get("q_oil_calc")) * weight
+        liquid = _coerce_float(row.get("q_liq_calc")) * weight
+        gas = _coerce_float(row.get("q_gas_calc")) * weight
+        water = _coerce_float(row.get("q_water_calc")) * weight
+
+        field_bucket = field_by_date.setdefault(date, {"oil": 0.0, "liquid": 0.0, "gas": 0.0, "water": 0.0})
+        field_bucket["oil"] += oil
+        field_bucket["liquid"] += liquid
+        field_bucket["gas"] += gas
+        field_bucket["water"] += water
+
+        well_bucket = well_by_name.setdefault(producer, {"points": {}, "well": well_lookup.get(producer, {})})
+        point = well_bucket["points"].setdefault(date, {"oil": 0.0, "liquid": 0.0, "gas": 0.0, "water": 0.0})
+        point["oil"] += oil
+        point["liquid"] += liquid
+        point["gas"] += gas
+        point["water"] += water
+
+    production_points: list[dict[str, Any]] = []
+    for date in sorted(field_by_date):
+        bucket = field_by_date[date]
+        oil = bucket["oil"]
+        liquid = bucket["liquid"]
+        gas = bucket["gas"]
+        water = bucket["water"]
+        production_points.append(
+            {
+                "date": date,
+                "oil_rate": oil,
+                "liquid_rate": liquid,
+                "gas_rate": gas,
+                "watercut": water / liquid if liquid > 0 else 0.0,
+                "gor": gas / oil if oil > 0 else 0.0,
+                "oil_increment": 0.0,
+                "liquid_increment": 0.0,
+                "gas_increment": 0.0,
+            }
+        )
+
+    well_results: list[dict[str, Any]] = []
+    for well_name in sorted(well_by_name):
+        payload = well_by_name[well_name]
+        well_meta = payload["well"]
+        points = []
+        for date in sorted(payload["points"]):
+            bucket = payload["points"][date]
+            oil = bucket["oil"]
+            liquid = bucket["liquid"]
+            gas = bucket["gas"]
+            water = bucket["water"]
+            points.append(
+                {
+                    "date": date,
+                    "oil_rate": oil,
+                    "liquid_rate": liquid,
+                    "gas_rate": gas,
+                    "watercut": water / liquid if liquid > 0 else 0.0,
+                    "gor": gas / oil if oil > 0 else 0.0,
+                    "oil_increment": 0.0,
+                    "liquid_increment": 0.0,
+                    "gas_increment": 0.0,
+                }
+            )
+        well_results.append(
+            {
+                "well_id": well_name,
+                "well_name": well_name,
+                "fund_type": well_meta.get("well_type"),
+                "fund_state": "calculated",
+                "lu_id": well_meta.get("lu_id"),
+                "sloy_id": well_meta.get("sloy_id"),
+                "well_pad_id": well_meta.get("well_pad_id"),
+                "points": points,
+                "total_oil": sum(point["oil_rate"] for point in points),
+                "total_liquid": sum(point["liquid_rate"] for point in points),
+                "total_gas": sum(point["gas_rate"] for point in points),
+            }
+        )
+
+    total_oil = sum(point["oil_rate"] for point in production_points)
+    total_liquid = sum(point["liquid_rate"] for point in production_points)
+    total_gas = sum(point["gas_rate"] for point in production_points)
+    summary = {
+        "total_oil": total_oil,
+        "total_liquid": total_liquid,
+        "total_gas": total_gas,
+        "peak_oil_rate": max((point["oil_rate"] for point in production_points), default=0.0),
+        "peak_liquid_rate": max((point["liquid_rate"] for point in production_points), default=0.0),
+        "peak_gas_rate": max((point["gas_rate"] for point in production_points), default=0.0),
+        "average_gor": total_gas / total_oil if total_oil > 0 else 0.0,
+        "point_count": len(production_points),
+    }
+    return summary, production_points, well_results
+
+
+def _calculate_field_2d_for_scenario(
+    db: Session,
+    *,
+    scenario,
+    context: ScenarioContextResponse,
+    planner_revision_items: list[dict[str, Any]] | None = None,
+) -> ScenarioDetailResponse:
+    repo = ScenarioRepository(db)
+    run_options = _field_2d_run_options_from_metadata(scenario.metadata_json)
+    request = _build_field_2d_prepare_request_from_context(db, scenario.scenario_id, run_options)
+    try:
+        response = Field2DModelService().run(request, run_options)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    summary, production_points, well_results = _field_2d_result_payload(response.analysis)
+    simulation_run_payload = response.simulation_run.model_dump(mode="json")
+    scenario_metadata = _merge_metadata(
+        existing_metadata=scenario.metadata_json,
+        context=context.model_dump(),
+        patch_metadata={
+            "forecast_method": "opm_flow_blackoil",
+            "last_simulation_run_id": response.simulation_run.run_id,
+            "last_simulation_run_status": response.simulation_run.status,
+            "runtime_profile": "opm_flow_2d_field",
+        },
+    )
+    scenario = repo.update_scenario(scenario.scenario_id, metadata=scenario_metadata) or scenario
+    repo.attach_result(
+        scenario_id=scenario.scenario_id,
+        production_summary=summary,
+        production_points=production_points,
+        well_results=well_results,
+        source_payload={
+            "scenario_context": context.model_dump(),
+            "planner_revision_applied": bool(planner_revision_items),
+            "forecast_method": "opm_flow_blackoil",
+            "simulation_run": simulation_run_payload,
+            "analysis_artifacts": {
+                "field_2d_analysis": f"{response.simulation_run.normalized_dir}/field_2d_analysis.json",
+                "grid_cells": f"{response.simulation_run.normalized_dir}/field_2d_grid_cells.json",
+                "region_metrics": f"{response.simulation_run.normalized_dir}/field_2d_region_metrics.json",
+            },
+        },
+        metadata=scenario_metadata,
+    )
+    resolved = repo.get_scenario_with_latest_result(scenario.scenario_id)
+    if resolved is None:
+        raise HTTPException(status_code=500, detail="Failed to read calculated 2D OPM scenario.")
+    return _scenario_detail_payload(db, *resolved)
+
+
 def _build_context_from_request(
     db: Session,
     *,
@@ -608,6 +786,12 @@ def _build_context_from_request(
             bindings.injection_history,
             expected_type="injection_history",
         ).model_dump()
+    if bindings.pvt_properties is not None:
+        context["pvt_properties_dataset"] = _resolve_dataset_reference(
+            db,
+            bindings.pvt_properties,
+            expected_type="pvt_properties",
+        ).model_dump()
     if bindings.manual_input_set_id is not None:
         context["manual_input_set"] = _resolve_manual_input_reference(db, bindings.manual_input_set_id).model_dump()
     return context
@@ -630,6 +814,15 @@ def _calculate_for_scenario(
         raise HTTPException(
             status_code=400,
             detail=input_validation.issues[0] if input_validation.issues else "Сценарий недозаполнен для расчета добычи.",
+        )
+
+    metadata = scenario.metadata_json or {}
+    if str(metadata.get("forecast_method") or "") in {"opm_flow_blackoil", "opm_flow_2d_field"}:
+        return _calculate_field_2d_for_scenario(
+            db,
+            scenario=scenario,
+            context=context,
+            planner_revision_items=planner_revision_items,
         )
 
     wells_payload = _resolve_payload_from_reference(db, context.wells_dataset, expected_type="wells")

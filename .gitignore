@@ -1,5 +1,6 @@
 backend/storage/uploads/
 backend/storage/simulation_runs/
+backend/storage/reference/
 external_tools/*
 !external_tools/README.md
 !external_tools/manifest.json
