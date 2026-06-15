@@ -78,6 +78,7 @@ class CrmConnectivityBuilder:
                             crm_fit=crm_fit,
                         ),
                         "crm_raw_gain": self._crm_gain(crm_fit, injector, producer),
+                        "crm_mwpi_gain": self._mwpi_gain(crm_fit, injector, producer),
                         "crm_tau_days": self._crm_tau(crm_fit, injector, producer),
                     }
                 )
@@ -113,6 +114,7 @@ class CrmConnectivityBuilder:
                 distance = float(item["distance_m"])
                 alpha = float(item["alpha"])
                 raw_gain = self._number(item.get("crm_raw_gain"))
+                mwpi_gain = self._number(item.get("crm_mwpi_gain"))
                 tau_days = self._number(item.get("crm_tau_days"), max(7.0, min(730.0, distance / 15.0)))
                 regions.append(
                     {
@@ -129,14 +131,15 @@ class CrmConnectivityBuilder:
                         "alpha": round(alpha, 6),
                         "alpha_prior": round(alpha, 6),
                         "tau_days": round(max(0.001, tau_days), 3),
-                        "crm_source": "pywaterflood.crm.CRM.fit"
+                        "crm_source": crm_fit.get("source")
                         if crm_fit.get("status") == "fit"
                         else "distance_history_fallback",
                         "crm_quality": {
-                            "engine": "pywaterflood" if crm_fit.get("status") == "fit" else "distance_history_fallback",
+                            "engine": crm_fit.get("model_class") if crm_fit.get("status") == "fit" else "distance_history_fallback",
                             "fit_status": crm_fit.get("status"),
                             "fit_message": crm_fit.get("message"),
                             "raw_gain": round(raw_gain, 14),
+                            "mwpi_initial_gain": round(mwpi_gain, 14),
                             "score": round(float(item["score"]), 14),
                             "normalized_weight": round(alpha, 6),
                             "tau_days": round(max(0.001, tau_days), 3),
@@ -176,6 +179,11 @@ class CrmConnectivityBuilder:
                     "producer_order",
                     "injector_order",
                     "rmse_by_producer",
+                    "source",
+                    "initial_guess",
+                    "pressure_compensated",
+                    "pressure_diagnostics",
+                    "mwpi_message",
                 }
             },
             "radius_m": radius_m,
@@ -273,7 +281,9 @@ class CrmConnectivityBuilder:
             return {"status": "skipped", "message": "no_producers_or_injectors"}
         try:
             import numpy as np
-            from pywaterflood import CRM
+            import pandas as pd
+            from pywaterflood import CRM, CrmCompensated
+            from pywaterflood.multiwellproductivity import calc_gains_homogeneous
         except Exception as exc:
             return {"status": "unavailable", "message": str(exc)}
 
@@ -296,6 +306,15 @@ class CrmConnectivityBuilder:
                 "time_count": len(dates),
             }
 
+        mwpi_gain_guess, mwpi_raw, mwpi_message = self._mwpi_gain_guess(
+            producers=sorted(producers, key=lambda row: str(row.get("well_name") or "")),
+            injectors=sorted(injectors, key=lambda row: str(row.get("well_name") or "")),
+            producer_names=producer_names,
+            injector_names=injector_names,
+            np=np,
+            pd=pd,
+            calc_gains_homogeneous=calc_gains_homogeneous,
+        )
         start = self._parse_date(dates[0])
         time = []
         for index, day in enumerate(dates):
@@ -322,6 +341,12 @@ class CrmConnectivityBuilder:
             ],
             dtype=float,
         )
+        pressure_matrix, pressure_diagnostics = self._pressure_matrix(
+            producer_names=producer_names,
+            dates=dates,
+            production=production,
+            np=np,
+        )
         if not np.any(production_matrix > 0) or not np.any(injection_matrix > 0):
             return {
                 "status": "insufficient_rates",
@@ -332,23 +357,50 @@ class CrmConnectivityBuilder:
             }
 
         try:
-            model = CRM(primary=True, tau_selection="per-pair", constraints="up-to one")
-            model.fit(
-                production_matrix,
-                injection_matrix,
-                time_array,
-                num_cores=1,
-                options={"maxiter": 250},
-            )
+            pressure_compensated = bool(pressure_diagnostics.get("observed_count"))
+            if pressure_compensated:
+                model = CrmCompensated(primary=True, tau_selection="per-pair", constraints="up-to one")
+                model.set_rates(production_matrix, injection_matrix, time_array)
+                initial_guess = self._with_mwpi_initial_gains(model._get_initial_guess(), mwpi_gain_guess, len(injector_names), np=np)
+                model.fit(
+                    production_matrix,
+                    pressure_matrix,
+                    injection_matrix,
+                    time_array,
+                    initial_guess=initial_guess,
+                    num_cores=1,
+                    options={"maxiter": 500},
+                )
+                model_class = "pywaterflood.crm.CrmCompensated"
+                source = "pywaterflood.crm.CrmCompensated.fit+MWPI"
+            else:
+                model = CRM(primary=True, tau_selection="per-pair", constraints="up-to one")
+                model.set_rates(production_matrix, injection_matrix, time_array)
+                initial_guess = self._with_mwpi_initial_gains(model._get_initial_guess(), mwpi_gain_guess, len(injector_names), np=np)
+                model.fit(
+                    production_matrix,
+                    injection_matrix,
+                    time_array,
+                    initial_guess=initial_guess,
+                    num_cores=1,
+                    options={"maxiter": 500},
+                )
+                model_class = "pywaterflood.crm.CRM"
+                source = "pywaterflood.crm.CRM.fit+MWPI"
             prediction = model.predict()
             residual = production_matrix - prediction
             rmse = np.sqrt(np.mean(np.square(residual), axis=0))
             return {
                 "status": "fit",
                 "message": "ok",
-                "model_class": "pywaterflood.crm.CRM",
+                "source": source,
+                "model_class": model_class,
                 "constraints": "up-to one",
                 "tau_selection": "per-pair",
+                "initial_guess": "multiwell_productivity_index",
+                "pressure_compensated": pressure_compensated,
+                "pressure_diagnostics": pressure_diagnostics,
+                "mwpi_message": mwpi_message,
                 "producer_order": producer_names,
                 "injector_order": injector_names,
                 "producer_index": {name: index for index, name in enumerate(producer_names)},
@@ -358,6 +410,8 @@ class CrmConnectivityBuilder:
                 "injector_count": len(injector_names),
                 "gains": model.gains,
                 "tau": model.tau,
+                "mwpi_gain_guess": mwpi_gain_guess,
+                "mwpi_raw": mwpi_raw,
                 "rmse_by_producer": {
                     name: round(float(rmse[index]), 6)
                     for index, name in enumerate(producer_names)
@@ -370,7 +424,135 @@ class CrmConnectivityBuilder:
                 "producer_order": producer_names,
                 "injector_order": injector_names,
                 "time_count": len(dates),
+                "pressure_diagnostics": pressure_diagnostics,
+                "mwpi_message": mwpi_message,
             }
+
+    def _mwpi_gain_guess(
+        self,
+        *,
+        producers: list[dict[str, Any]],
+        injectors: list[dict[str, Any]],
+        producer_names: list[str],
+        injector_names: list[str],
+        np: Any,
+        pd: Any,
+        calc_gains_homogeneous: Any,
+    ) -> tuple[Any, Any, str]:
+        points = [*injectors, *producers]
+        xs = [self._number(item.get("x")) for item in points]
+        ys = [self._number(item.get("y")) for item in points]
+        x_min, x_max = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
+        x_span = max(x_max - x_min, 1.0)
+        y_span = max(y_max - y_min, 1.0)
+        rows: list[dict[str, Any]] = []
+        index: list[str] = []
+        for injector in injectors:
+            index.append(str(injector.get("well_name") or ""))
+            rows.append(
+                {
+                    "X": (self._number(injector.get("x")) - x_min) / x_span,
+                    "Y": (self._number(injector.get("y")) - y_min) / y_span,
+                    "Type": "Injector",
+                }
+            )
+        for producer in producers:
+            index.append(str(producer.get("well_name") or ""))
+            rows.append(
+                {
+                    "X": (self._number(producer.get("x")) - x_min) / x_span,
+                    "Y": (self._number(producer.get("y")) - y_min) / y_span,
+                    "Type": "Producer",
+                }
+            )
+
+        try:
+            locations = pd.DataFrame(rows, index=index)
+            connectivity = -calc_gains_homogeneous(locations, x_e=1.0, y_e=1.0)
+            raw = connectivity.reindex(index=producer_names, columns=injector_names).fillna(0.0).to_numpy(dtype=float)
+            raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
+            raw = np.maximum(raw, 0.0)
+            if not np.any(raw > 0):
+                guess = np.full((len(producer_names), len(injector_names)), 1.0 / max(len(injector_names), 1), dtype=float)
+                return guess, raw, "mwpi_zero_connectivity_uniform_guess"
+            guess = np.clip(raw, 1e-4, 0.99)
+            return guess, raw, "ok"
+        except Exception as exc:
+            guess = np.full((len(producer_names), len(injector_names)), 1.0 / max(len(injector_names), 1), dtype=float)
+            raw = np.zeros((len(producer_names), len(injector_names)), dtype=float)
+            return guess, raw, f"mwpi_failed:{exc}"
+
+    def _with_mwpi_initial_gains(self, initial_guess: list[Any], gain_guess: Any, injector_count: int, *, np: Any) -> list[Any]:
+        return [
+            np.concatenate([gain_guess[producer_index, :injector_count], guess[injector_count:]])
+            for producer_index, guess in enumerate(initial_guess)
+        ]
+
+    def _pressure_matrix(
+        self,
+        *,
+        producer_names: list[str],
+        dates: list[str],
+        production: dict[str, dict[str, dict[str, Any]]],
+        np: Any,
+    ) -> tuple[Any, dict[str, Any]]:
+        matrix = np.full((len(dates), len(producer_names)), np.nan, dtype=float)
+        source_counts: dict[str, int] = defaultdict(int)
+        for producer_index, producer in enumerate(producer_names):
+            rows = production.get(producer, {})
+            for date_index, day in enumerate(dates):
+                value, source = self._pressure_value(rows.get(day, {}))
+                if value is None or value <= 0:
+                    continue
+                matrix[date_index, producer_index] = value
+                source_counts[source] += 1
+
+        observed_count = int(np.isfinite(matrix).sum())
+        if observed_count == 0:
+            return matrix, {
+                "observed_count": 0,
+                "filled_count": 0,
+                "sources": {},
+                "message": "no_positive_producer_pressure",
+            }
+
+        global_fill = float(np.nanmedian(matrix))
+        filled_count = 0
+        for producer_index in range(len(producer_names)):
+            column = matrix[:, producer_index]
+            mask = np.isfinite(column)
+            if np.any(mask):
+                fill_value = float(np.nanmedian(column))
+            else:
+                fill_value = global_fill
+            missing = ~mask
+            filled_count += int(missing.sum())
+            column[missing] = fill_value
+            matrix[:, producer_index] = column
+
+        return matrix, {
+            "observed_count": observed_count,
+            "filled_count": filled_count,
+            "sources": dict(sorted(source_counts.items())),
+            "message": "ok",
+        }
+
+    def _pressure_value(self, row: dict[str, Any]) -> tuple[float | None, str]:
+        for key in (
+            "bhp",
+            "bottomhole_pressure",
+            "p_bhp",
+            "pwf",
+            "pressure",
+            "p_res",
+            "reservoir_pressure",
+            "formation_pressure",
+        ):
+            value = self._number(row.get(key))
+            if value > 0:
+                return value, key
+        return None, ""
 
     def _crm_gain(self, crm_fit: dict[str, Any] | None, injector: dict[str, Any], producer: dict[str, Any]) -> float | None:
         if not crm_fit or crm_fit.get("status") != "fit":
@@ -381,7 +563,20 @@ class CrmConnectivityBuilder:
         if gains is None or injector_index is None or producer_index is None:
             return None
         try:
-            return max(0.0, float(gains[injector_index, producer_index]))
+            return max(0.0, float(gains[producer_index, injector_index]))
+        except Exception:
+            return None
+
+    def _mwpi_gain(self, crm_fit: dict[str, Any] | None, injector: dict[str, Any], producer: dict[str, Any]) -> float | None:
+        if not crm_fit or crm_fit.get("status") != "fit":
+            return None
+        gains = crm_fit.get("mwpi_gain_guess")
+        injector_index = crm_fit.get("injector_index", {}).get(str(injector.get("well_name") or ""))
+        producer_index = crm_fit.get("producer_index", {}).get(str(producer.get("well_name") or ""))
+        if gains is None or injector_index is None or producer_index is None:
+            return None
+        try:
+            return max(0.0, float(gains[producer_index, injector_index]))
         except Exception:
             return None
 
@@ -396,7 +591,9 @@ class CrmConnectivityBuilder:
         try:
             if getattr(tau, "ndim", 0) == 1:
                 return max(0.001, float(tau[producer_index]))
-            return max(0.001, float(tau[injector_index, producer_index]))
+            if getattr(tau, "shape", (0, 0))[1] == 1:
+                return max(0.001, float(tau[producer_index, 0]))
+            return max(0.001, float(tau[producer_index, injector_index]))
         except Exception:
             return None
 

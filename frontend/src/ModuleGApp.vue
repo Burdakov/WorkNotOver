@@ -3674,7 +3674,8 @@ const crmDrainageMapCells = computed(() => {
       : null
     const segments = connections.flatMap((connection) => crmBoundarySegmentsForConnection(connection))
     const boundaryPoints = segments.flatMap((segment) => [segment.start, segment.end])
-    let polygon = field2DConvexHull(boundaryPoints)
+    const polygonPoints = center ? [center, ...boundaryPoints] : boundaryPoints
+    let polygon = field2DConvexHull(polygonPoints)
     if (polygon.length < 3 && center && boundaryPoints.length === 1) {
       const point = boundaryPoints[0]
       const dx = Number(point.viewX) - Number(center.viewX)
@@ -6051,7 +6052,7 @@ watch(selectedScenarioId, async (scenarioId) => {
     return
   }
   await loadScenarioDetail(scenarioId)
-  if (currentSection.value === 'production' && productionSubsection.value === 'analysis') {
+  if (currentSection.value === 'production' && (productionSubsection.value === 'analysis' || productionSubsection.value === 'crm')) {
     await ensureScenarioHistoryLoaded()
     await loadLatestDrainageAnalysis(true)
   }
@@ -6064,7 +6065,7 @@ watch(currentSection, async (section) => {
   if (section === 'planner') {
     await syncPlannerWithActiveScenario({ silent: true })
   }
-  if (section === 'production' && productionSubsection.value === 'analysis') {
+  if (section === 'production' && (productionSubsection.value === 'analysis' || productionSubsection.value === 'crm')) {
     await ensureScenarioHistoryLoaded()
     await loadLatestDrainageAnalysis(true)
   }
@@ -6075,7 +6076,7 @@ watch(productionTimeMode, () => {
 })
 
 watch(productionSubsection, async (section) => {
-  if (currentSection.value === 'production' && section === 'analysis') {
+  if (currentSection.value === 'production' && (section === 'analysis' || section === 'crm')) {
     await ensureScenarioHistoryLoaded()
     await loadLatestDrainageAnalysis(true)
     if (drainageMatrixRows.value.length) {
@@ -7269,6 +7270,14 @@ onMounted(async () => {
                 <button
                   type="button"
                   class="mode-toggle-button"
+                  :class="{ active: productionSubsection === 'crm' }"
+                  @click="productionSubsection = 'crm'"
+                >
+                  CRM анализ
+                </button>
+                <button
+                  type="button"
+                  class="mode-toggle-button"
                   :class="{ active: productionSubsection === 'analysis' }"
                   @click="productionSubsection = 'analysis'"
                 >
@@ -7298,19 +7307,23 @@ onMounted(async () => {
           Сохраненные сценарии пока не загружены. Запустите расчет на листе `Схема работы оптимизатора`.
         </div>
 
-        <template v-if="scenarioDetail || productionSubsection === 'analysis'">
+        <template v-if="scenarioDetail || productionSubsection === 'analysis' || productionSubsection === 'crm'">
           <div v-if="scenarioDetail" class="stats-grid production-stats">
             <div class="stat-card"><span>Период</span><strong>{{ formatDateCell(scenarioDetail.scenario.forecast_start_date) }} — {{ formatDateCell(scenarioDetail.scenario.forecast_end_date) }}</strong></div>
             <div class="stat-card"><span>Нефть по выборке</span><strong>{{ formatCompactNumber(selectedProductionSummary.totalOil) }}</strong></div>
             <div class="stat-card"><span>Жидкость по выборке</span><strong>{{ formatCompactNumber(selectedProductionSummary.totalLiquid) }}</strong></div>
           </div>
 
-          <div v-if="productionSubsection === 'analysis'" class="production-analysis-stack opm-analysis-stack">
+          <div v-if="productionSubsection === 'analysis' || productionSubsection === 'crm'" class="production-analysis-stack opm-analysis-stack">
             <div class="panel opm-analysis-control-panel">
               <div class="toolbar between align-start">
                 <div>
-                  <h2>OPM Flow 2D: анализ и настройка</h2>
-                  <p class="subtitle">Экран работает от активного сценария: GRUP, траектории, перфорации, история, NIZ и PVT формируют единую 2D модель месторождения и регионы injector-producer.</p>
+                  <h2>{{ productionSubsection === 'crm' ? 'CRM анализ pywaterflood' : 'OPM Flow 2D: анализ и настройка' }}</h2>
+                  <p class="subtitle">
+                    {{ productionSubsection === 'crm'
+                      ? 'Карта и матрица показывают injector-producer сопоставление из CRM pywaterflood; ячейки окрашены текущей компенсацией.'
+                      : 'Экран работает от активного сценария: GRUP, траектории, перфорации, история, NIZ и PVT формируют единую 2D модель месторождения и регионы injector-producer.' }}
+                  </p>
                 </div>
                 <div class="toolbar-actions">
                   <span class="status-pill" :class="drainagePreparation ? 'ready' : 'pending'">
@@ -7327,7 +7340,7 @@ onMounted(async () => {
                   </button>
                 </div>
               </div>
-              <div class="opm-analysis-toolbar">
+              <div v-if="productionSubsection === 'analysis'" class="opm-analysis-toolbar">
                 <div class="opm-property-switch">
                   <span>Grid value focus</span>
                   <button
@@ -7379,7 +7392,7 @@ onMounted(async () => {
             </div>
 
             <template v-else>
-              <div class="panel opm-results-panel">
+              <div v-if="productionSubsection === 'analysis'" class="panel opm-results-panel">
                 <div class="toolbar between align-start">
                   <div>
                     <h2>OPM Flow 2D run files and grid</h2>
@@ -7870,11 +7883,11 @@ onMounted(async () => {
                 </div>
               </div>
 
-              <div class="panel opm-history-panel">
+              <div v-if="productionSubsection === 'crm'" class="panel opm-history-panel">
                 <div class="toolbar between align-start">
                   <div>
-                    <h2>История добычи и закачки</h2>
-                    <p class="subtitle">График синхронизирован с матрицей дренирования. Выбрано: {{ historyCategoryLabel }}. По оси X время, по оси Y включенные показатели.</p>
+                    <h2>CRM карта дренирования pywaterflood</h2>
+                    <p class="subtitle">Слева история добычи/закачки, справа карта CRM-ячеек. Ячейки залиты текущей компенсацией, связи и матрица берутся из результата pywaterflood.</p>
                   </div>
                   <div class="toolbar-actions">
                     <label class="history-date-field">
@@ -8135,11 +8148,11 @@ onMounted(async () => {
                 </div>
               </div>
 
-              <div class="panel opm-drainage-matrix-panel">
+              <div v-if="productionSubsection === 'crm'" class="panel opm-drainage-matrix-panel">
                 <div class="toolbar between align-start">
                   <div>
-                    <h2>Матрица дренирования</h2>
-                    <p class="subtitle">Иерархия: Итого → LU → нагнетательная → связанные добывающие. Таблица показывает только показатели закачки, компенсации, давления и участия.</p>
+                    <h2>CRM матрица дренирования pywaterflood</h2>
+                    <p class="subtitle">Иерархия: Итого -> LU -> нагнетательная -> связанные добывающие. Строки показывают CRM source, fit, gain, tau и текущую компенсацию по связям injector-producer.</p>
                   </div>
                 </div>
                 <div class="table-wrap hierarchy-wrap opm-drainage-wrap">
